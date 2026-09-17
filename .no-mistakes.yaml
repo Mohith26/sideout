@@ -1,0 +1,8 @@
+# Per-repo no-mistakes configuration. These are the canonical checks; the GitHub
+# workflow in .github/workflows/ci.yml is generated from them with
+# `no-mistakes ci-workflow` and must be regenerated when they change.
+commands:
+  typecheck: npm run typecheck
+  lint: npm run lint
+  test: npm test
+  build: npm run build
