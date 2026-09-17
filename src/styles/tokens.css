@@ -19,11 +19,9 @@
   --text-primary: #f4f5f7;
   --text-secondary: #9ba3af;
   /*
-   * Spec §12.1 lists #646C79, which measures 3.29:1 on --bg-overlay and 3.76:1 on
-   * --bg-base — below the WCAG AA 4.5:1 that §12.6 and acceptance #21 require for
-   * every text tier. Lightened to the nearest value in the same hue that clears
-   * 4.5:1 on all four surfaces (4.62:1 on --bg-overlay). src/styles/tokens.test.ts
-   * asserts it.
+   * Deviates from spec §12.1 (#646C79) so every text tier clears WCAG AA on every
+   * surface; the measured ratios and rationale live under "Spec deviations" in
+   * docs/open-questions.md, and src/styles/tokens.test.ts asserts the result.
    */
   --text-tertiary: #7c8491;
 

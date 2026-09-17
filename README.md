@@ -14,7 +14,7 @@ npm run dev      # http://localhost:3000
 
 `LUCRA_MODE=mock` is the default, so no `.env` file is needed; `.env.example` lists every variable for later phases. `GET /health` reports the build sha, Lucra mode, pinned SDK version, and migration state.
 
-The seed is deterministic and idempotent. It loads one beneficiary, 48 players, and three events — one live (24 teams, pool play complete, quarterfinals under way with a disputed match, a match awaiting scores, and a bye), one open for registration, and one settled with rewards — and every number on screen is derived from those rows.
+The seed is deterministic and idempotent. It loads one beneficiary, 48 players, and three events — one live (24 teams, pool play complete, a semifinal in progress, a disputed quarterfinal, a quarterfinal awaiting scores, and a first-round bye), one open for registration, and one settled with rewards — and every number on screen is derived from those rows.
 
 ## Scripts
 
