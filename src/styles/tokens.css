@@ -1,0 +1,101 @@
+/*
+ * Sideout design tokens — spec §12, defined once. Tailwind maps these into its
+ * theme in globals.css; components consume utilities, never raw hex.
+ *
+ * Dark-only. There is no light theme in v1 and no half-built one here.
+ */
+:root {
+  color-scheme: dark;
+
+  /* 12.1 Color */
+  --bg-base: #08090b; /* app background */
+  --bg-raised: #101216; /* cards */
+  --bg-overlay: #171a1f; /* sheets, popovers */
+  --bg-inset: #050607; /* wells, inputs */
+
+  --border-subtle: #22262d;
+  --border-strong: #323843;
+
+  --text-primary: #f4f5f7;
+  --text-secondary: #9ba3af;
+  /*
+   * Spec §12.1 lists #646C79, which measures 3.29:1 on --bg-overlay and 3.76:1 on
+   * --bg-base — below the WCAG AA 4.5:1 that §12.6 and acceptance #21 require for
+   * every text tier. Lightened to the nearest value in the same hue that clears
+   * 4.5:1 on all four surfaces (4.62:1 on --bg-overlay). src/styles/tokens.test.ts
+   * asserts it.
+   */
+  --text-tertiary: #7c8491;
+
+  --volt: #d7ff3e; /* primary action, brand — one per screen */
+  --volt-dim: #a8c82f;
+  --on-volt: #08090b; /* dark text on volt, never white */
+
+  --ember: #ff6b3d; /* charity + impact only, never a button */
+  --surf: #35d6c3; /* live, positive delta, agreed */
+  --fault: #ff4d4d; /* errors, disputes */
+
+  /* 12.3 Radius — restrained on purpose */
+  --r-xs: 4px; /* chips, badges */
+  --r-sm: 6px; /* inputs, buttons */
+  --r-md: 10px; /* cards */
+  --r-lg: 14px; /* sheets, modals */
+  --r-full: 999px; /* pills, avatars */
+
+  /* 12.3 Layout */
+  --content-max: 1280px;
+  --gutter: 16px;
+  --tabbar-height: 56px;
+  --navrail-width: 232px;
+  --target-min: 44px;
+
+  /* 12.4 Motion */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --d-micro: 120ms; /* hover, press */
+  --d-base: 220ms; /* enter, exit */
+  --d-enter: 420ms; /* sheets, page content */
+  --d-draw: 700ms; /* bracket path */
+
+  /* 12.2 Type scale, 1.25 ratio, clamped fluid */
+  --fs-display-xl: clamp(2.75rem, 6vw, 4.5rem);
+  --fs-display-l: clamp(2rem, 4vw, 3rem);
+  --fs-heading: 1.5rem;
+  --fs-subheading: 1.125rem;
+  --fs-body: 0.9375rem;
+  --fs-label: 0.8125rem;
+  --fs-mono-stat: 0.875rem;
+  --lh-body: 1.55;
+  --tracking-display: -0.015em;
+  --tracking-label: 0.06em;
+  /* "Archivo Expanded" is Archivo's variable width axis at its widest stop. */
+  --display-stretch: 125%;
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --gutter: 32px;
+  }
+}
+
+/*
+ * Motion communicates state; under reduced motion it collapses to opacity-only.
+ * Every named transition (phase 5) inherits this wrapper by using the tokens above.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-micro: 1ms;
+    --d-base: 1ms;
+    --d-enter: 1ms;
+    --d-draw: 1ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-property: opacity !important;
+    scroll-behavior: auto !important;
+  }
+}
