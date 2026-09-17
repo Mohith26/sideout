@@ -5,7 +5,8 @@ import { Icons } from "@/components/ui/icons";
 import { ImpactMeter } from "@/components/tournament/ImpactMeter";
 import { SPONSOR_TIER_LABEL } from "@/components/tournament/SponsorRow";
 import { getTournamentImpact, type DonorWallEntry, type TournamentImpact } from "@/db/queries/impact";
-import type { RewardStatus, SponsorTier } from "@/db/schema";
+import { SPONSOR_TIER_ORDER } from "@/db/queries/tournaments";
+import type { RewardStatus } from "@/db/schema";
 import { formatCents, formatDate } from "@/lib/format";
 import { cx } from "@/lib/cx";
 import { requireTournament } from "../_lib";
@@ -23,8 +24,6 @@ const REWARD_STATUS_LABEL: Record<RewardStatus, string> = {
   awarded: "Awarded",
   claimed: "Claimed",
 };
-
-const TIER_ORDER: SponsorTier[] = ["presenting", "court", "prize"];
 
 /** Impact tab: beneficiary story, raised vs goal, donor wall, sponsor tiers (spec §11.2). */
 export default async function ImpactTab({ params }: PageProps<"/t/[slug]">) {
@@ -97,7 +96,7 @@ export default async function ImpactTab({ params }: PageProps<"/t/[slug]">) {
           <EmptyState icon="handCoins" title="No sponsors yet" />
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
-            {TIER_ORDER.map((tier) => {
+            {SPONSOR_TIER_ORDER.map((tier) => {
               const inTier = impact.sponsors.filter((s) => s.tier === tier);
               return (
                 <div key={tier} className="surface-raised rounded-md p-4">

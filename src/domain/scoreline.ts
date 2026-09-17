@@ -57,12 +57,6 @@ export function judgeSet(teamAPoints: number, teamBPoints: number, target: numbe
   return { legal: true, winner: teamAPoints > teamBPoints ? "a" : "b" };
 }
 
-/** True when a set could still be in play (used for provisional live scores). */
-export function isSetInProgress(teamAPoints: number, teamBPoints: number, target: number): boolean {
-  if (teamAPoints < 0 || teamBPoints < 0) return false;
-  return !judgeSet(teamAPoints, teamBPoints, target).legal;
-}
-
 export type MatchVerdict = { legal: true; winner: Side; setsWon: { a: number; b: number } } | { legal: false; reason: string };
 
 /**
@@ -96,6 +90,9 @@ export function judgeMatch(sets: readonly SetScore[], bestOf: BestOf): MatchVerd
   return { legal: false, reason: `Nobody has won ${needed} set(s) yet; the match is not finished.` };
 }
 
+// OPEN: (§17.9) Lucra offers no partner-side attestation or dual-confirmation
+// contract. The canonical hash and the consensus built on it stand on their own;
+// nothing in the Lucra write depends on Lucra acknowledging them.
 /**
  * Canonical form: sets ordered by number, always oriented from team A's side,
  * keys in a fixed order, no whitespace. Two honest submissions of the same

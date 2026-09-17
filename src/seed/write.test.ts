@@ -52,6 +52,23 @@ describe("seed writes to a migrated database", () => {
     }
   });
 
+  it("keeps the donation ledger and the prize ledger apart: no foreign key between them", () => {
+    const conn = openConnection(":memory:", { create: true });
+    try {
+      applyMigrations(conn);
+      const ledgers: readonly string[] = ["donations", "sponsors", "rewards"];
+      for (const table of ledgers) {
+        const referenced = (conn.sqlite.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{ table: string }>).map(
+          (fk) => fk.table,
+        );
+        expect(referenced).toContain("tournaments");
+        expect(referenced.filter((t) => t !== table && ledgers.includes(t))).toEqual([]);
+      }
+    } finally {
+      conn.close();
+    }
+  });
+
   it("enforces the enum check constraints the schema declares", () => {
     const conn = openConnection(":memory:", { create: true });
     try {

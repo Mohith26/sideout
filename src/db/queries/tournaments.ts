@@ -1,5 +1,6 @@
 import "server-only";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { cache } from "react";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
   charities,
@@ -18,6 +19,7 @@ import {
   type MatchStatus,
   type SetRow,
   type Sponsor,
+  type SponsorTier,
   type Team,
   type Tournament,
 } from "@/db/schema";
@@ -41,12 +43,13 @@ export interface TournamentSummary {
 
 const succeededSum = sql<number>`coalesce(sum(case when ${donations.status} = 'succeeded' then ${donations.amountCents} else 0 end), 0)`;
 
-export function listTournamentSummaries(): TournamentSummary[] {
+function summarize(where: SQL | undefined): TournamentSummary[] {
   const db = getDb();
   const rows = db
     .select({ tournament: tournaments, charity: charities })
     .from(tournaments)
     .innerJoin(charities, eq(charities.id, tournaments.beneficiaryId))
+    .where(where)
     .orderBy(asc(tournaments.startsAt))
     .all();
   if (rows.length === 0) return [];
@@ -98,9 +101,17 @@ export function listTournamentSummaries(): TournamentSummary[] {
   }));
 }
 
-export function getTournamentSummaryBySlug(slug: string): TournamentSummary | null {
-  return listTournamentSummaries().find((s) => s.tournament.slug === slug) ?? null;
+export function listTournamentSummaries(): TournamentSummary[] {
+  return summarize(undefined);
 }
+
+/**
+ * One request renders the `[slug]` layout, its metadata and a tab page, each of
+ * which needs the same summary; `cache` shares one read across them.
+ */
+export const getTournamentSummaryBySlug = cache((slug: string): TournamentSummary | null => {
+  return summarize(eq(tournaments.slug, slug))[0] ?? null;
+});
 
 // ---------------------------------------------------------------------------
 // Matches with participants
@@ -315,7 +326,11 @@ export function getTournamentOverview(tournamentId: string): TournamentOverview 
   return { pools: poolViews, courts, rounds, sponsors: sortSponsors(sponsorRows), matchCount: all.length };
 }
 
-const TIER_ORDER: Record<Sponsor["tier"], number> = { presenting: 0, court: 1, prize: 2 };
+/** Display order of sponsor tiers, most prominent first. */
+export const SPONSOR_TIER_ORDER: readonly SponsorTier[] = ["presenting", "court", "prize"];
+
 export function sortSponsors(list: Sponsor[]): Sponsor[] {
-  return [...list].sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || b.prizeContributionCents - a.prizeContributionCents);
+  return [...list].sort(
+    (a, b) => SPONSOR_TIER_ORDER.indexOf(a.tier) - SPONSOR_TIER_ORDER.indexOf(b.tier) || b.prizeContributionCents - a.prizeContributionCents,
+  );
 }

@@ -87,22 +87,3 @@ export function DataTableSkeleton({ rows = 5, columns = 4 }: { rows?: number; co
     </div>
   );
 }
-
-export function TournamentHeaderSkeleton() {
-  return (
-    <div className="border-b border-border-subtle bg-bg-base px-gutter py-4">
-      <div className="mx-auto max-w-content">
-        <div className="flex items-center gap-3">
-          <Skeleton className="h-7 w-16 rounded-full" />
-          <Skeleton className="h-4 w-40" />
-        </div>
-        <Skeleton className="mt-3 h-9 w-2/3 max-w-md" />
-        <div className="mt-4 flex gap-6">
-          {Array.from({ length: 4 }, (_, i) => (
-            <Skeleton key={i} className="h-4 w-16" />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}

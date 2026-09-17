@@ -24,6 +24,7 @@ The seed is deterministic and idempotent. It loads one beneficiary, 48 players, 
 | `npm run typecheck` | `next typegen` then `tsc --noEmit` (strict, no `any`) |
 | `npm run lint` | ESLint, warnings are errors |
 | `npm test` | Vitest unit and integration tests |
+| `npm run test:bundle` | Production build with a sentinel backend key, then a scan of `.next/static` proving it never reaches the browser |
 | `npm run test:e2e` | Playwright smoke test (`npx playwright install chromium` first) |
 | `npm run seed` | Reset and populate the SQLite database |
 | `npm run db:generate` | Generate a migration from `src/db/schema.ts` with drizzle-kit |

@@ -31,8 +31,8 @@ mark it `// OPEN:` in code, and add a row there.
 - Console output only through `src/lib/log.ts`; ESLint makes `console`, `any`, and
   empty `catch` errors everywhere else.
 - `src/env.ts` is `server-only`; `src/env.public.ts` holds the only values allowed in
-  the browser. `src/env.boundary.test.ts` walks the import graph from every
-  `"use client"` module and fails if it can reach the server env or the database.
+  the browser. `npm run test:bundle` (`src/env.bundle-check.ts`) builds with a sentinel
+  backend key and fails if it, or the variable name, appears under `.next/static`.
 - Database: Drizzle + better-sqlite3, schema in `src/db/schema.ts`, migrations checked
   in under `drizzle/` (`npm run db:generate` after schema edits). Enums are text +
   CHECK, ids are UUID v7 (`src/lib/uuid.ts`), timestamps epoch ms, money integer

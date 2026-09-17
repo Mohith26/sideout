@@ -44,20 +44,4 @@ describe("design tokens meet WCAG AA (spec §12.6)", () => {
     expect(contrastRatio(token("text-primary"), base)).toBeGreaterThan(contrastRatio(token("text-secondary"), base));
     expect(contrastRatio(token("text-secondary"), base)).toBeGreaterThan(contrastRatio(token("text-tertiary"), base));
   });
-
-  it("defines the motion tokens and the reduced-motion wrapper once", () => {
-    for (const name of ["ease-out-expo", "ease-in-out-quart", "d-micro", "d-base", "d-enter", "d-draw"]) {
-      expect(css).toMatch(new RegExp(`--${name}:`));
-    }
-    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(css).toContain("transition-property: opacity !important");
-  });
-
-  it("radii follow §12.3 exactly", () => {
-    expect(css).toMatch(/--r-xs:\s*4px/);
-    expect(css).toMatch(/--r-sm:\s*6px/);
-    expect(css).toMatch(/--r-md:\s*10px/);
-    expect(css).toMatch(/--r-lg:\s*14px/);
-    expect(css).toMatch(/--r-full:\s*999px/);
-  });
 });

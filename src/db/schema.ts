@@ -449,6 +449,10 @@ export const lucraScoreSubmissions = sqliteTable(
 // 6.4 Charity and sponsorship
 // ---------------------------------------------------------------------------
 
+// OPEN: (§17.8) whether a charitable-gaming regime applies on top of the
+// skill-contest framework is unresolved. The fallback is structural: entry fees
+// live here, prizes live in `sponsors`/`rewards`, nothing joins or sums across
+// the two, and no copy implies legal clearance.
 /** Charitable ledger. No foreign key to `rewards` or `sponsors` (spec §4.3). */
 export const donations = sqliteTable(
   "donations",

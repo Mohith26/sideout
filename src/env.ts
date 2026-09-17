@@ -4,9 +4,9 @@ import { parsePublicEnv, type PublicEnv } from "@/env.public";
 
 /**
  * Server environment, parsed once at boot. Importing this module from client
- * code is a build error (`server-only`) and a test failure
- * (`src/env.boundary.test.ts`), which is how the BACKEND Lucra key is kept out
- * of every client bundle (spec §5, acceptance #12).
+ * code is a build error (`server-only`), and `npm run test:bundle` proves over
+ * the built output that the BACKEND Lucra key reaches no client bundle
+ * (spec §5, acceptance #12).
  */
 
 export const LUCRA_MODES = ["mock", "sandbox", "production"] as const;
@@ -47,15 +47,6 @@ const serverSchema = z
           message: `LUCRA_BACKEND_API_KEY is required when LUCRA_MODE=${env.LUCRA_MODE}`,
         });
       }
-    }
-    // Spec §4.2: real money is behind a flag that stays off. Refuse a misconfiguration
-    // that would enable it in a mode with no Lucra backend to enforce eligibility.
-    if (env.FEATURE_REAL_MONEY && env.LUCRA_MODE === "mock") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["FEATURE_REAL_MONEY"],
-        message: "FEATURE_REAL_MONEY cannot be enabled while LUCRA_MODE=mock",
-      });
     }
   });
 

@@ -94,12 +94,6 @@ export function isUuidV7(value: string): boolean {
   return UUID_V7_RE.test(value);
 }
 
-/** Extract the embedded millisecond timestamp. */
-export function uuidV7Timestamp(id: string): number {
-  if (!isUuidV7(id)) throw new Error(`Not a UUID v7: ${id}`);
-  return Number.parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
-}
-
 /** First 8 hex chars, used for human-readable references like `lucra_external_id`. */
 export function shortId(id: string): string {
   return id.slice(0, 8);

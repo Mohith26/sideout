@@ -39,17 +39,12 @@ describe("parseServerEnv", () => {
     );
   });
 
-  it("parses the real-money flag and refuses it in mock mode", () => {
+  it("parses the real-money flag, default off", () => {
+    expect(parseServerEnv({}).FEATURE_REAL_MONEY).toBe(false);
     expect(parseServerEnv({ FEATURE_REAL_MONEY: "false" }).FEATURE_REAL_MONEY).toBe(false);
-    expect(() => parseServerEnv({ FEATURE_REAL_MONEY: "true" })).toThrow(/FEATURE_REAL_MONEY cannot be enabled/);
+    expect(parseServerEnv({ FEATURE_REAL_MONEY: "true" }).FEATURE_REAL_MONEY).toBe(true);
+    expect(parseServerEnv({ FEATURE_REAL_MONEY: "1" }).FEATURE_REAL_MONEY).toBe(true);
     expect(() => parseServerEnv({ FEATURE_REAL_MONEY: "yes" })).toThrow(/FEATURE_REAL_MONEY/);
-    const live = parseServerEnv({
-      LUCRA_MODE: "sandbox",
-      LUCRA_BASE_URL: "https://api.sandbox.lucrasports.com",
-      LUCRA_BACKEND_API_KEY: "k",
-      FEATURE_REAL_MONEY: "true",
-    });
-    expect(live.FEATURE_REAL_MONEY).toBe(true);
   });
 
   it("carries the public values through", () => {

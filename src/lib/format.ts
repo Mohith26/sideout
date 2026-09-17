@@ -3,7 +3,7 @@
  * formatted here; nothing is typed in a component.
  */
 
-export function formatCents(cents: number, currency: string, options: { compact?: boolean } = {}): string {
+export function formatCents(cents: number, currency: string): string {
   const amount = cents / 100;
   const whole = Number.isInteger(amount);
   return new Intl.NumberFormat("en-US", {
@@ -11,7 +11,6 @@ export function formatCents(cents: number, currency: string, options: { compact?
     currency,
     minimumFractionDigits: whole ? 0 : 2,
     maximumFractionDigits: whole ? 0 : 2,
-    ...(options.compact ? { notation: "compact" as const, maximumFractionDigits: 1 } : {}),
   }).format(amount);
 }
 
@@ -20,25 +19,11 @@ export function formatPercent(fraction: number): string {
   return `${pct}%`;
 }
 
-export function formatInteger(n: number): string {
-  return new Intl.NumberFormat("en-US").format(n);
-}
-
 export function formatDate(ms: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
-    timeZone,
-  }).format(new Date(ms));
-}
-
-export function formatDateLong(ms: number, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
     timeZone,
   }).format(new Date(ms));
 }

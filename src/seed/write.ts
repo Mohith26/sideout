@@ -40,13 +40,6 @@ function chunked<T>(rows: readonly T[]): T[][] {
   return out;
 }
 
-export function resetDatabase(conn: Connection): void {
-  conn.db.transaction((tx) => {
-    for (const table of RESET_ONLY_TABLES) tx.delete(table).run();
-    for (const [, table] of [...TABLE_ORDER].reverse()) tx.delete(table).run();
-  });
-}
-
 export interface SeedSummary {
   counts: Record<keyof SeedDataset, number>;
 }

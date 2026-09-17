@@ -19,7 +19,7 @@ import type {
   MatchStatus,
   VerificationState,
 } from "@/db/schema";
-import { computeStandings, type StandingsMatch } from "@/domain/standings";
+import { compareStandings, computeStandings, type StandingRow, type StandingsMatch } from "@/domain/standings";
 import { assertTeamRoster } from "@/domain/team";
 import {
   DECIDING_SET_TARGET,
@@ -74,6 +74,8 @@ export interface SeedDataset {
 export const DEFAULT_RNG_SEED = 0x51de0f7;
 export const CURRENCY = "USD";
 export const VENUE_TIMEZONE = "America/Los_Angeles";
+// OPEN: (§17.5) how a gameId is registered for an outdoor, non-fixed venue sport
+// is unresolved. One constant for the whole product until Lucra clarifies.
 export const LUCRA_GAME_ID = "SIDEOUT_BEACH_2V2";
 
 export const SLUGS = {
@@ -235,7 +237,9 @@ class SeedBuilder {
 
   // -- tournaments ----------------------------------------------------------
 
-  tournament(input: Omit<NewTournament, "id" | "lucraExternalId" | "lucraGameId" | "currency" | "venueTimezone">): NewTournament {
+  tournament(
+    input: Omit<NewTournament, "id" | "lucraExternalId" | "lucraGameId" | "lucraLocationId" | "currency" | "venueTimezone">,
+  ): NewTournament {
     const id = this.id(input.createdAt);
     const row: NewTournament = {
       ...input,
@@ -245,6 +249,8 @@ class SeedBuilder {
       // Namespaced and globally unique (spec §7.3.3); phase 4 owns the exact contract.
       lucraExternalId: `sideout-${input.slug}-${shortId(id)}`,
       lucraGameId: LUCRA_GAME_ID,
+      // OPEN: (§17.5) a travelling event has no fixed locationId; left null.
+      lucraLocationId: null,
     };
     this.data.tournaments.push(row);
     return row;
@@ -519,30 +525,20 @@ class SeedBuilder {
    * ordered seed list and writes `teams.seed`.
    */
   seedBracket(pools: ReturnType<SeedBuilder["buildPools"]>["pools"], advancing: number, teamsById: Map<string, SeedTeam>): SeedTeam[] {
-    const byPlace: SeedTeam[][] = [];
+    const byPlace: StandingRow[][] = [];
     for (const pool of pools) {
       pool.standings.forEach((row, place) => {
-        const team = teamsById.get(row.teamId);
-        if (!team) throw new Error("seed: standings row for unknown team");
-        (byPlace[place] ??= []).push(team);
+        (byPlace[place] ??= []).push(row);
       });
     }
-    const standingsByTeam = new Map(pools.flatMap((p) => p.standings.map((s) => [s.teamId, s] as const)));
-    const rankWithin = (list: SeedTeam[]) =>
-      [...list].sort((x, y) => {
-        const sx = standingsByTeam.get(x.row.id);
-        const sy = standingsByTeam.get(y.row.id);
-        if (!sx || !sy) return 0;
-        if (sy.wins !== sx.wins) return sy.wins - sx.wins;
-        if (sy.pointDiff !== sx.pointDiff) return sy.pointDiff - sx.pointDiff;
-        if (sy.pointsFor !== sx.pointsFor) return sy.pointsFor - sx.pointsFor;
-        return x.row.id < y.row.id ? -1 : 1;
-      });
 
     const ordered: SeedTeam[] = [];
     for (const place of byPlace) {
-      for (const team of rankWithin(place)) {
-        if (ordered.length < advancing) ordered.push(team);
+      for (const row of [...place].sort(compareStandings)) {
+        if (ordered.length >= advancing) break;
+        const team = teamsById.get(row.teamId);
+        if (!team) throw new Error("seed: standings row for unknown team");
+        ordered.push(team);
       }
     }
     ordered.forEach((team, i) => {
@@ -708,19 +704,22 @@ class SeedBuilder {
             const third = result.sets[2];
             if (!third) throw new Error("seed: disputed match needs three sets");
             const loserPoints = Math.min(third.teamAPoints, third.teamBPoints);
-            const altLoser = Math.max(0, loserPoints - 2);
+            const altLoser = loserPoints >= 2 ? loserPoints - 2 : loserPoints + 2;
+            const altWin = altLoser >= DECIDING_SET_TARGET - 1 ? altLoser + 2 : DECIDING_SET_TARGET;
             const viewB: Scoreline = {
               matchId: row.id,
               sets: result.sets.map((s) =>
                 s.setNumber === 3
                   ? {
                       setNumber: 3,
-                      teamAPoints: s.teamAPoints > s.teamBPoints ? s.teamAPoints : altLoser,
-                      teamBPoints: s.teamBPoints > s.teamAPoints ? s.teamBPoints : altLoser,
+                      teamAPoints: s.teamAPoints > s.teamBPoints ? altWin : altLoser,
+                      teamBPoints: s.teamBPoints > s.teamAPoints ? altWin : altLoser,
                     }
                   : s,
               ),
             };
+            const verdictB = judgeMatch(viewB.sets, "3");
+            if (!verdictB.legal) throw new Error(`seed: disputed alternate scoreline is illegal: ${verdictB.reason}`);
             const endedAt = startedAt + 52 * MINUTE;
             const subA = this.submission(row, a, viewA, "a", endedAt + 3 * MINUTE);
             const subB = this.submission(row, b, viewB, "b", endedAt + 6 * MINUTE);
@@ -926,7 +925,6 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       prizeKind: "free_to_play_rewards",
       status: "settled",
       lucraMatchupId: null,
-      lucraLocationId: null,
       createdAt,
     });
     b.tournamentTransitions(t, [
@@ -1049,7 +1047,6 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       prizeKind: "free_to_play_rewards",
       status: "live",
       lucraMatchupId: null,
-      lucraLocationId: null,
       createdAt,
     });
     b.tournamentTransitions(t, [
@@ -1131,7 +1128,6 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       prizeKind: "free_to_play_rewards",
       status: "registration_open",
       lucraMatchupId: null,
-      lucraLocationId: null,
       createdAt,
     });
     b.tournamentTransitions(t, [["draft", "registration_open", createdAt + 1 * DAY]]);

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type Database from "better-sqlite3";
 import { z } from "zod";
@@ -71,8 +71,4 @@ export function readMigrationState(sqlite: Database.Database, folder: string = m
   const appliedStamps = new Set(rows.map((r) => appliedRowSchema.parse(r).created_at));
   const applied = journal.entries.filter((e) => appliedStamps.has(e.when)).length;
   return { applied, available, pending: Math.max(0, available - applied) };
-}
-
-export function migrationsFolderExists(folder: string = migrationsFolder()): boolean {
-  return existsSync(join(folder, "meta", "_journal.json"));
 }

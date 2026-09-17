@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  canonicalizeScoreline,
-  formatSets,
-  hashScoreline,
-  isSetInProgress,
-  judgeMatch,
-  judgeSet,
-  setTarget,
-} from "@/domain/scoreline";
+import { canonicalizeScoreline, formatSets, hashScoreline, judgeMatch, judgeSet, setTarget } from "@/domain/scoreline";
 
 describe("judgeSet", () => {
   it("accepts regulation and deuce sets", () => {
@@ -25,12 +17,6 @@ describe("judgeSet", () => {
     expect(judgeSet(21, 21, 21)).toMatchObject({ legal: false });
     expect(judgeSet(-1, 21, 21)).toMatchObject({ legal: false });
     expect(judgeSet(21.5, 10, 21)).toMatchObject({ legal: false });
-  });
-
-  it("knows when a set could still be in play", () => {
-    expect(isSetInProgress(12, 9, 21)).toBe(true);
-    expect(isSetInProgress(21, 19, 21)).toBe(false);
-    expect(isSetInProgress(20, 20, 21)).toBe(true);
   });
 });
 

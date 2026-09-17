@@ -7,7 +7,7 @@ import { z } from "zod";
  * at build time; a dynamic lookup would silently produce `undefined`.
  *
  * This module is importable from client components. `src/env.ts` (server-only)
- * is not; see `src/env.boundary.test.ts`.
+ * is not; `npm run test:bundle` proves it over the built output.
  */
 const publicSchema = z.object({
   NEXT_PUBLIC_LUCRA_WEB_API_KEY: z.string().trim().min(1).optional(),

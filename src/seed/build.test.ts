@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { NewMatch, NewSetRow } from "@/db/schema";
-import { judgeMatch, judgeSet, setTarget } from "@/domain/scoreline";
+import { z } from "zod";
+import type { NewMatch, NewScoreSubmission, NewSetRow } from "@/db/schema";
+import { judgeMatch, judgeSet, setTarget, type SetScore } from "@/domain/scoreline";
 import { computeStandings, type StandingsMatch } from "@/domain/standings";
 import { isUuidV7 } from "@/lib/uuid";
 import { buildSeed, DEFAULT_RNG_SEED, SLUGS, startOfTodayIn, VENUE_TIMEZONE, type SeedDataset } from "@/seed/build";
@@ -31,6 +30,22 @@ function toStandingsMatch(m: NewMatch, sets: NewSetRow[]): StandingsMatch {
   return { teamAId: m.teamAId, teamBId: m.teamBId, winnerTeamId: m.winnerTeamId, sets };
 }
 
+// What a captain typed, stored verbatim: their own points first.
+const submittedPayload = z.object({
+  perspective: z.enum(["a", "b"]),
+  sets: z.array(z.object({ setNumber: z.number(), usPoints: z.number(), themPoints: z.number() })),
+});
+
+/** A stored submission re-expressed from team A's side, as consensus would read it. */
+function submittedSets(sub: NewScoreSubmission): SetScore[] {
+  const payload = submittedPayload.parse(JSON.parse(sub.payloadJson));
+  return payload.sets.map((s) => ({
+    setNumber: s.setNumber,
+    teamAPoints: payload.perspective === "a" ? s.usPoints : s.themPoints,
+    teamBPoints: payload.perspective === "a" ? s.themPoints : s.usPoints,
+  }));
+}
+
 describe("seed dataset (spec §13)", () => {
   it("is deterministic and every id is a unique UUID v7", () => {
     const again = buildSeed({ anchorMs: ANCHOR, rngSeed: DEFAULT_RNG_SEED });
@@ -57,6 +72,7 @@ describe("seed dataset (spec §13)", () => {
       expect(t.lucraLocationId).toBeNull();
       expect(t.venueTimezone).toBe(VENUE_TIMEZONE);
     }
+    expect(data.donations.every((d) => d.provider === "stub" && d.currency === "USD")).toBe(true);
   });
 
   it("has 48 users with the required verification states, each linked with an opaque external id", () => {
@@ -193,6 +209,22 @@ describe("seed dataset (spec §13)", () => {
       expect(consensus?.disputedReason).toMatch(/Set 3 differs/);
       expect(consensus?.idempotencyKey).toBeNull();
       expect(setsOf(disputed?.id ?? "")).toHaveLength(0);
+      for (const sub of subs) expect(judgeMatch(submittedSets(sub), "3")).toMatchObject({ legal: true });
+    });
+
+    it("both disputed submissions are legal scorelines whatever the rng seed", () => {
+      // Seeds 61, 71, 72, 86 and 90 push the deciding set to deuce.
+      for (let rngSeed = 1; rngSeed <= 100; rngSeed += 1) {
+        const dataset = buildSeed({ anchorMs: ANCHOR, rngSeed });
+        const disputed = dataset.matches.find((m) => m.status === "disputed");
+        const subs = dataset.scoreSubmissions.filter((s) => s.matchId === disputed?.id);
+        expect(subs).toHaveLength(2);
+        expect(new Set(subs.map((s) => s.payloadHash)).size).toBe(2);
+        for (const sub of subs) {
+          const verdict = judgeMatch(submittedSets(sub), "3");
+          expect(verdict.legal, `rngSeed ${rngSeed}: ${verdict.legal ? "" : verdict.reason}`).toBe(true);
+        }
+      }
     });
 
     it("awaiting-scores match has exactly one submission; live match has provisional sets only", () => {
@@ -311,18 +343,6 @@ describe("seed dataset (spec §13)", () => {
       // Every reward row carries a currency when it carries an amount.
       expect(rewards.every((r) => r.amountCents === null || r.currency === "USD")).toBe(true);
     });
-  });
-
-  it("keeps the donation ledger separate from the prize ledger at the schema level", () => {
-    const sql = readFileSync(resolve(process.cwd(), "drizzle/0000_init.sql"), "utf8");
-    const table = (name: string) => {
-      const m = new RegExp(`CREATE TABLE \`${name}\` \\(([\\s\\S]*?)\\);`).exec(sql);
-      return m?.[1] ?? "";
-    };
-    expect(table("donations")).not.toMatch(/REFERENCES `(rewards|sponsors)`/);
-    expect(table("rewards")).not.toMatch(/REFERENCES `(donations|sponsors)`/);
-    expect(table("sponsors")).not.toMatch(/REFERENCES `(donations|rewards)`/);
-    expect(data.donations.every((d) => d.provider === "stub" && d.currency === "USD")).toBe(true);
   });
 
   it("anchors the flagship event to venue-local midnight", () => {

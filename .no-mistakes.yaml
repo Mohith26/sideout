@@ -4,5 +4,5 @@
 commands:
   typecheck: npm run typecheck
   lint: npm run lint
-  test: npm test
+  test: npm test && npm run test:bundle
   build: npm run build

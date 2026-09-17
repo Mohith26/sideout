@@ -33,4 +33,3 @@ export function contrastRatio(foreground: string, background: string): number {
 }
 
 export const WCAG_AA_NORMAL_TEXT = 4.5;
-export const WCAG_AA_LARGE_TEXT = 3;

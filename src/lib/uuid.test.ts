@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createUuidV7Generator, isUuidV7, shortId, uuidv7, uuidV7Timestamp } from "@/lib/uuid";
+import { createUuidV7Generator, isUuidV7, shortId, uuidv7 } from "@/lib/uuid";
 
 describe("uuidv7", () => {
   it("produces RFC 9562 v7 formatted ids", () => {
@@ -13,7 +13,8 @@ describe("uuidv7", () => {
   it("embeds the millisecond timestamp in the first 48 bits", () => {
     const at = 1_800_000_000_000;
     const gen = createUuidV7Generator({ now: () => at, random: (n) => new Uint8Array(n) });
-    expect(uuidV7Timestamp(gen())).toBe(at);
+    const id = gen();
+    expect(Number.parseInt(id.slice(0, 8) + id.slice(9, 13), 16)).toBe(at);
   });
 
   it("is strictly increasing within one millisecond and across time", () => {
@@ -44,7 +45,7 @@ describe("uuidv7", () => {
 
   it("rejects non-v7 values and exposes a short id", () => {
     expect(isUuidV7("123e4567-e89b-12d3-a456-426614174000")).toBe(false);
-    expect(() => uuidV7Timestamp("nope")).toThrow();
+    expect(isUuidV7("nope")).toBe(false);
     const id = uuidv7();
     expect(shortId(id)).toBe(id.slice(0, 8));
   });
