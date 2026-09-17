@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { applyMigrations, openConnection, resolveDatabasePath } from "@/db/connection";
+import { loadEnvFiles } from "@/lib/env-files";
 import { log } from "@/lib/log";
 import { buildSeed, DEFAULT_RNG_SEED, startOfTodayIn, VENUE_TIMEZONE } from "@/seed/build";
 import { writeSeed } from "@/seed/write";
@@ -9,9 +10,12 @@ import { writeSeed } from "@/seed/write";
  * section 13 dataset. Deterministic for a given day: the flagship event is
  * "live" on the calendar day the seed runs, in the venue's time zone.
  *
- * Reads DATABASE_PATH directly (same default as `src/env.ts`) so the seed works
- * before any other environment is configured.
+ * Loads `.env*` files the way Next does (`@/lib/env-files`), then reads
+ * DATABASE_PATH directly with the same default as `src/env.ts`, so the seed
+ * and the app agree on the file and the seed works before any other
+ * environment is configured.
  */
+loadEnvFiles();
 const databasePath = process.env.DATABASE_PATH?.trim() || "./data/sideout.db";
 const resolved = resolveDatabasePath(databasePath);
 

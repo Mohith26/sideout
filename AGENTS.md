@@ -10,7 +10,8 @@ mark it `// OPEN:` in code, and add a row there.
 
 - Node 22+ (`.nvmrc`), npm. `npm i && npm run seed && npm run dev` boots with no
   env file; `LUCRA_MODE=mock` is the default. `.env.example` documents the rest.
-- Before finishing: `npm run typecheck && npm run lint && npm test && npm run build`.
+- Before finishing, run what CI runs (`.no-mistakes.yaml` is the source):
+  `npm run typecheck && npm run lint && npm test && npm run test:bundle && npm run build`.
   `npm run test:e2e` (Playwright, needs `npx playwright install chromium`) seeds its
   own database at `data/sideout.e2e.db` and builds a production server.
 - Next.js 16 differs from older training data: read `node_modules/next/dist/docs/`
