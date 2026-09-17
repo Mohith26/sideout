@@ -40,17 +40,17 @@ export function MatchCard({ view, bracketRounds, className }: MatchCardProps) {
       className={cx("surface-raised flex w-72 shrink-0 flex-col gap-3 rounded-md p-3", live && "border-surf/40", className)}
     >
       <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0 truncate type-label text-text-secondary">
-          {match.courtLabel ?? "Court"}
-          <span className="text-text-tertiary"> · {roundLabel}</span>
-        </div>
+        <div className="min-w-0 truncate type-label text-text-secondary">{match.courtLabel ?? "Court"}</div>
         <StatusPill spec={MATCH_STATUS_PILL[match.status]} size="sm" className="shrink-0" />
       </div>
       <div className="space-y-1.5">
         <TeamLine team={teamA} points={showSets ? sets.map((s) => s.teamAPoints) : []} won={winnerSide === "a"} live={live} />
         <TeamLine team={teamB} points={showSets ? sets.map((s) => s.teamBPoints) : []} won={winnerSide === "b"} live={live} bye={match.status === "bye"} />
       </div>
-      {note ? <div className={cx("type-label", note.className)}>{note.text}</div> : null}
+      <div className="flex items-baseline justify-between gap-3 type-label">
+        <span className="shrink-0 text-text-tertiary">{roundLabel}</span>
+        {note ? <span className={cx("min-w-0 text-end", note.className)}>{note.text}</span> : null}
+      </div>
     </article>
   );
 }
