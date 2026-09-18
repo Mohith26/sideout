@@ -24,18 +24,9 @@ export interface ScorelineCompareProps {
   teamB: string;
   left: ScorelineColumn;
   right: ScorelineColumn;
-  /** Set numbers to highlight; computed from the two columns when omitted. */
-  differingSets?: readonly number[] | undefined;
+  /** Set numbers to highlight: `ConsensusView.differences`, judged by the domain on the server. */
+  differingSets: readonly number[];
   className?: string;
-}
-
-function differing(x: readonly SetScore[], y: readonly SetScore[]): number[] {
-  const numbers = [...new Set([...x, ...y].map((s) => s.setNumber))].sort((p, q) => p - q);
-  return numbers.filter((n) => {
-    const a = x.find((s) => s.setNumber === n);
-    const b = y.find((s) => s.setNumber === n);
-    return !a || !b || a.teamAPoints !== b.teamAPoints || a.teamBPoints !== b.teamBPoints;
-  });
 }
 
 /** "21–19" with the winning side's points in primary text. */
@@ -52,7 +43,7 @@ function Pair({ set }: { set: SetScore | undefined }) {
 }
 
 export function ScorelineCompare({ teamA, teamB, left, right, differingSets, className }: ScorelineCompareProps) {
-  const highlight = new Set(differingSets ?? differing(left.sets, right.sets));
+  const highlight = new Set(differingSets);
   const setNumbers = [...new Set([...left.sets, ...right.sets].map((s) => s.setNumber))].sort((p, q) => p - q);
   return (
     <div className={cx("surface-raised overflow-hidden rounded-md", className)}>

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getConsensusView, listDisputes } from "@/db/queries/consensus";
 import { matchConsensus, matches, scoreSubmissions, sets, teamMembers, teams, tournaments, type Match } from "@/db/schema";
 import { ConsensusError, LucraWriteRefused, type SubmittedSet } from "@/domain/consensus";
-import { hashScoreline, type SetScore } from "@/domain/scoreline";
+import type { SetScore } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 import { fixedClock } from "@/lib/clock";
 import { isUuidV7, uuidv7 } from "@/lib/uuid";
 import { SEED_DRAWS, SLUGS } from "@/seed/build";
@@ -349,16 +350,46 @@ describe("consensus service (spec §10)", () => {
     });
   });
 
-  describe("guards", () => {
-    it("refuses a scheduled match and a match outside a live tournament", () => {
+  describe("opening a match", () => {
+    it("the first legal submission walks a scheduled match to awaiting_scores as the player, each step audited", () => {
       const scheduled = bracketMatch(15);
       expect(scheduled.status).toBe("scheduled");
-      db().update(matches).set({ teamAId: bracketMatch(13).teamAId, teamBId: bracketMatch(13).teamBId }).where(eq(matches.id, scheduled.id)).run();
+      expect(scheduled.startedAt).toBeNull();
+      const { teamAId, teamBId } = bracketMatch(13);
+      db().update(matches).set({ teamAId, teamBId }).where(eq(matches.id, scheduled.id)).run();
+      const captainA = captainOf(teamAId);
+
+      // An illegal scoreline never takes the match off the schedule.
+      expect(() => submit(scheduled.id, captainA, [{ setNumber: 1, usPoints: 21, themPoints: 20 }])).toThrow(ConsensusError);
+      expect(reload(scheduled.id).status).toBe("scheduled");
+      expect(app.audits(scheduled.id, "match.status_changed")).toHaveLength(0);
+
+      const result = submit(scheduled.id, captainA, typed(A_WINS_3, "a"));
+      expect(result.outcome).toBe("awaiting_second");
+      const opened = reload(scheduled.id);
+      expect(opened.status).toBe("awaiting_scores");
+      expect(opened.startedAt).toBe(clock.now());
+      const steps = app.audits(scheduled.id, "match.status_changed");
+      expect(steps.map((a) => JSON.parse(a.detailJson ?? "{}"))).toEqual([
+        { from: "scheduled", to: "in_progress", submissionId: result.submissionId },
+        { from: "in_progress", to: "awaiting_scores", submissionId: result.submissionId },
+      ]);
+      expect(steps.every((a) => a.actorKind === "player" && a.actorUserId === captainA)).toBe(true);
+
+      // The other team agrees from a match already waiting: no further opening step.
+      expect(submit(scheduled.id, captainOf(teamBId), typed(A_WINS_3, "b")).outcome).toBe("agreed");
+      expect(app.audits(scheduled.id, "match.status_changed").map((a) => JSON.parse(a.detailJson ?? "{}").to)).toEqual(["in_progress", "awaiting_scores", "final"]);
+    });
+
+    it("refuses a match that is already settled, and a match outside a live tournament", () => {
+      const m = bracketMatch(13);
+      db().update(matches).set({ status: "forfeited", winnerTeamId: m.teamBId, finalizedAt: clock.now() }).where(eq(matches.id, m.id)).run();
       try {
-        submit(scheduled.id, captainOf(bracketMatch(13).teamAId), typed(A_WINS_3, "a"));
+        submit(m.id, captainOf(m.teamAId), typed(A_WINS_3, "a"));
         throw new Error("expected a refusal");
       } catch (err) {
         expect((err as ConsensusError).code).toBe("match_not_open");
+        expect((err as ConsensusError).detail).toMatchObject({ status: "forfeited" });
       }
       const settled = app.tournament(SLUGS.settled);
       const done = db()
@@ -377,8 +408,11 @@ describe("consensus service (spec §10)", () => {
   });
 
   describe("bracket trigger", () => {
-    it("seeds the bracket from the pools when the last pool match agrees", () => {
-      const organizer = { kind: "organizer" as const, userId: app.organizer().id };
+    const organizer = () => ({ kind: "organizer" as const, userId: app.organizer().id });
+    const oneSet: SetScore[] = [{ setNumber: 1, teamAPoints: 21, teamBPoints: 15 }];
+
+    /** A live pool_to_bracket event of four teams: six scheduled pool matches feeding one final. */
+    function drawnPoolEvent() {
       const charityId = app.data.charities[0]?.id ?? "";
       const created = createTournament(
         {
@@ -400,28 +434,25 @@ describe("consensus service (spec §10)", () => {
           prizeKind: "free_to_play_rewards",
           lucraGameId: "SIDEOUT_BEACH_2V2",
         },
-        organizer,
+        organizer(),
         clock,
       ).tournament;
       const players = app.data.users.filter((u) => u.role === "player");
-      const teamIds: string[] = [];
       for (let i = 0; i < 4; i += 1) {
         const id = uuidv7();
         db().insert(teams).values({ id, tournamentId: created.id, name: `Team ${i + 1}`, seed: null, status: "registered", createdAt: clock.now() + i }).run();
         db().insert(teamMembers).values({ id: uuidv7(), teamId: id, userId: players[i * 2]?.id ?? "", role: "captain" }).run();
         db().insert(teamMembers).values({ id: uuidv7(), teamId: id, userId: players[i * 2 + 1]?.id ?? "", role: "player" }).run();
-        teamIds.push(id);
       }
-      updateTournament(created.id, { status: "registration_open" }, organizer, clock);
-      updateTournament(created.id, { status: "registration_closed" }, organizer, clock);
+      updateTournament(created.id, { status: "registration_open" }, organizer(), clock);
+      updateTournament(created.id, { status: "registration_closed" }, organizer(), clock);
       runDraw(
         created.id,
         { stage: "pools", courts: 1, poolSize: 4, advance: { perPool: 2, bestRemaining: 0 }, poolBestOf: "1", bracketBestOf: "3", poolMatchMinutes: 30, bracketMatchMinutes: 50, restMinutes: 10, rngSeed: 7 },
-        organizer,
+        organizer(),
         { preview: false, clock },
       );
-      updateTournament(created.id, { status: "live" }, organizer, clock);
-      db().update(matches).set({ status: "in_progress" }).where(and(eq(matches.tournamentId, created.id), isNotNull(matches.poolId))).run();
+      updateTournament(created.id, { status: "live" }, organizer(), clock);
 
       const poolMatches = db()
         .select()
@@ -430,6 +461,7 @@ describe("consensus service (spec §10)", () => {
         .orderBy(asc(matches.scheduledAt))
         .all();
       expect(poolMatches).toHaveLength(6);
+      expect(poolMatches.every((m) => m.status === "scheduled")).toBe(true);
       const finalRow = () =>
         db()
           .select()
@@ -437,26 +469,67 @@ describe("consensus service (spec §10)", () => {
           .where(and(eq(matches.tournamentId, created.id), isNull(matches.poolId)))
           .get();
       expect(finalRow()).toMatchObject({ teamAId: null, teamBId: null, status: "scheduled" });
+      return { created, poolMatches, finalRow };
+    }
 
-      const oneSet: SetScore[] = [{ setNumber: 1, teamAPoints: 21, teamBPoints: 15 }];
-      let seededAt: string | null = null;
-      for (const pm of poolMatches) {
-        submit(pm.id, captainOf(pm.teamAId), typed(oneSet, "a"));
-        const r = submit(pm.id, captainOf(pm.teamBId), typed(oneSet, "b"));
-        expect(r.outcome).toBe("agreed");
-        if (r.bracketSeeded) seededAt = pm.id;
-      }
-      expect(seededAt).toBe(poolMatches.at(-1)?.id);
+    const agree = (pm: Match) => {
+      submit(pm.id, captainOf(pm.teamAId), typed(oneSet, "a"));
+      return submit(pm.id, captainOf(pm.teamBId), typed(oneSet, "b"));
+    };
+
+    function expectSeeded(created: { id: string }, finalRow: () => Match | undefined) {
       const final = finalRow();
       expect(final?.teamAId).not.toBeNull();
       expect(final?.teamBId).not.toBeNull();
       expect(app.audits(created.id, "tournament.bracket_seeded")).toHaveLength(1);
       expect(app.audits(created.id, "tournament.bracket_seeded")[0]?.actorKind).toBe("system");
       expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, created.id)).get()?.status).toBe("live");
+    }
+
+    it("seeds the bracket from the pools when the last pool match agrees", () => {
+      const { created, poolMatches, finalRow } = drawnPoolEvent();
+      let seededAt: string | null = null;
+      for (const pm of poolMatches) {
+        const r = agree(pm);
+        expect(r.outcome).toBe("agreed");
+        if (r.bracketSeeded) seededAt = pm.id;
+      }
+      expect(seededAt).toBe(poolMatches.at(-1)?.id);
+      expectSeeded(created, finalRow);
+    });
+
+    it("seeds the bracket when an organizer forfeit settles the last pool match", () => {
+      const { created, poolMatches, finalRow } = drawnPoolEvent();
+      const [fifth, last] = poolMatches.slice(-2);
+      if (!fifth || !last) throw new Error("expected six pool matches");
+      for (const pm of poolMatches.slice(0, -2)) expect(agree(pm).bracketSeeded).toBe(false);
+
+      // A forfeit with a pool match still to play leaves the bracket alone.
+      const earlier = forfeitMatch(fifth.id, fifth.teamAId ?? "", organizer(), clock);
+      expect(earlier.match.status).toBe("forfeited");
+      expect(earlier.bracketSeeded).toBe(false);
+      expect(finalRow()).toMatchObject({ teamAId: null, teamBId: null });
+
+      const done = forfeitMatch(last.id, last.teamAId ?? "", organizer(), clock);
+      expect(done.match.status).toBe("forfeited");
+      expect(done.bracketSeeded).toBe(true);
+      expectSeeded(created, finalRow);
     });
   });
 
   describe("read model", () => {
+    it("keeps differences in match orientation when team B submits first", () => {
+      const m = bracketMatch(13);
+      const other: SetScore[] = [A_WINS_3[0]!, A_WINS_3[1]!, { setNumber: 3, teamAPoints: 15, teamBPoints: 10 }];
+      submit(m.id, captainOf(m.teamBId), typed(other, "b"));
+      const result = submit(m.id, captainOf(m.teamAId), typed(A_WINS_3, "a"));
+      expect(result.outcome).toBe("disputed");
+      expect(result.consensus.live.map((s) => s.teamId)).toEqual([m.teamBId, m.teamAId]);
+      expect(result.consensus.differences).toEqual([{ setNumber: 3, a: A_WINS_3[2], b: other[2] }]);
+      expect(consensusRow(m.id)?.disputedReason).toBe("Set 3 differs: 15–12 vs 15–10");
+      expect(listDisputes(live.id).find((d) => d.match.id === m.id)?.consensus.differences).toEqual(result.consensus.differences);
+    });
+
     it("shows the seeded disputed match with both live submissions and the differing set", () => {
       const m = bracketMatch(11);
       const view = getConsensusView(m.id);

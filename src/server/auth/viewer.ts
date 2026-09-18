@@ -19,3 +19,16 @@ export async function viewer(): Promise<User | null> {
   const store = await cookies();
   return userForSessionToken(store.get(SESSION_COOKIE)?.value);
 }
+
+export type OrganizerGate = { organizer: User } | { organizer: null; user: User | null };
+
+/**
+ * The organizer rendering an organizer console page, or who must be refused.
+ * Every page under `/organizer` calls this before it reads anything: a layout
+ * that hides its children does not keep a page segment out of the RSC payload,
+ * so the gate has to sit in the page, ahead of its data.
+ */
+export async function organizerViewer(): Promise<OrganizerGate> {
+  const user = await viewer();
+  return user?.role === "organizer" ? { organizer: user } : { organizer: null, user };
+}

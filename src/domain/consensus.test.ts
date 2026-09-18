@@ -3,6 +3,7 @@ import { ACTOR_KINDS, CONSENSUS_STATES, type ActorKind, type ConsensusState } fr
 import {
   agreedOutcome,
   assertLegalScoreline,
+  assertMayRetryLucraWrite,
   assertMayWriteToLucra,
   canonicalizeSubmission,
   CLOSE_BLOCKING_CONSENSUS_STATES,
@@ -12,6 +13,7 @@ import {
   diffScorelines,
   idempotencyKeyFor,
   judgeSubmission,
+  LUCRA_RETRY_STATES,
   LUCRA_WRITABLE_STATES,
   LucraWriteRefused,
   OPEN_CONSENSUS_STATES,
@@ -21,7 +23,7 @@ import {
   toPerspective,
   transitionConsensus,
 } from "@/domain/consensus";
-import { hashScoreline } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 
 const actor = (kind: ActorKind) => ({ kind, userId: kind === "system" || kind === "lucra_webhook" ? null : "u1" });
 
@@ -52,10 +54,11 @@ describe("consensus transition table (spec §10)", () => {
     expect(CONSENSUS_TRANSITIONS).toHaveLength(10);
   });
 
-  it("names the states that are open, that block a close, and that may write to Lucra", () => {
+  it("names the states that are open, that block a close, that may write to Lucra, and that may retry", () => {
     expect([...OPEN_CONSENSUS_STATES].sort()).toEqual(["awaiting_first", "awaiting_second"]);
     expect([...CLOSE_BLOCKING_CONSENSUS_STATES].sort()).toEqual(["disputed", "partial", "rejected", "submitting"]);
-    expect([...LUCRA_WRITABLE_STATES].sort()).toEqual(["agreed", "partial", "rejected"]);
+    expect([...LUCRA_WRITABLE_STATES]).toEqual(["agreed"]);
+    expect([...LUCRA_RETRY_STATES].sort()).toEqual(["partial", "rejected"]);
   });
 
   it("never lets a player leave disputed, and never lets anyone skip agreed", () => {
@@ -199,29 +202,41 @@ describe("entering agreed", () => {
   });
 });
 
+function refusalCode(fn: () => void): LucraWriteRefused["code"] | null {
+  try {
+    fn();
+    return null;
+  } catch (err) {
+    if (err instanceof LucraWriteRefused) return err.code;
+    throw err;
+  }
+}
+
 describe("assertMayWriteToLucra (spec §10.5)", () => {
-  it("passes only agreed (or a retry after rejected/partial) with a minted key", () => {
+  it("passes agreed with a minted key and nothing else", () => {
     for (const state of CONSENSUS_STATES) {
       const row = { matchId: "m1", state, idempotencyKey: "k" };
-      if (LUCRA_WRITABLE_STATES.has(state)) {
-        expect(() => assertMayWriteToLucra(row)).not.toThrow();
-      } else {
-        expect(() => assertMayWriteToLucra(row)).toThrow(LucraWriteRefused);
-        try {
-          assertMayWriteToLucra(row);
-        } catch (err) {
-          expect((err as LucraWriteRefused).code).toBe("not_agreed");
-        }
-      }
+      expect(refusalCode(() => assertMayWriteToLucra(row)), state).toBe(state === "agreed" ? null : "not_agreed");
     }
   });
 
   it("refuses an agreed consensus without its key", () => {
-    expect(() => assertMayWriteToLucra({ matchId: "m1", state: "agreed", idempotencyKey: null })).toThrow(LucraWriteRefused);
-    try {
-      assertMayWriteToLucra({ matchId: "m1", state: "agreed", idempotencyKey: null });
-    } catch (err) {
-      expect((err as LucraWriteRefused).code).toBe("missing_idempotency_key");
+    expect(refusalCode(() => assertMayWriteToLucra({ matchId: "m1", state: "agreed", idempotencyKey: null }))).toBe("missing_idempotency_key");
+  });
+});
+
+describe("assertMayRetryLucraWrite", () => {
+  it("passes only rejected or partial with the key the first write used", () => {
+    for (const state of CONSENSUS_STATES) {
+      const row = { matchId: "m1", state, idempotencyKey: "k" };
+      expect(refusalCode(() => assertMayRetryLucraWrite(row)), state).toBe(LUCRA_RETRY_STATES.has(state) ? null : "not_retryable");
     }
+    expect(refusalCode(() => assertMayRetryLucraWrite({ matchId: "m1", state: "rejected", idempotencyKey: null }))).toBe("missing_idempotency_key");
+  });
+
+  it("never overlaps the first-write gate: agreed is not a retry, a failed attempt is not a first write", () => {
+    expect(refusalCode(() => assertMayRetryLucraWrite({ matchId: "m1", state: "agreed", idempotencyKey: "k" }))).toBe("not_retryable");
+    expect(refusalCode(() => assertMayWriteToLucra({ matchId: "m1", state: "rejected", idempotencyKey: "k" }))).toBe("not_agreed");
+    expect([...LUCRA_WRITABLE_STATES].filter((s) => LUCRA_RETRY_STATES.has(s))).toEqual([]);
   });
 });

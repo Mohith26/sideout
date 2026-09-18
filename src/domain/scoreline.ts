@@ -1,13 +1,13 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { BestOf } from "@/db/schema";
 
 /**
- * Beach volleyball scoreline rules and the canonical hash the consensus state
- * machine compares (spec §10.1, §10.4). Pure functions, no I/O.
- * `@/domain/consensus` builds the state machine on top of these; the seed uses
- * them so every seeded result is a legal one and the disputed match's two
- * submissions hash differently.
+ * Beach volleyball scoreline rules (spec §10.4). Pure functions, no I/O and no
+ * Node built-ins: the score sheet judges legality in the browser with these.
+ * The canonical form and hash the consensus compares live in
+ * `@/domain/scoreline-hash`; `@/domain/consensus` builds the state machine on
+ * both, and the seed uses them so every seeded result is a legal one and the
+ * disputed match's two submissions hash differently.
  */
 
 export const SET_TARGET = 21;
@@ -89,34 +89,6 @@ export function judgeMatch(sets: readonly SetScore[], bestOf: BestOf): MatchVerd
   if (won.a === needed) return { legal: true, winner: "a", setsWon: won };
   if (won.b === needed) return { legal: true, winner: "b", setsWon: won };
   return { legal: false, reason: `Nobody has won ${needed} set(s) yet; the match is not finished.` };
-}
-
-// OPEN: (§17.9) Lucra offers no partner-side attestation or dual-confirmation
-// contract. The canonical hash and the consensus built on it stand on their own;
-// nothing in the Lucra write depends on Lucra acknowledging them.
-/**
- * Canonical form: sets ordered by number, always oriented from team A's side,
- * keys in a fixed order, no whitespace. Two honest submissions of the same
- * result — one typed by each team — produce byte-identical output.
- *
- * `perspective` says which team the submitter typed as "us": a team-B submitter
- * enters their own points first, and canonicalization flips them back.
- */
-export function canonicalizeScoreline(scoreline: Scoreline, perspective: Side = "a"): string {
-  const parsed = scorelineSchema.parse(scoreline);
-  const sets = [...parsed.sets]
-    .sort((x, y) => x.setNumber - y.setNumber)
-    .map((s) => {
-      const a = perspective === "a" ? s.teamAPoints : s.teamBPoints;
-      const b = perspective === "a" ? s.teamBPoints : s.teamAPoints;
-      return `[${s.setNumber},${a},${b}]`;
-    });
-  return `{"matchId":${JSON.stringify(parsed.matchId)},"sets":[${sets.join(",")}]}`;
-}
-
-/** sha256 hex of the canonical scoreline; what `score_submissions.payload_hash` stores. */
-export function hashScoreline(scoreline: Scoreline, perspective: Side = "a"): string {
-  return createHash("sha256").update(canonicalizeScoreline(scoreline, perspective)).digest("hex");
 }
 
 /** Human-readable "21–18, 19–21, 15–12" from team A's side. */

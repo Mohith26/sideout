@@ -15,9 +15,16 @@ import { log } from "@/lib/log";
  * The same build must not contain `POST /api/dev/login`: `next.config.ts`
  * registers its `dev.ts` page extension only outside production or with
  * `SIDEOUT_DEV_LOGIN=true`, and this build sets neither.
+ *
+ * Nor may the client output carry Node's `crypto` polyfill: the score sheet
+ * judges legality in the browser with `@/domain/scoreline`, and the hash that
+ * needs `node:crypto` lives in `@/domain/scoreline-hash` so a client component
+ * that reaches it would pull the whole `crypto-browserify` bundle down to a
+ * phone on the sand.
  */
 const VARIABLE_NAME = "LUCRA_BACKEND_API_KEY";
 const SENTINEL = "sideout-backend-key-sentinel-4b1f9e2d";
+const CRYPTO_POLYFILL = "/crypto-browserify/";
 const CLIENT_OUTPUT = resolve(process.cwd(), ".next", "static");
 const DEV_LOGIN_OUTPUT = resolve(process.cwd(), ".next", "server", "app", "api", "dev");
 
@@ -43,10 +50,13 @@ if (files.length === 0) {
   throw new Error(`No client output under ${CLIENT_OUTPUT}; did the build run?`);
 }
 
-const leaks = files.filter((file) => {
+const leaks: string[] = [];
+const polyfilled: string[] = [];
+for (const file of files) {
   const bytes = readFileSync(file);
-  return bytes.includes(SENTINEL) || bytes.includes(VARIABLE_NAME);
-});
+  if (bytes.includes(SENTINEL) || bytes.includes(VARIABLE_NAME)) leaks.push(file);
+  if (bytes.includes(CRYPTO_POLYFILL)) polyfilled.push(file);
+}
 
 if (leaks.length > 0) {
   for (const file of leaks) {
@@ -55,6 +65,15 @@ if (leaks.length > 0) {
   process.exitCode = 1;
 } else {
   log.info("client bundle is clean", { scanned: files.length, variable: VARIABLE_NAME });
+}
+
+if (polyfilled.length > 0) {
+  for (const file of polyfilled) {
+    log.error("node crypto polyfill reached a client bundle", { file: relative(process.cwd(), file) });
+  }
+  process.exitCode = 1;
+} else {
+  log.info("client bundle has no node crypto polyfill");
 }
 
 if (existsSync(DEV_LOGIN_OUTPUT)) {

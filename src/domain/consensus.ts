@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ActorKind, BestOf, ConsensusState, MatchConsensus } from "@/db/schema";
-import { formatSets, hashScoreline, judgeMatch, judgeSet, setTarget, type MatchVerdict, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
+import { formatSets, judgeMatch, judgeSet, setTarget, type MatchVerdict, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 import type { TransitionActor, TransitionVerdict } from "@/domain/transitions";
 
 /**
@@ -20,8 +21,10 @@ import type { TransitionActor, TransitionVerdict } from "@/domain/transitions";
  *     └─ organizer retries ──► submitting
  *
  * Everything from `agreed` onward belongs to the Lucra phase; the edges exist
- * here so the table is the whole machine, and `assertMayWriteToLucra` is the
- * one gate every Lucra write must pass (§10.5).
+ * here so the table is the whole machine. `assertMayWriteToLucra` is the gate
+ * every Lucra write must pass (§10.5): only `agreed`. An organizer's retry of
+ * a `rejected`/`partial` attempt passes `assertMayRetryLucraWrite` instead,
+ * named so a retry is never mistaken for a first write.
  */
 
 // ---------------------------------------------------------------------------
@@ -78,8 +81,11 @@ export const OPEN_CONSENSUS_STATES: ReadonlySet<ConsensusState> = new Set(["awai
  */
 export const CLOSE_BLOCKING_CONSENSUS_STATES: ReadonlySet<ConsensusState> = new Set(["disputed", "submitting", "rejected", "partial"]);
 
-/** States from which a Lucra write may start: agreed, or a retry after a failed attempt. */
-export const LUCRA_WRITABLE_STATES: ReadonlySet<ConsensusState> = new Set(["agreed", "rejected", "partial"]);
+/** The one state from which a Lucra write may start (spec §10.5). */
+export const LUCRA_WRITABLE_STATES: ReadonlySet<ConsensusState> = new Set(["agreed"]);
+
+/** States from which an organizer may retry a Lucra write that did not fully land, with the same key. */
+export const LUCRA_RETRY_STATES: ReadonlySet<ConsensusState> = new Set(["rejected", "partial"]);
 
 export function transitionConsensus(from: ConsensusState, to: ConsensusState, actor: TransitionActor): TransitionVerdict {
   if (from === to) return { ok: false, reason: `The consensus is already ${to}.` };
@@ -320,7 +326,7 @@ export function agreedOutcome(match: { id: string; teamAId: string | null; teamB
 
 export class LucraWriteRefused extends Error {
   constructor(
-    readonly code: "not_agreed" | "missing_idempotency_key",
+    readonly code: "not_agreed" | "not_retryable" | "missing_idempotency_key",
     message: string,
   ) {
     super(message);
@@ -328,24 +334,40 @@ export class LucraWriteRefused extends Error {
   }
 }
 
-export type LucraWritableConsensus = Pick<MatchConsensus, "matchId" | "state" | "idempotencyKey"> & {
-  state: "agreed" | "rejected" | "partial";
-  idempotencyKey: string;
-};
+type ConsensusGateInput = Pick<MatchConsensus, "matchId" | "state" | "idempotencyKey">;
 
-/**
- * Only `agreed` may trigger a Lucra write (spec §10.5), asserted in code, not
- * by convention: phase 4 calls this before building any request. A retry after
- * `rejected` or `partial` is the same write with the same key, so those pass
- * too; nothing else does, and a consensus without its minted key never does.
- */
-export function assertMayWriteToLucra(consensus: Pick<MatchConsensus, "matchId" | "state" | "idempotencyKey">): asserts consensus is LucraWritableConsensus {
-  if (!LUCRA_WRITABLE_STATES.has(consensus.state)) {
-    throw new LucraWriteRefused("not_agreed", `Match ${consensus.matchId} consensus is ${consensus.state}; only an agreed scoreline is written to Lucra.`);
-  }
+export type LucraWritableConsensus = ConsensusGateInput & { state: "agreed"; idempotencyKey: string };
+export type LucraRetryableConsensus = ConsensusGateInput & { state: "rejected" | "partial"; idempotencyKey: string };
+
+function assertMintedKey(consensus: ConsensusGateInput): asserts consensus is ConsensusGateInput & { idempotencyKey: string } {
   if (!consensus.idempotencyKey) {
     throw new LucraWriteRefused("missing_idempotency_key", `Match ${consensus.matchId} consensus has no idempotency key; it was never entered as agreed.`);
   }
+}
+
+/**
+ * Only `agreed` may trigger a Lucra write (spec §10.5), asserted in code, not
+ * by convention: phase 4 calls this before building any request. Nothing else
+ * passes, and a consensus without its minted key never does.
+ */
+export function assertMayWriteToLucra(consensus: ConsensusGateInput): asserts consensus is LucraWritableConsensus {
+  if (!LUCRA_WRITABLE_STATES.has(consensus.state)) {
+    throw new LucraWriteRefused("not_agreed", `Match ${consensus.matchId} consensus is ${consensus.state}; only an agreed scoreline is written to Lucra.`);
+  }
+  assertMintedKey(consensus);
+}
+
+/**
+ * An organizer's retry after `rejected` or `partial` (§10's `organizer_retry`
+ * edges): the same write, with the key minted when the consensus was agreed.
+ * Deliberately not `assertMayWriteToLucra`, so a first write can never be
+ * built from a failed one by accident.
+ */
+export function assertMayRetryLucraWrite(consensus: ConsensusGateInput): asserts consensus is LucraRetryableConsensus {
+  if (!LUCRA_RETRY_STATES.has(consensus.state)) {
+    throw new LucraWriteRefused("not_retryable", `Match ${consensus.matchId} consensus is ${consensus.state}; only a rejected or partial Lucra write is retried.`);
+  }
+  assertMintedKey(consensus);
 }
 
 // ---------------------------------------------------------------------------

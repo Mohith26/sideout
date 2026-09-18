@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { findSubmitterTeam, getConsensusView, listLiveSubmissions, type ConsensusView } from "@/db/queries/consensus";
 import { getMatchDetail, type MatchDetail } from "@/db/queries/tournaments";
@@ -8,6 +8,7 @@ import { advanceWinner } from "@/domain/bracket";
 import {
   agreedOutcome,
   assertLegalScoreline,
+  assertMayRetryLucraWrite,
   assertMayWriteToLucra,
   canonicalizeSubmission,
   CONSENSUS_AUDIT,
@@ -25,14 +26,12 @@ import {
   type SubmittedScoreline,
 } from "@/domain/consensus";
 import type { SetScore, Side } from "@/domain/scoreline";
-import { TERMINAL_MATCH_STATUSES, transitionMatch, type TransitionActor } from "@/domain/transitions";
+import { transitionMatch, type TransitionActor } from "@/domain/transitions";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
-import { errorMessage, log } from "@/lib/log";
 import { uuidv7 } from "@/lib/uuid";
 import { SYSTEM_ACTOR, writeAudit, type Tx } from "@/server/audit";
-import { seedBracketFromPools } from "@/server/draw";
-import { applyAdvancement } from "@/server/matches";
+import { applyAdvancement, seedBracketIfPoolsComplete } from "@/server/matches";
 
 /**
  * The consensus service: the trust boundary between a phone on the sand and
@@ -43,18 +42,26 @@ import { applyAdvancement } from "@/server/matches";
  *                        judged first; the scoreline is canonicalized to the
  *                        match orientation and hashed; the team is resolved
  *                        from `team_members`, never trusted from the client.
+ *                        The first legal submission is what takes a match off
+ *                        the schedule: `scheduled → in_progress →
+ *                        awaiting_scores`, as the player, each step audited.
  * - `resolveDispute`   — an organizer settles a dispute with an authoritative
  *                        scoreline, attributed to them.
  *
  * Both reach `agreed` through `enterAgreed`: the agreed `sets` rows are
  * written, the match becomes `final` (actor `system`), the winner advances
  * through `@/domain/bracket`, and the idempotency key is minted exactly once.
+ * After the transaction commits, `seedBracketIfPoolsComplete` (shared with
+ * the organizer forfeit in `@/server/matches`) unlocks the bracket when this
+ * was the last pool match.
  *
  * `assertMayWriteToLucra` (re-exported from the domain) is the gate phase 4
- * must call before any Lucra request. Nothing here talks to Lucra.
+ * must call before any Lucra request; `assertMayRetryLucraWrite` is the one
+ * an organizer's retry of a failed attempt calls instead. Nothing here talks
+ * to Lucra.
  */
 
-export { assertMayWriteToLucra };
+export { assertMayRetryLucraWrite, assertMayWriteToLucra };
 
 export type ConsensusOutcome = Extract<ConsensusState, "awaiting_second" | "agreed" | "disputed">;
 
@@ -183,6 +190,25 @@ function enterAgreed(
   applyAdvancement(tx, advancement, loaded.match.status, SYSTEM_ACTOR, { consensusId: consensus.id, hash: outcome.hash });
 }
 
+/** Match statuses a team may submit a scoreline for. */
+const SUBMITTABLE_MATCH_STATUSES: ReadonlySet<Match["status"]> = new Set(["scheduled", "in_progress", "awaiting_scores"]);
+
+/**
+ * Walk the match to `awaiting_scores` as the submitting player: a scheduled
+ * match goes on the sand first (`started_at` is this submission's time), and
+ * a match in progress is now waiting on the other team's reading.
+ */
+function openForScores(tx: Tx, loaded: LoadedMatch, actor: TransitionActor, now: number, detail: Record<string, unknown>): void {
+  if (loaded.match.status === "scheduled") {
+    moveMatch(tx, loaded.match, "in_progress", actor, now, { startedAt: now }, detail);
+    loaded.match = { ...loaded.match, status: "in_progress", startedAt: now };
+  }
+  if (loaded.match.status === "in_progress") {
+    moveMatch(tx, loaded.match, "awaiting_scores", actor, now, {}, detail);
+    loaded.match = { ...loaded.match, status: "awaiting_scores" };
+  }
+}
+
 function assertLive(loaded: LoadedMatch): void {
   if (loaded.tournamentStatus !== "live") {
     throw new ConsensusError("match_not_open", `Scores are recorded while the tournament is live; it is ${loaded.tournamentStatus}.`, {
@@ -224,8 +250,8 @@ export function submitScoreline(input: SubmitScorelineInput, clock: Clock = syst
           : "Both teams have already confirmed this result; it is final.";
       throw new ConsensusError("already_submitted_by_team", message, { code: "already_submitted_by_team", state: existing.state });
     }
-    if (match.status !== "in_progress" && match.status !== "awaiting_scores") {
-      throw new ConsensusError("match_not_open", `Scores are submitted for a match that is in progress or awaiting scores; this one is ${match.status}.`, {
+    if (!SUBMITTABLE_MATCH_STATUSES.has(match.status)) {
+      throw new ConsensusError("match_not_open", `Scores are submitted for a match that is scheduled, in progress or awaiting scores; this one is ${match.status}.`, {
         code: "match_not_open",
         status: match.status,
       });
@@ -297,24 +323,18 @@ export function submitScoreline(input: SubmitScorelineInput, clock: Clock = syst
         } else {
           tx.update(matchConsensus).set({ updatedAt: now }).where(eq(matchConsensus.id, consensus.id)).run();
         }
-        if (match.status === "in_progress") moveMatch(tx, match, "awaiting_scores", actor, now, {}, { submissionId });
+        openForScores(tx, loaded, actor, now, { submissionId });
         return { outcome: "awaiting_second" as const, replaced: decision.replaced, submissionId, perspective: membership.side };
       }
       case "agreed": {
-        if (match.status === "in_progress") {
-          // The first submission always moves the match on; reaching here from in_progress means a stale row, not a live one.
-          moveMatch(tx, match, "awaiting_scores", actor, now, {}, { submissionId });
-          loaded.match = { ...match, status: "awaiting_scores" };
-        }
+        // The first submission always moves the match on; reaching here before awaiting_scores means a stale row, not a live one.
+        openForScores(tx, loaded, actor, now, { submissionId });
         const outcome = agreedOutcome(match, canonical.sets);
         enterAgreed(tx, loaded, consensus, outcome, actor, now, { resolvedByUserId: null, event: "matching_submission" });
         return { outcome: "agreed" as const, replaced: mine !== null, submissionId, perspective: membership.side };
       }
       case "disputed": {
-        if (match.status === "in_progress") {
-          moveMatch(tx, match, "awaiting_scores", actor, now, {}, { submissionId });
-          loaded.match = { ...match, status: "awaiting_scores" };
-        }
+        openForScores(tx, loaded, actor, now, { submissionId });
         moveConsensus(tx, consensus, "disputed", actor, now, { disputedReason: decision.reason }, { event: "conflicting_submission", reason: decision.reason, hashes: [standing?.payloadHash ?? null, canonical.hash] });
         moveMatch(tx, loaded.match, "disputed", SYSTEM_ACTOR, now, {}, { consensusId: consensus.id, reason: decision.reason });
         return { outcome: "disputed" as const, replaced: false, submissionId, perspective: membership.side };
@@ -401,46 +421,6 @@ export function resolveDispute(input: ResolveDisputeInput, clock: Clock = system
 }
 
 // ---------------------------------------------------------------------------
-// Bracket trigger
-// ---------------------------------------------------------------------------
-
-/**
- * When the last pool match of a `pool_to_bracket` event finalizes, seed the
- * bracket from the pool standings so organizers do not have to
- * (`docs/open-questions.md`, follow-ups). Runs after the consensus
- * transaction committed: a failure here must never undo a recorded score, so
- * it is logged and reported, and the organizer's `{ stage: "bracket" }` draw
- * request remains available.
- */
-function seedBracketIfPoolsComplete(matchId: string, clock: Clock): boolean {
-  const db = getDb();
-  const match = db.select().from(matches).where(eq(matches.id, matchId)).get();
-  if (!match || match.poolId === null) return false;
-  const t = db.select({ format: tournaments.format, status: tournaments.status }).from(tournaments).where(eq(tournaments.id, match.tournamentId)).get();
-  if (!t || t.format !== "pool_to_bracket" || t.status !== "live") return false;
-  const poolMatches = db
-    .select({ status: matches.status })
-    .from(matches)
-    .where(and(eq(matches.tournamentId, match.tournamentId), isNotNull(matches.poolId)))
-    .all();
-  if (poolMatches.some((m) => !TERMINAL_MATCH_STATUSES.has(m.status))) return false;
-  const roundOne = db
-    .select({ teamAId: matches.teamAId, teamBId: matches.teamBId, status: matches.status })
-    .from(matches)
-    .where(and(eq(matches.tournamentId, match.tournamentId), isNull(matches.poolId), eq(matches.round, 1)))
-    .all();
-  // Already seeded (or no bracket): nothing to do.
-  if (roundOne.length === 0 || roundOne.some((m) => m.teamAId !== null || m.teamBId !== null || m.status !== "scheduled")) return false;
-  try {
-    seedBracketFromPools(match.tournamentId, SYSTEM_ACTOR, { preview: false, clock });
-    return true;
-  } catch (err) {
-    log.error("consensus: bracket seeding after the last pool match failed", { tournamentId: match.tournamentId, message: errorMessage(err) }, err);
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // The Lucra gate, loaded from rows
 // ---------------------------------------------------------------------------
 
@@ -448,7 +428,7 @@ function seedBracketIfPoolsComplete(matchId: string, clock: Clock): boolean {
  * Load a match's consensus and assert it may be written to Lucra. Phase 4
  * builds every request from the row this returns and nothing else.
  */
-export function requireLucraWritableConsensus(matchId: string): MatchConsensus & { idempotencyKey: string } {
+export function requireLucraWritableConsensus(matchId: string): MatchConsensus & { state: "agreed"; idempotencyKey: string } {
   const row = getDb().select().from(matchConsensus).where(eq(matchConsensus.matchId, matchId)).get();
   if (!row) throw new ApiFailure("conflict", `Match ${matchId} has no consensus; nothing to write.`);
   assertMayWriteToLucra(row);

@@ -37,7 +37,7 @@ export interface ConsensusView {
   live: SubmissionView[];
   /** Every row ever recorded for the match, newest first. */
   history: SubmissionView[];
-  /** Where the two live team submissions disagree (empty unless both exist and differ). */
+  /** Where the two live team submissions disagree, `a` being team A's reading (empty unless both exist and differ). */
   differences: SetDifference[];
 }
 
@@ -97,17 +97,19 @@ function consensusViews(tx: Tx, matchIds: readonly string[]): Map<string, Consen
   const out = new Map<string, ConsensusView>();
   if (matchIds.length === 0) return out;
   const rows = tx
-    .select({ consensus: matchConsensus, resolverName: users.displayName })
+    .select({ consensus: matchConsensus, resolverName: users.displayName, teamAId: matches.teamAId, teamBId: matches.teamBId })
     .from(matchConsensus)
+    .innerJoin(matches, eq(matches.id, matchConsensus.matchId))
     .leftJoin(users, eq(users.id, matchConsensus.resolvedByUserId))
     .where(inArray(matchConsensus.matchId, [...matchIds]))
     .all();
   const submissions = submissionViews(tx, matchIds);
-  for (const { consensus, resolverName } of rows) {
+  for (const { consensus, resolverName, teamAId, teamBId } of rows) {
     const history = submissions.get(consensus.matchId) ?? [];
     const live = history.filter((s) => s.supersededById === null).sort((x, y) => x.createdAt - y.createdAt);
-    const teamSides = live.filter((s) => s.teamId !== null);
-    const [first, second] = teamSides;
+    // `differences[].a`/`.b` are the match's sides, whichever team submitted first.
+    const sideA = teamAId === null ? undefined : live.find((s) => s.teamId === teamAId);
+    const sideB = teamBId === null ? undefined : live.find((s) => s.teamId === teamBId);
     let agreedSets: SetScore[] | null = null;
     if (consensus.agreedPayloadJson) {
       const parsed: unknown = JSON.parse(consensus.agreedPayloadJson);
@@ -124,7 +126,7 @@ function consensusViews(tx: Tx, matchIds: readonly string[]): Map<string, Consen
       agreedSets,
       live,
       history,
-      differences: first && second && first.teamId !== second.teamId ? diffScorelines(first.sets, second.sets) : [],
+      differences: sideA && sideB ? diffScorelines(sideA.sets, sideB.sets) : [],
     });
   }
   return out;

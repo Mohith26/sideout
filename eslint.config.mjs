@@ -2,6 +2,22 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+const restrictedImports = {
+  paths: [
+    {
+      name: "@/env",
+      importNames: ["default"],
+      message: "Import the named `env` export.",
+    },
+  ],
+  patterns: [
+    {
+      group: ["**/log", "!@/lib/log"],
+      message: "Log through @/lib/log only.",
+    },
+  ],
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -29,20 +45,23 @@ const eslintConfig = defineConfig([
         "error",
         { prefer: "type-imports", fixStyle: "inline-type-imports" },
       ],
+      "no-restricted-imports": ["error", restrictedImports],
+    },
+  },
+  {
+    // Components may ship to the browser: the scoreline hash needs Node's
+    // crypto and would drag its polyfill into the client bundle.
+    files: ["src/components/**"],
+    rules: {
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            {
-              name: "@/env",
-              importNames: ["default"],
-              message: "Import the named `env` export.",
-            },
-          ],
+          ...restrictedImports,
           patterns: [
+            ...restrictedImports.patterns,
             {
-              group: ["**/log", "!@/lib/log"],
-              message: "Log through @/lib/log only.",
+              group: ["**/scoreline-hash"],
+              message: "The scoreline hash is server-side; components judge legality with @/domain/scoreline alone.",
             },
           ],
         },

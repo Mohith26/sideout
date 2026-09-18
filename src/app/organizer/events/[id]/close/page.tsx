@@ -4,17 +4,19 @@ import { notFound } from "next/navigation";
 import { CloseFlow } from "@/components/consensus/CloseFlow";
 import { Container } from "@/components/shell/AppShell";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
+import { OrganizerAccessRequired } from "@/components/shell/OrganizerAccessRequired";
 import { Icons } from "@/components/ui/icons";
 import { StatusPill, TOURNAMENT_STATUS_PILL } from "@/components/ui/StatusPill";
 import { getTournamentSummaryById } from "@/db/queries/tournaments";
-import { load } from "@/lib/load";
+import { load, loadAsync } from "@/lib/load";
+import { organizerViewer } from "@/server/auth/viewer";
 import { closedByName as findCloser, previewClose, readStoredClosePreview } from "@/server/close";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: PageProps<"/organizer/events/[id]/close">): Promise<Metadata> {
   const { id } = await params;
-  const loaded = load(() => getTournamentSummaryById(id));
+  const loaded = await loadAsync(async () => ((await organizerViewer()).organizer ? getTournamentSummaryById(id) : null));
   return { title: loaded.ok && loaded.data ? `Close · ${loaded.data.tournament.name}` : "Close event" };
 }
 
@@ -22,10 +24,14 @@ export async function generateMetadata({ params }: PageProps<"/organizer/events/
  * The close-tournament flow (spec §11.6): step one is the frozen preview of
  * final standings and projected payouts, or the list of every match still
  * blocking; step two is the explicit confirm that posts the preview hash.
- * Once closed, the page shows what was frozen.
+ * Once closed, the page shows what was frozen. The gate runs first: nobody
+ * else's render computes a preview, drafts included.
  */
 export default async function CloseTournamentPage({ params }: PageProps<"/organizer/events/[id]/close">) {
   const { id } = await params;
+  const gate = await loadAsync(() => organizerViewer());
+  if (!gate.ok) return <DatabaseNotReady message={gate.message} />;
+  if (!gate.data.organizer) return <OrganizerAccessRequired user={gate.data.user} />;
   const loaded = load(() => {
     const summary = getTournamentSummaryById(id);
     if (!summary) return null;

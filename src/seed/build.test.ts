@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { NewMatch, NewScoreSubmission, NewSetRow } from "@/db/schema";
 import { storedSubmissionSets } from "@/domain/consensus";
-import { hashScoreline, judgeMatch, judgeSet, setTarget, type SetScore } from "@/domain/scoreline";
+import { judgeMatch, judgeSet, setTarget, type SetScore } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 import { draw, drawConfigSchema, seedBracketSlots, selectAdvancing } from "@/domain/draw";
 import { computeStandings, type StandingsMatch } from "@/domain/standings";
 import { isUuidV7 } from "@/lib/uuid";

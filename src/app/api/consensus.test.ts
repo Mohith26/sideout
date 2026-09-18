@@ -136,11 +136,16 @@ describe("consensus routes (spec §9, §10)", () => {
       expect(expectFailure(blocked, 409, "conflict").detail).toMatchObject({ code: "already_submitted_by_team", state: "disputed" });
     });
 
-    it("refuses a match that is not open for scores", async () => {
+    it("takes a scheduled match on the sand with its first submission, and refuses a settled one", async () => {
       const m = at(15);
       app.conn.db.update(matches).set({ teamAId: at(13).teamAId, teamBId: at(13).teamBId }).where(eq(matches.id, m.id)).run();
-      const res = await submit(m.id, captainOf(at(13).teamAId), typed(A_WINS, "a"));
-      expect(expectFailure(res, 409, "conflict").detail).toEqual({ code: "match_not_open", status: "scheduled" });
+      const first = await submit(m.id, captainOf(at(13).teamAId), typed(A_WINS, "a"));
+      expect(first.status).toBe(201);
+      expect(first.body.data.match.match.status).toBe("awaiting_scores");
+
+      app.conn.db.update(matches).set({ status: "forfeited", winnerTeamId: at(13).teamBId }).where(eq(matches.id, m.id)).run();
+      const res = await submit(m.id, captainOf(at(13).teamBId), typed(A_WINS, "b"));
+      expect(expectFailure(res, 409, "conflict").detail).toEqual({ code: "match_not_open", status: "forfeited" });
     });
   });
 

@@ -34,17 +34,8 @@ import {
 import { canonicalizeSubmission, CONSENSUS_AUDIT, describeDifferences, diffScorelines, toPerspective, type StoredSubmission } from "@/domain/consensus";
 import { computeStandings, type StandingRow, type StandingsMatch } from "@/domain/standings";
 import { assertTeamRoster } from "@/domain/team";
-import {
-  DECIDING_SET_TARGET,
-  SET_TARGET,
-  hashScoreline,
-  judgeMatch,
-  judgeSet,
-  setTarget,
-  type Scoreline,
-  type SetScore,
-  type Side,
-} from "@/domain/scoreline";
+import { DECIDING_SET_TARGET, SET_TARGET, judgeMatch, judgeSet, setTarget, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 import { pairName, surname } from "@/lib/format";
 import { createRng, type Rng } from "@/lib/rng";
 import { createUuidV7Generator, shortId } from "@/lib/uuid";

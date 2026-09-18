@@ -23,7 +23,9 @@ export const dynamic = "force-dynamic";
 /**
  * Match detail (spec §11.3): the two teams, court and round, where the
  * consensus stands, the agreed sets once final, and — for a signed-in member
- * of either team while the match is open — the score submission sheet.
+ * of either team while the match is open, a scheduled match with both teams
+ * included — the score submission sheet; the first submission takes it on
+ * the sand.
  *
  * What each viewer sees of the submissions is deliberate: a team sees its own
  * scoreline while waiting, never the opponent's, so the second submission is
@@ -149,7 +151,7 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
   const submittedBy = liveTeam[0]?.teamName ?? null;
   const waitingOn = submittedBy ? (liveTeam[0]?.teamId === match.teamAId ? teamB?.name : teamA?.name) : null;
 
-  const open = (match.status === "in_progress" || match.status === "awaiting_scores") && (state === null || state === "awaiting_first" || state === "awaiting_second");
+  const open = (match.status === "scheduled" || match.status === "in_progress" || match.status === "awaiting_scores") && (state === null || state === "awaiting_first" || state === "awaiting_second");
   const canSubmit = open && tournament.status === "live" && us !== null && them !== null && viewerSide !== null;
   const showCompare = state === "disputed" && (viewerSide !== null || viewerRole === "organizer") && liveTeam.length === 2;
   const winnerSide = match.winnerTeamId ? (match.winnerTeamId === match.teamAId ? "a" : "b") : null;

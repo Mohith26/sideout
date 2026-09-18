@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import { DisputeCard } from "@/components/consensus/DisputeCard";
 import { Container } from "@/components/shell/AppShell";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
+import { OrganizerAccessRequired } from "@/components/shell/OrganizerAccessRequired";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { listDisputes } from "@/db/queries/consensus";
 import { getTournamentSummaryById } from "@/db/queries/tournaments";
-import { load } from "@/lib/load";
+import { load, loadAsync } from "@/lib/load";
+import { organizerViewer } from "@/server/auth/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +17,12 @@ export const metadata: Metadata = { title: "Disputes" };
  * The dispute queue (spec §11.6): the organizer console's primary alert
  * surface. Every match whose two scorelines differ, oldest first, each with
  * a resolve form. The organizer's scoreline is authoritative and attributed.
+ * The gate runs first: nobody else's render reads a single dispute.
  */
-export default function DisputesPage() {
+export default async function DisputesPage() {
+  const gate = await loadAsync(() => organizerViewer());
+  if (!gate.ok) return <DatabaseNotReady message={gate.message} />;
+  if (!gate.data.organizer) return <OrganizerAccessRequired user={gate.data.user} />;
   const loaded = load(() => {
     const disputes = listDisputes();
     const timezones = new Map<string, string>();
