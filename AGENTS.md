@@ -19,6 +19,11 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   before touching routing, caching, fonts, or config. `params` is a Promise;
   `PageProps`/`LayoutProps`/`RouteContext` come from `next typegen` (run by
   `npm run typecheck`, as a production build, so it never lists the dev-login route).
+- The public demo is a Railway service built from `Dockerfile` + `railway.json` (start
+  command: seed once, migrate every boot, `next start`; `docker-entrypoint.sh` drops to
+  `node`); `docs/deploy.md` "Deployed" has the URL, the variables and the one redeploy
+  command, and `src/docker.test.ts` pins the container contract. `tsx` is a production
+  dependency because the start command's CLIs run on it.
 - CI (`.github/workflows/ci.yml`) mirrors `.no-mistakes.yaml` in its `build-test` job; keep
   them in sync. Its separate `e2e` job runs `npm run test:e2e` (a browser download, so not a
   pipeline command); the §15 flows must stay green there.
@@ -277,8 +282,9 @@ version on `/health`. Phase 5 added the six transitions, the installable PWA wit
 service worker and the score outbox, shape-matched loading/error/empty states, the axe and
 keyboard pass, the §15.25–26 Playwright flows (`e2e/flows.spec.ts`) and the offline flow
 (`e2e/offline.spec.ts`) in CI, the copy audit, the README and `docs/deploy.md`. Real money
-stays behind `FEATURE_REAL_MONEY=false`. Not built, on purpose: deployment itself, a real
-SMS provider, sandbox/production Lucra credentials, `double_elim` (see
+stays behind `FEATURE_REAL_MONEY=false`. Deployed on Railway (`docs/deploy.md`,
+"Deployed"), read-only for visitors until sign-in has an SMS provider. Not built, on
+purpose: a real SMS provider, sandbox/production Lucra credentials, `double_elim` (see
 `docs/open-questions.md`, "Follow-ups").
 
 ## Maintaining this file
