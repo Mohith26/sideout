@@ -19,7 +19,9 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   before touching routing, caching, fonts, or config. `params` is a Promise;
   `PageProps`/`LayoutProps`/`RouteContext` come from `next typegen` (run by
   `npm run typecheck`, as a production build, so it never lists the dev-login route).
-- CI (`.github/workflows/ci.yml`) mirrors `.no-mistakes.yaml`; keep them in sync.
+- CI (`.github/workflows/ci.yml`) mirrors `.no-mistakes.yaml` in its `build-test` job; keep
+  them in sync. Its separate `e2e` job runs `npm run test:e2e` (a browser download, so not a
+  pipeline command); the §15 flows must stay green there.
 
 ## Conventions that are enforced, not advisory
 
@@ -191,6 +193,34 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   `src/server/registration.ts` reports the roster's link state at registration time,
   `entryStatusFor` the live read-back for the step.
 
+## Polish (phase 5 conventions)
+
+- Motion: the six named transitions (§12.4) are `src/styles/motion.css` (keyframes on the
+  motion tokens, every one with an opacity-only `prefers-reduced-motion` branch that
+  `src/components/motion/motion.test.ts` asserts) plus `src/components/motion/`:
+  `ScoreDisplay` (count-up), `flip.ts`/`FlipRows` (the ~40-line FLIP helper keyed on
+  `data-team-id`, WAAPI, `--surf` rank flash), `LiveDot` (the pulse), `reduced-motion.ts`
+  (the one media-query read). Bracket paths draw through `data-advanced`; the sheet, the
+  backdrop and the confirm check are `@utility` classes in `motion.css`. Never add a motion
+  dependency.
+- Offline: `public/sw.js` is plain JS, registered by
+  `src/components/offline/ServiceWorkerRegistration.tsx` with the build sha as `?v=` (a new
+  sha rotates every cache) in production only; `src/lib/offline/sw.test.ts` runs it under a
+  fake worker scope. The score outbox is `src/lib/offline/outbox.ts` (IndexedDB, pure replay
+  over an injected `send`) and `client.ts` (the browser singleton); the sheet queues through
+  it when the send is transient and the server never sees a difference. Copy says "saved on
+  this phone", never "sent".
+- Every page segment has a `loading.tsx` whose `Skeleton`s match the shape of the page (the
+  static `/offline` page excepted); error boundaries sit at the root, `/t/[slug]`, `/m/[id]`
+  and `/organizer`; `EmptyState` for nothing-to-show. `e2e/a11y.spec.ts` runs axe at 390 and
+  1280 (serious/critical fail), the heading outline, 44px targets, the focus ring, the
+  sheet's focus trap and the live regions; keep new screens inside its route list.
+- `src/copy-audit.test.ts` greps the source of every screen and component for
+  legal-clearance, casino, blame and emoji language and the §14 treatments; a new phrase
+  that trips it is wrong until proven otherwise, and an allowance needs the exact line.
+- `scripts/screenshots.ts` re-captures `docs/screenshots/` from the e2e server;
+  `docs/deploy.md` is what a host needs.
+
 ## Screens (phase 2b conventions)
 
 - Client components never import a server module (type-only imports are fine):
@@ -224,8 +254,8 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 
 ## Phase status
 
-Phases 1 (Foundation), 2a (Domain + application API), 2b (Screens), 3 (Consensus),
-4a (Lucra integration layer) and 4b (the browser SDK) are complete: shell, primitives,
+All five phases are complete — 1 (Foundation), 2a (Domain + application API), 2b (Screens),
+3 (Consensus), 4a (Lucra integration layer), 4b (the browser SDK) and 5 (Polish): shell, primitives,
 schema, seed, `/health`, Home, every `/t/[slug]` tab (Overview, Bracket with pool sheets, Standings, Impact), the
 draw engine, bracket advancement, standings tiebreaks, status machines, phone sign-in
 (`/sign-in`), teams and registration (`/teams/new`, `/t/[slug]/register`, `/me`), the
@@ -243,9 +273,13 @@ added `LucraGate` and `useLucra()`, the SDK stand-in for mock mode, the registra
 `VerificationRow`, `WalletChip`, `ResponsiblePlayLinks` and `RewardsAction`,
 `POST /api/me/lucra/bind`, the organizer's `/organizer/events/[id]/lucra`
 reconciliation page (console nav: Events, Disputes, Lucra) and the installed SDK
-version on `/health`. Real money stays behind `FEATURE_REAL_MONEY=false`. Not built:
-the six transitions' polish, PWA/offline, the two §15 Playwright flows, the README
-(the polish phase).
+version on `/health`. Phase 5 added the six transitions, the installable PWA with the
+service worker and the score outbox, shape-matched loading/error/empty states, the axe and
+keyboard pass, the §15.25–26 Playwright flows (`e2e/flows.spec.ts`) and the offline flow
+(`e2e/offline.spec.ts`) in CI, the copy audit, the README and `docs/deploy.md`. Real money
+stays behind `FEATURE_REAL_MONEY=false`. Not built, on purpose: deployment itself, a real
+SMS provider, sandbox/production Lucra credentials, `double_elim` (see
+`docs/open-questions.md`, "Follow-ups").
 
 ## Maintaining this file
 

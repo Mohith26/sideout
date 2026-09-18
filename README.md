@@ -1,65 +1,132 @@
 # Sideout
 
-Charity beach volleyball tournaments: organizers run events, teams play on the sand, both teams confirm every score, and the competition layer (rewards, settlement, compliance) is handled by Lucra. Phases 1 (foundation), 2 (domain logic, the application API, and the screens: bracket, standings, sign-in, teams and registration, profile, organizer console) and 3 (score consensus: the trust boundary between a phone on the sand and anything that moves a prize) of 5 are built; the Lucra integration follows. The full build brief is [`docs/build-spec.md`](docs/build-spec.md); open questions with their fallbacks are in [`docs/open-questions.md`](docs/open-questions.md).
+Sideout runs charity beach volleyball tournaments: organizers build an event, teams register with a donation to the event's beneficiary, both teams confirm every score from their own phones, and the competition layer — tournament entry, rewards, settlement, compliance — is Lucra's, reached through their Web SDK in the browser and their REST API from my server.
+
+![The live tournament screen: status, beneficiary, format, the matches on the sand right now, and the schedule](docs/screenshots/live-tournament-1280.png)
+
+The build brief I worked from is [`docs/build-spec.md`](docs/build-spec.md). Everything it marks OPEN is in [`docs/open-questions.md`](docs/open-questions.md) with the fallback I implemented; the Lucra write path is drawn out in [`docs/lucra-integration.md`](docs/lucra-integration.md); what a host needs is in [`docs/deploy.md`](docs/deploy.md).
 
 ## 60-second quickstart
 
-Needs Node 22+ (`.nvmrc`) and npm. No Lucra credentials are required.
+Node 22 (`.nvmrc`) and npm. No Lucra credentials, no `.env` file.
 
 ```sh
 npm i
-npm run seed     # creates ./data/sideout.db, applies migrations, loads the demo dataset
+npm run seed     # creates ./data/sideout.db, applies the migrations, loads the demo data
 npm run dev      # http://localhost:3000
 ```
 
-`LUCRA_MODE=mock` is the default, so no `.env` file is needed; `.env.example` lists every variable for later phases. `GET /health` reports the build sha, Lucra mode, pinned SDK version, migration state, where the session-signing secret came from, and whether the dev sign-in route is compiled in.
+`LUCRA_MODE=mock` is the default: an in-process Lucra with the documented endpoints, error bodies and webhooks, plus a stand-in for the Web SDK in the browser, so every flow runs end to end without an account. `GET /health` reports the build sha, the Lucra mode, the pinned SDK version and the installed one, which matcher reading is active, where the session secret came from, whether the dev sign-in route is compiled in, and the migration state.
 
-Three variables matter once this runs anywhere public: `SESSION_SECRET` (signs the session cookie; without it a production process signs with a random per-process secret and warns), `SIDEOUT_DEV_LOGIN` (must stay unset; it compiles `POST /api/dev/login` into a production build for test targets only) and `TRUSTED_PROXY_HOPS` (how many reverse proxies sit in front of the process; the per-address rate limit on sign-in reads `x-forwarded-for` that many hops from the right and is off at the default `0`, which production warns about at boot — a deploy behind one proxy sets `1`). `AUTH_CODE_GLOBAL_CAP` (default 2000 per ten minutes) is the process-wide backstop on sign-in codes. Phone sign-in needs an SMS provider, which no phase has chosen yet: in production `POST /api/auth/request-code` answers `503` with `detail.code = "sms_unavailable"` until one implements `SmsSender`.
+The seed is deterministic: one beneficiary, 48 players in every verification state, and three events — one live (24 teams, pools finished, a semifinal in progress, a disputed quarterfinal, one waiting on scores, a first-round bye), one open for registration, one settled with rewards. Every number on a screen is derived from those rows.
 
-The seed is deterministic and idempotent. It loads one beneficiary, 48 players, and three events — one live (24 teams, pool play complete, a semifinal in progress, a disputed quarterfinal, a quarterfinal awaiting scores, and a first-round bye), one open for registration, and one settled with rewards — and every number on screen is derived from those rows.
+To sign in during development, `POST /api/auth/request-code` returns the one-time code in the response as `devCode` (there is no SMS provider yet; see [`docs/deploy.md`](docs/deploy.md)), and `POST /api/dev/login` signs you in as any seeded user by phone. Seeded organizers can open the console at `/organizer/events`.
 
-## Scripts
+## Architecture
 
-| Script | What it does |
-|---|---|
-| `npm run dev` / `build` / `start` | Next.js |
-| `npm run typecheck` | `next typegen` then `tsc --noEmit` (strict, no `any`) |
-| `npm run lint` | ESLint, warnings are errors |
-| `npm test` | Vitest unit and integration tests |
-| `npm run test:bundle` | Production build with a sentinel backend key, then a scan of `.next/static` proving it never reaches the browser and that no Node `crypto` polyfill shipped with the score sheet |
-| `npm run test:e2e` | Playwright over the pages and the API against a production build (`npx playwright install chromium` first); also screenshots every screen at 390/768/1280 into `test-results/screens/` |
-| `npm run seed` | Reset and populate the SQLite database |
-| `npm run db:generate` | Generate a migration from `src/db/schema.ts` with drizzle-kit |
-| `npm run db:migrate` | Apply checked-in migrations |
+```
+┌──────────────────────────────────────────────────────┐
+│  Browser (Next.js client, installable PWA)           │
+│   • Sideout UI                                       │
+│   • Lucra Web SDK, init: tenantId + WEB key          │
+│     - launches identity / wallet / entry flows       │
+│   • service worker + IndexedDB score outbox          │
+└───────────────┬──────────────────────────────────────┘
+                │  my own API only; never the Lucra
+                │  backend key from the client
+┌───────────────▼──────────────────────────────────────┐
+│  Next.js server (route handlers, Node runtime)       │
+│   • tournament + bracket domain logic (pure)         │
+│   • score consensus state machine  ◄── trust boundary│
+│   • Lucra adapter (mock | sandbox | production)      │
+│   • webhook receiver                                 │
+│   • SQLite (Drizzle + better-sqlite3), audit log     │
+└───────────────┬──────────────────────────────────────┘
+                │  X-Lucra-Api-Key (BACKEND key, server only)
+┌───────────────▼──────────────────────────────────────┐
+│  Lucra REST API  /  Lucra mock (src/lucra/mock.ts)   │
+└──────────────────────────────────────────────────────┘
+```
 
-## API
+Three rules I do not bend, each with the test that keeps it true:
 
-Every route validates with zod and answers `{ ok: true, data }` or `{ ok: false, error: { code, message, detail? } }`. Sessions are a signed HttpOnly cookie from `POST /api/auth/verify` (phone + one-time code; outside production the code comes back in the response as `devCode`). Organizer routes need `users.role = organizer`.
-
-| Route | Who | What |
-|---|---|---|
-| `GET /api/tournaments?status=live,registration_open` | public | list with derived figures |
-| `GET /api/tournaments/:slug` | public | detail: teams, pools with standings, bracket, sponsors |
-| `GET /api/tournaments/:slug/standings` | public | computed from `sets` rows, `Cache-Control: public, max-age=10` |
-| `GET /api/tournaments/:slug/impact` | public | donation totals and goal progress |
-| `GET /api/matches/:id` | public | one match with participants, sets, consensus state, next seat |
-| `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/logout` | anyone | phone sign-in |
-| `POST /api/teams` | player | create a team and invite a partner by phone |
-| `POST /api/teams/:id/join` | player | accept the invite addressed to your phone |
-| `POST /api/tournaments/:slug/register` | player | register a complete team; creates the charitable donation intent (stub provider) |
-| `GET /api/me` | player | profile, Lucra link state, teams and history, invites, rewards |
-| `POST /api/admin/tournaments`, `PATCH /api/admin/tournaments/:id` | organizer | create; edit fields, sponsors, and status through the state machine |
-| `POST /api/admin/tournaments/:id/draw[?preview=1]` | organizer | pools + bracket in one transaction, configuration stored on the tournament; `{ stage: "bracket" }` seeds the bracket from finished pools with the stored advancement rule |
-| `POST /api/admin/matches/:id/forfeit` | organizer | forfeit one side; the other advances |
-| `POST /api/matches/:id/scores` | player | submit your team's scoreline (your points first); answers `awaiting_second`, `agreed` (the match is final) or `disputed` (both scorelines returned) |
-| `GET /api/admin/disputes[?tournamentId=]` | organizer | every disputed match with both scorelines and the sets that differ |
-| `POST /api/admin/matches/:id/resolve` | organizer | an authoritative scoreline for a disputed match, attributed to the organizer |
-| `GET /api/admin/tournaments/:id/close/preview` | organizer | standings (`standingsProvisional` while any result is outstanding), projected rewards, blocking matches, and the hash the close requires |
-| `POST /api/admin/tournaments/:id/close` | organizer | `live → awaiting_settlement` with `{ previewHash }`; refused with `close_blocked` (naming every match) or `preview_stale` |
-| `POST /api/dev/login` | non-production only | sign in as a seeded user by id or phone |
+1. **The BACKEND Lucra key exists only in server environment variables and is never serialized into any response.** The WEB key and `tenantId` are the only Lucra credentials that reach the browser. `src/env.ts` is `server-only`; `npm run test:bundle` builds with a sentinel key and fails if the key, or its variable name, appears anywhere under `.next/static`. The client's redaction is tested, and `/admin/lucra` shows every request with the header masked.
+2. **No score reaches Lucra directly from a client.** Every score goes through the consensus state machine first (next section). Every Lucra write starts with `assertMayWriteToLucra`, which throws unless the consensus is `agreed` with a minted idempotency key; `src/domain/consensus.test.ts` walks every state through the gate and `src/server/lucra.test.ts` proves a replay is refused before a request is built.
+3. **The Lucra adapter is the only module that makes outbound Lucra calls.** ESLint refuses `@/lucra/client`, `@/lucra/mock` and any `fetch` naming a Lucra host outside `src/lucra/`, and `src/lucra/import-boundary.test.ts` proves the rule fires. In the browser the same holds for the SDK: only `LucraGate` imports it.
 
 ## How scores become prizes
 
-A score typed on a phone on the sand is never trusted on its own. Both teams submit the result from their own side; the server resolves which team each submitter plays for from the roster, refuses anything that is not a legal beach volleyball scoreline (sets to 21, a deciding third set to 15, win by two, best-of-1 or best-of-3) with a message naming the set, canonicalizes the rest to the match orientation and hashes it. The first submission moves the consensus to `awaiting_second`; the second, from the *other* team, either matches the hash (`agreed`: the sets are written, the match is `final`, the winner advances, and one idempotency key is minted for every later Lucra attempt) or does not (`disputed`: both readings are shown side by side, and only an organizer settles it — with an attributed scoreline, or by forfeiting one side, in which case nothing is ever written to Lucra for that match). Two submissions from one team only replace each other. Closing a tournament is an explicit two-step confirm over a frozen preview of the final standings and projected rewards, blocked while any match is unresolved, and the Lucra write that phase 4 adds must pass `assertMayWriteToLucra` first — only `agreed` with its key gets through; an organizer's retry after `rejected`/`partial` passes its own gate, `assertMayRetryLucraWrite`, with the same key. Every transition is in `audit_log`.
+A number typed into a phone on the sand is a claim, not a result. Lucra ingests a score it cannot verify, and if I forwarded whatever one team typed, one team could decide the outcome of a match that moves a prize. So a score only becomes a result when two independent parties say the same thing, and the server — not the phone — decides whether they did.
 
-Draw formats: `pool_to_bracket` (snake-seeded pools, round robin per pool, single-elimination bracket sized by "top N per pool plus best remaining"), `single_elim`, `round_robin`. `double_elim` is refused until it is built. `teams.seed` is the organizer's entry seed (set through the draw request's `seeds` list, kept across re-draws); the order a bracket is seeded in lives on its round-1 slots. Standings tiebreaks, in order: wins, head-to-head (two-way ties only), set ratio, point differential, points for, team id. Across pools (ranking pool winners against each other for bracket seeds, and picking the best remaining), where pools may differ in size by one, the order is per match played: win percentage, set ratio, point differential per match, points for per match, team id.
+Each match has one consensus row, and it moves like this:
+
+```
+awaiting_first ──first_submission──► awaiting_second ──matching_submission──► agreed
+                                            │                                    │
+                                            └──conflicting_submission──► disputed ┘
+                                                                            (organizer_resolution)
+
+agreed ──lucra_submit──► submitting ──► accepted | partial | rejected
+                              ▲                        │
+                              └────organizer_retry─────┘
+```
+
+- A player submits their team's scoreline from their own side. The server works out which team they play for from the roster (never from the request), refuses anything that is not a legal beach volleyball result — sets to 21, a deciding set to 15, win by two, best of one or three — with a message naming the set, and canonicalizes what is left to the match's orientation and hashes it.
+- The first legal submission takes the consensus to `awaiting_second`. The second has to come from the *other* team; two submissions from one team only replace each other, and a resubmission supersedes the earlier row rather than editing it.
+- If the two hashes are equal the consensus is `agreed`: the sets are written, the match is `final`, the winner advances, and one idempotency key is minted for every Lucra attempt that follows. If they differ, the consensus is `disputed`: both readings are shown side by side with the set that differs marked, nobody is called wrong, and only an organizer can settle it, with an attributed scoreline (or by forfeiting one side, in which case nothing is ever written to Lucra for that match).
+- Only `agreed` can be written to Lucra, and the write itself is recorded: one attempt row per try with the exact request and response, and the consensus ends `accepted`, `partial` (Lucra accepted the batch but listed a matchup it did not apply) or `rejected`. An organizer can retry the last two under the same key; a replay produces exactly one accepted row.
+- A tournament never settles on its own, and not on `attemptFinished`. The organizer closes it in two steps over a frozen preview of the final standings and projected rewards, blocked while any match is unresolved (and the blockers are named), and only that close sends the settlement call.
+
+Every transition is a row in `audit_log` with its actor. The pure machine is `src/domain/consensus.ts`; the transactions are `src/server/consensus.ts`; the Lucra side is `src/server/lucra.ts` and [`docs/lucra-integration.md`](docs/lucra-integration.md).
+
+Two ledgers never meet: a team's entry fee is a charitable donation through a stub provider (`donations`), and prizes are sponsor-funded rewards settled by Lucra (`rewards`, `sponsors`). There is no foreign key between them and no query joins them, so a prize can never be computed from donation revenue.
+
+## The matcher, and which published examples reproduce
+
+Lucra's `user-score-by-metadata` endpoint resolves a matchup by scoring a metadata query against each record, and the documentation gives the algorithm in prose and then five worked examples plus a weight table. I ported the algorithm (`src/lucra/matcher.ts`) and found that two of the examples contradict the prose, so the mock runs one of two readings: `literal` (the prose, default) or `doc-examples` (the examples). `src/lucra/matcher.test.ts` asserts every row below exactly as written, and `/health` reports which reading is active.
+
+| Published example | Documented | `literal` | `doc-examples` |
+|---|---|---|---|
+| 1 — a reserved field (`externalId`) silences every other field | 1, match | 1, match — reproduces | 1, match — reproduces |
+| 2 — exact string match | 1, match | 1, match — reproduces | 1, match — reproduces |
+| 3 — a fully equal array scored 1 (the prose gives 0.7 × overlap) | 1, match | **0.7, no match — does not reproduce** | 1, match — reproduces |
+| 4 — combined matching | 2.35, match | 2.35, match — reproduces | 2.35, match — reproduces |
+| 5 — `"summer-league"` vs `"summer-tournament"` called a 0.5 partial | 0.5, no match | **0, no match — verdict agrees, score does not** | 0.5, no match — reproduces |
+| weight table — array intersection 2 of 3 | 0.47, no match | 0.47, no match — reproduces | 0.47, no match — reproduces |
+
+Sideout itself never depends on the difference: every write targets a `matchupId` or a sole-key `externalId`, which both readings resolve identically, and a loose-metadata target throws before any network call (`StrictMatchupTarget`).
+
+## Open questions
+
+The spec's §17 list. I did not guess at any of these; each has a fallback in code marked `// OPEN:` and a row in [`docs/open-questions.md`](docs/open-questions.md) with the reasoning. In one line each:
+
+1. **Sandbox credentials** are issued by a Lucra representative; there is no self-serve path. Fallback: `LUCRA_MODE=mock` with a faithful in-process Lucra, and a stand-in for the Web SDK in the browser.
+2. **Forge vs legacy REST.** The public reference is marked legacy. Fallback: the legacy shapes, isolated in `src/lucra/endpoints.ts` and `types.ts` so a migration is those two files.
+3. **Webhook signature scheme** is not published. Fallback: HMAC-SHA256 over the raw body in one function, `src/lucra/webhook-signature.ts`.
+4. **Idempotency.** Whether Lucra honours a first-class key on score writes is unknown. Fallback: my own key, minted once per agreed consensus, enforced locally and echoed in `metadata`.
+5. **`gameId` and `locationId`** for a sport whose courts are not permanent. Fallback: one constant `gameId` (`SIDEOUT_BEACH_2V2`), and `locationId` nullable and left null, omitted from the write.
+6. **Closing tournaments via API.** The docs reference an API and a console. Fallback: the documented complete call from the organizer's close, with a read-back before and after, so a close from Lucra's console is recognized and never repeated.
+7. **State coverage.** Lucra's surfaces say 42, 43 and 44 states in different places. Fallback: never in copy; `LUCRA_STATE_COVERAGE` is `null` and screens say "where Lucra is available".
+8. **Charitable gaming interaction** with the skill-contest framework. Fallback: no copy anywhere implies legal clearance (`src/copy-audit.test.ts` keeps it that way), and the donation and reward ledgers never touch.
+9. **Score attestation.** Whether Lucra wants a partner-side dual-confirmation contract. Fallback: built and enforced on my side regardless (the section above), with every submission row and transition kept so there is a full trail to sign over later.
+
+## What is not built
+
+From the spec's non-goals, on purpose: no live video or clips; no feed, comments, messages or followers; no native apps (web only, installable as a PWA); no payment processing of my own — Lucra is the merchant of record for competition funds and charitable donations go through a documented stub provider; no KYC, identity, geolocation or AML logic of my own — I launch Lucra's flows and store only a state enum; no ranking beyond what a tournament needs; no white-labeling; and no real money in production.
+
+**`FEATURE_REAL_MONEY=false`.** The real-money head-to-head code path exists (the wallet's add-funds and withdraw launches in `LucraGate`, the `real_money` prize kind) and is gated behind this flag, which is off and should stay off. Nothing else reads it.
+
+Also not built, and refused honestly rather than half-done: `double_elim` is in the format enum but the draw engine answers `unsupported_format`; phone sign-in has no SMS provider yet, so a production build answers `503 sms_unavailable` to a code request until one implements `SmsSender`. The full list of follow-ups is at the bottom of [`docs/open-questions.md`](docs/open-questions.md).
+
+## Running the checks
+
+| Command | What it does |
+|---|---|
+| `npm run typecheck` | `next typegen`, then `tsc --noEmit` — strict, no `any` |
+| `npm run lint` | ESLint with warnings as errors, including the import boundaries above |
+| `npm test` | Vitest: the domain, every route, the consensus machine, the Lucra layer, the matcher table, the motion and offline code, the copy audit, the token contrast checks |
+| `npm run test:bundle` | A sandbox build with sentinel secrets, then a scan of `.next/static` for the backend key, the webhook secret, a crypto polyfill, the mock stand-in, and of `.next/server` for the dev and mock routes |
+| `npm run build` | The production build |
+| `npm run test:e2e` | Playwright against a seeded production server it starts itself (`npx playwright install chromium` first): the player and organizer flows, the offline outbox, axe at 390 and 1280, keyboard operability, and a screenshot of every screen at 390/768/1280 |
+
+CI runs all of them on every pull request (`.github/workflows/ci.yml`). The README screenshots come from `scripts/screenshots.ts` against that same seeded server.
