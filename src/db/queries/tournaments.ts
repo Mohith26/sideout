@@ -28,6 +28,7 @@ import {
 } from "@/db/schema";
 import { getPoolStandings, type PoolStandings } from "@/db/queries/standings";
 import { UNLISTED_TEAM_STATUSES } from "@/db/queries/teams";
+import { bracketRoundLabel } from "@/lib/rounds";
 
 /**
  * Read models for the public screens. Every figure the UI shows is computed
@@ -327,13 +328,7 @@ export interface TournamentOverview {
   matchCount: number;
 }
 
-export function bracketRoundLabel(round: number, totalBracketRounds: number): string {
-  const remaining = totalBracketRounds - round;
-  if (remaining === 0) return "Final";
-  if (remaining === 1) return "Semifinals";
-  if (remaining === 2) return "Quarterfinals";
-  return `Round of ${2 ** (remaining + 1)}`;
-}
+export { bracketRoundLabel };
 
 export function getTournamentOverview(tournamentId: string): TournamentOverview {
   const db = getDb();

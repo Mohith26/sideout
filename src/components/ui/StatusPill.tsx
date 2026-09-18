@@ -1,4 +1,4 @@
-import type { ConsensusState, MatchStatus, TournamentStatus, VerificationState } from "@/db/schema";
+import type { ConsensusState, DonationStatus, MatchStatus, TeamStatus, TournamentStatus, VerificationState } from "@/db/schema";
 import { Icons, type IconComponent } from "@/components/ui/icons";
 import { cx } from "@/lib/cx";
 
@@ -59,6 +59,22 @@ export const VERIFICATION_STATE_PILL: Record<VerificationState, PillSpec> = {
   verified: { label: "Verified", tone: "success", icon: Icons.circleCheck },
   not_allowed: { label: "Not allowed", tone: "attention", icon: Icons.ban },
   demographics_missing: { label: "Details needed", tone: "neutral", icon: Icons.info },
+};
+
+export const TEAM_STATUS_PILL: Record<TeamStatus, PillSpec> = {
+  forming: { label: "Forming", tone: "neutral", icon: Icons.circleDashed },
+  registered: { label: "Registered", tone: "success", icon: Icons.circleCheck },
+  checked_in: { label: "Checked in", tone: "success", icon: Icons.check },
+  withdrawn: { label: "Withdrawn", tone: "muted", icon: Icons.ban },
+  disbanded: { label: "Disbanded", tone: "muted", icon: Icons.x },
+};
+
+/** Donation state, worded as a gift: `ember` is reserved for charity figures, so these stay on the neutral tones. */
+export const DONATION_STATUS_PILL: Record<DonationStatus, PillSpec> = {
+  pending: { label: "Processing", tone: "neutral", icon: Icons.hourglass },
+  succeeded: { label: "Received", tone: "success", icon: Icons.circleCheck },
+  refunded: { label: "Refunded", tone: "muted", icon: Icons.ban },
+  failed: { label: "Failed", tone: "attention", icon: Icons.circleAlert },
 };
 
 export interface StatusPillProps {

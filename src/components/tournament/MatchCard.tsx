@@ -1,5 +1,5 @@
 import type { MatchView } from "@/db/queries/tournaments";
-import { bracketRoundLabel } from "@/db/queries/tournaments";
+import { bracketRoundLabel } from "@/lib/rounds";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";
 import { TeamName } from "@/components/tournament/TeamName";
 import { cx } from "@/lib/cx";

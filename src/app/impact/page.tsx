@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -23,7 +23,7 @@ const columns: DataTableColumn<EventRow>[] = [
     key: "event",
     header: "Event",
     render: (r) => (
-      <Link href={`/t/${r.tournament.slug}`} className="font-medium text-text-primary hover:text-volt">
+      <Link href={`/t/${r.tournament.slug}`} className="target -my-2.5 flex items-center py-2.5 font-medium text-text-primary hover:text-volt">
         {r.tournament.name}
       </Link>
     ),

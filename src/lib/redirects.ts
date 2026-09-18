@@ -1,0 +1,20 @@
+/**
+ * The `next` parameter sign-in carries so it can send a user back to where
+ * they came from. Only a same-origin path is honoured: anything with a scheme,
+ * a host, or a protocol-relative prefix is dropped in favour of the fallback,
+ * so the sign-in page can never be turned into an open redirect.
+ */
+export function safeNextPath(candidate: string | string[] | null | undefined, fallback = "/"): string {
+  const value = Array.isArray(candidate) ? candidate[0] : candidate;
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.startsWith("/\\")) return fallback;
+  if (/[\u0000-\u001f\s]/.test(trimmed)) return fallback;
+  if (trimmed.startsWith("/sign-in")) return fallback;
+  return trimmed;
+}
+
+/** `/sign-in?next=…` for a page that needs a session. */
+export function signInHref(next: string): string {
+  return `/sign-in?next=${encodeURIComponent(next)}`;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ACTOR_KINDS, MATCH_STATUSES, TOURNAMENT_STATUSES, type ActorKind, type MatchStatus, type TournamentStatus } from "@/db/schema";
-import { DRAWABLE_STATUSES, MATCH_TRANSITIONS, TERMINAL_MATCH_STATUSES, TOURNAMENT_TRANSITIONS, transitionMatch, transitionTournament } from "@/domain/transitions";
+import { allowedTournamentTargets, DRAWABLE_STATUSES, MATCH_TRANSITIONS, TERMINAL_MATCH_STATUSES, TOURNAMENT_TRANSITIONS, transitionMatch, transitionTournament } from "@/domain/transitions";
 
 const actor = (kind: ActorKind) => ({ kind, userId: kind === "system" || kind === "lucra_webhook" ? null : "u1" });
 
@@ -80,6 +80,21 @@ describe("match transitions", () => {
     for (const from of TERMINAL_MATCH_STATUSES) {
       for (const to of MATCH_STATUSES) {
         for (const kind of ACTOR_KINDS) expect(transitionMatch(from, to, actor(kind)).ok).toBe(false);
+      }
+    }
+  });
+});
+
+describe("allowedTournamentTargets", () => {
+  it("lists exactly the edges the actor may take, in machine order", () => {
+    expect(allowedTournamentTargets("draft", { kind: "organizer" })).toEqual(["registration_open", "cancelled"]);
+    expect(allowedTournamentTargets("registration_closed", { kind: "organizer" })).toEqual(["live", "cancelled"]);
+    expect(allowedTournamentTargets("live", { kind: "organizer" })).toEqual(["awaiting_settlement"]);
+    expect(allowedTournamentTargets("live", { kind: "player" })).toEqual([]);
+    expect(allowedTournamentTargets("settled", { kind: "organizer" })).toEqual([]);
+    for (const from of TOURNAMENT_STATUSES) {
+      for (const to of allowedTournamentTargets(from, { kind: "organizer" })) {
+        expect(transitionTournament(from, to, { kind: "organizer", userId: "u" })).toEqual({ ok: true });
       }
     }
   });

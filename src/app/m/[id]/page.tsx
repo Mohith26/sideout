@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ConsensusBadge } from "@/components/consensus/ConsensusBadge";
 import { ScoreSubmitSheet } from "@/components/consensus/ScoreSubmitSheet";
 import { ScorelineCompare, ScorelineTable } from "@/components/consensus/ScorelineCompare";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/icons";

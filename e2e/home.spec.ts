@@ -37,7 +37,8 @@ test.describe("Home", () => {
     await expect(page.getByText("Bye").first()).toBeVisible();
 
     await page.getByRole("link", { name: "Bracket" }).click();
-    await expect(page.getByRole("heading", { name: /arrives with the draw engine/ })).toBeVisible();
+    await expect(page.getByRole("list", { name: /rounds$/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /advances on a bye/ })).toBeAttached();
   });
 
   test("/health reports the mock mode and applied migrations", async ({ request }) => {

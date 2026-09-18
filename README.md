@@ -1,6 +1,6 @@
 # Sideout
 
-Charity beach volleyball tournaments: organizers run events, teams play on the sand, both teams confirm every score, and the competition layer (rewards, settlement, compliance) is handled by Lucra. Phases 1 (foundation), 2 (domain logic and the application API) and 3 (score consensus: the trust boundary between a phone on the sand and anything that moves a prize) of 5 are built; the remaining screens and the Lucra integration follow. The full build brief is [`docs/build-spec.md`](docs/build-spec.md); open questions with their fallbacks are in [`docs/open-questions.md`](docs/open-questions.md).
+Charity beach volleyball tournaments: organizers run events, teams play on the sand, both teams confirm every score, and the competition layer (rewards, settlement, compliance) is handled by Lucra. Phases 1 (foundation), 2 (domain logic, the application API, and the screens: bracket, standings, sign-in, teams and registration, profile, organizer console) and 3 (score consensus: the trust boundary between a phone on the sand and anything that moves a prize) of 5 are built; the Lucra integration follows. The full build brief is [`docs/build-spec.md`](docs/build-spec.md); open questions with their fallbacks are in [`docs/open-questions.md`](docs/open-questions.md).
 
 ## 60-second quickstart
 
@@ -27,7 +27,7 @@ The seed is deterministic and idempotent. It loads one beneficiary, 48 players, 
 | `npm run lint` | ESLint, warnings are errors |
 | `npm test` | Vitest unit and integration tests |
 | `npm run test:bundle` | Production build with a sentinel backend key, then a scan of `.next/static` proving it never reaches the browser and that no Node `crypto` polyfill shipped with the score sheet |
-| `npm run test:e2e` | Playwright smoke over the pages and the API against a production build (`npx playwright install chromium` first) |
+| `npm run test:e2e` | Playwright over the pages and the API against a production build (`npx playwright install chromium` first); also screenshots every screen at 390/768/1280 into `test-results/screens/` |
 | `npm run seed` | Reset and populate the SQLite database |
 | `npm run db:generate` | Generate a migration from `src/db/schema.ts` with drizzle-kit |
 | `npm run db:migrate` | Apply checked-in migrations |

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TournamentCard } from "@/components/tournament/TournamentCard";

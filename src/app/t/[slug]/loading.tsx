@@ -1,4 +1,4 @@
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DataTableSkeleton, ImpactMeterSkeleton, Skeleton } from "@/components/ui/Skeleton";
 
 export default function TournamentLoading() {
