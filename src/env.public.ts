@@ -18,8 +18,19 @@ import { z } from "zod";
 export const PUBLIC_LUCRA_MODES = ["mock", "sandbox", "production"] as const;
 export type PublicLucraMode = (typeof PUBLIC_LUCRA_MODES)[number];
 
+const booleanFromEnv = z
+  .union([z.literal("true"), z.literal("false"), z.literal("1"), z.literal("0")])
+  .default("false")
+  .transform((v) => v === "true" || v === "1");
+
 const publicSchema = z.object({
   NEXT_PUBLIC_LUCRA_MODE: z.enum(PUBLIC_LUCRA_MODES).default("mock"),
+  /**
+   * The browser's copy of `DEMO_ACCOUNTS` (`src/env.ts`), derived by
+   * `next.config.ts` so the two cannot disagree by accident; the server refuses
+   * to boot when they do. Only ever `true` on a public demo host in mock mode.
+   */
+  NEXT_PUBLIC_DEMO_ACCOUNTS: booleanFromEnv,
   NEXT_PUBLIC_LUCRA_WEB_API_KEY: z.string().trim().min(1).optional(),
   NEXT_PUBLIC_LUCRA_TENANT_ID: z.string().trim().min(1).optional(),
 });
@@ -30,6 +41,7 @@ export interface RawPublicEnv {
   NEXT_PUBLIC_LUCRA_MODE?: string | undefined;
   NEXT_PUBLIC_LUCRA_WEB_API_KEY?: string | undefined;
   NEXT_PUBLIC_LUCRA_TENANT_ID?: string | undefined;
+  NEXT_PUBLIC_DEMO_ACCOUNTS?: string | undefined;
 }
 
 export function parsePublicEnv(raw: RawPublicEnv): PublicEnv {
@@ -37,6 +49,7 @@ export function parsePublicEnv(raw: RawPublicEnv): PublicEnv {
     NEXT_PUBLIC_LUCRA_MODE: emptyToUndefined(raw.NEXT_PUBLIC_LUCRA_MODE),
     NEXT_PUBLIC_LUCRA_WEB_API_KEY: emptyToUndefined(raw.NEXT_PUBLIC_LUCRA_WEB_API_KEY),
     NEXT_PUBLIC_LUCRA_TENANT_ID: emptyToUndefined(raw.NEXT_PUBLIC_LUCRA_TENANT_ID),
+    NEXT_PUBLIC_DEMO_ACCOUNTS: emptyToUndefined(raw.NEXT_PUBLIC_DEMO_ACCOUNTS),
   });
 }
 
@@ -58,4 +71,5 @@ export const publicEnv: PublicEnv = parsePublicEnv({
   NEXT_PUBLIC_LUCRA_MODE: process.env.NEXT_PUBLIC_LUCRA_MODE,
   NEXT_PUBLIC_LUCRA_WEB_API_KEY: process.env.NEXT_PUBLIC_LUCRA_WEB_API_KEY,
   NEXT_PUBLIC_LUCRA_TENANT_ID: process.env.NEXT_PUBLIC_LUCRA_TENANT_ID,
+  NEXT_PUBLIC_DEMO_ACCOUNTS: process.env.NEXT_PUBLIC_DEMO_ACCOUNTS,
 });

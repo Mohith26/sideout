@@ -46,6 +46,14 @@ describe("Dockerfile", () => {
     expect(runtime).toMatch(/HEALTHCHECK[\s\S]*\/health/);
   });
 
+  it("bakes the demo switch into the build off by default, and only from the variable of the same name", () => {
+    // The browser's NEXT_PUBLIC_DEMO_ACCOUNTS is inlined at build time from DEMO_ACCOUNTS
+    // (next.config.ts); the runtime value comes from the service variables, so both must be set.
+    expect(dockerfile).toContain("ARG DEMO_ACCOUNTS=false");
+    expect(dockerfile).toContain("DEMO_ACCOUNTS=${DEMO_ACCOUNTS}");
+    expect(runtime).not.toContain("DEMO_ACCOUNTS");
+  });
+
   it("copies no env file into the runtime stage", () => {
     expect(runtime).not.toMatch(/COPY[^\n]*\.env/);
   });
@@ -55,6 +63,18 @@ describe("Dockerfile", () => {
     const railway = JSON.parse(read("railway.json")) as { deploy: { startCommand: string; healthcheckPath: string } };
     expect(railway.deploy.startCommand).toBe(START_COMMAND);
     expect(railway.deploy.healthcheckPath).toBe("/health");
+  });
+
+  it("declares the nightly demo reset as a cron service on the same image, running the CLI that ships under src/", () => {
+    const reset = JSON.parse(read("railway/reset.railway.json")) as { build: { dockerfilePath: string }; deploy: { startCommand: string; cronSchedule: string; restartPolicyType: string; healthcheckPath?: string } };
+    expect(reset.build.dockerfilePath).toBe("Dockerfile");
+    expect(reset.deploy.startCommand).toContain("npm run demo:reset");
+    expect(reset.deploy.cronSchedule).toMatch(/^(\S+\s+){4}\S+$/);
+    expect(reset.deploy.restartPolicyType).toBe("NEVER");
+    expect(reset.deploy.healthcheckPath).toBeUndefined();
+    const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+    expect(pkg.scripts["demo:reset"]).toMatch(/^tsx src\//);
+    expect(runtime).toContain("COPY --from=build --chown=node:node /app/src ./src");
   });
 
   it("has tsx as a production dependency, because the start command's CLIs run on it", () => {

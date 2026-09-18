@@ -36,6 +36,11 @@ export default defineConfig({
       // TournamentUserJoined after an entry) need one configured, as a real
       // deployment has. Any value works: the mock signs with the same secret.
       LUCRA_WEBHOOK_SECRET: "sideout-e2e-webhook-secret",
+      // The public demo's account picker (`e2e/demo.spec.ts` signs in through it);
+      // the reset token is set so the route is fully configured, but no spec
+      // resets the database under the others.
+      DEMO_ACCOUNTS: "true",
+      DEMO_RESET_TOKEN: "sideout-e2e-demo-reset-token-0123456789",
     },
   },
 });

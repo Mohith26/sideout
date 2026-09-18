@@ -49,11 +49,16 @@ process runs). Back it up as a file; there is no export.
 | `DATABASE_PATH` | a path on the persistent disk | See above. |
 | `FEATURE_REAL_MONEY` | `false` | Leave it. Real-money head-to-head is built behind this flag and is not to be enabled (spec §4.2). |
 | `SIDEOUT_DEV_LOGIN` | unset | Compiles `POST /api/dev/login` (sign in as any seeded user) into a production build. Only the Playwright run sets it. Never on a public host. |
+| `DEMO_ACCOUNTS` | unset, or `true` on the public demo only | The demo-accounts switch ("Public demo", below): `/sign-in` offers the curated seeded accounts, `POST /api/auth/demo` signs in as one (audited, rate-limited, the session marked "Demo"), `POST /api/admin/demo/reset` reseeds. Refused at boot unless `LUCRA_MODE=mock`. Build-time too: the Dockerfile bakes `NEXT_PUBLIC_DEMO_ACCOUNTS` from it and the runtime value must match. |
+| `DEMO_RESET_TOKEN` | 32+ random characters, only with `DEMO_ACCOUNTS` | Bearer token for the reset route; the nightly job and `npm run demo:reset` present it. Without it the route answers 503. |
 | `LUCRA_MATCHER_INTERPRETATION` | default `literal` | Which reading of Lucra's documented matcher the mock runs; irrelevant to Sideout's own writes. |
 | `LUCRA_RESPONSIBLE_GAMING_URL`, `LUCRA_SELF_LIMIT_URL`, `LUCRA_SUPPORT_URL` | Lucra's defaults | The responsible-play links shown wherever a balance or reward is, and the support path for a restricted player. Override only if Lucra names tenant-specific pages. |
 
-`NEXT_PUBLIC_LUCRA_MODE` is derived from `LUCRA_MODE` by `next.config.ts`; do not set it
-separately.
+`NEXT_PUBLIC_LUCRA_MODE` is derived from `LUCRA_MODE` by `next.config.ts`, and
+`NEXT_PUBLIC_DEMO_ACCOUNTS` from `DEMO_ACCOUNTS`; the server refuses to boot when either
+pair disagrees. Set the server variable at build time and at runtime; a separate
+`NEXT_PUBLIC_*` value is only needed on a host that builds and runs from different
+variable sets (Railway passes the same service variables to both).
 
 ## Sign-in needs an SMS provider
 
@@ -72,9 +77,9 @@ through the same seam.
 For a public demo with no Lucra account: a production build (`NODE_ENV=production`)
 with `LUCRA_MODE=mock`, a persistent disk for `DATABASE_PATH`, `SESSION_SECRET`,
 `LUCRA_WEBHOOK_SECRET` (any value), `TRUSTED_PROXY_HOPS=1`, `BUILD_SHA`, then
-`npm run seed` once and `npm run db:migrate` on every later deploy. Sign-in still needs
-the SMS provider above; until then the demo is read-only for visitors, and a private
-demo can run with `NODE_ENV` unset so the code comes back in the response.
+`npm run seed` once and `npm run db:migrate` on every later deploy. Sign-in through a
+phone still needs the SMS provider above; the demo-accounts switch ("Public demo",
+below) is how visitors sign in without one.
 
 ## Caching in front of the app
 
@@ -119,21 +124,25 @@ The public demo runs on Railway, project `sideout`, service `sideout`, environme
 
 - **URL:** https://sideout-production-7db6.up.railway.app (the Railway-provided domain,
   from `railway domain`).
-- **Deployed commit:** `3695c6c22a0bb9c8cde8be3e7062485744e9b9e3` on `fm/sideout-deploy`
-  (the `buildSha` `/health` reports; `railway up` uploads the working tree without `.git`,
-  so `BUILD_SHA` is set as a service variable before each deploy).
+- **Deployed commit:** `c57051986306cb9300d3865f4c6828fa0e96db81` on
+  `fm/sideout-demo-accounts` (the `buildSha` `/health` reports; `railway up` uploads the
+  working tree without `.git`, so `BUILD_SHA` is set as a service variable before each
+  deploy). The `sideout-demo-reset` cron service ("Public demo", below) was deployed from
+  the commit after it, which changed only the reset CLI's `SIDEOUT_URL` fallback and docs.
 - **Health check:** `GET /health` answers 200 with `lucraMode: "mock"`, `session: "env"`,
-  `devLogin: false`, `migrations: { applied: 6, available: 6, pending: 0 }`. Railway's
-  own health check (`railway.json`) and the image `HEALTHCHECK` both point at it.
+  `devLogin: false`, `demoAccounts: true`, `migrations: { applied: 6, available: 6, pending: 0 }`.
+  Railway's own health check (`railway.json`) and the image `HEALTHCHECK` both point at it.
 - **Volume:** `sideout-volume`, mounted at `/data`; `DATABASE_PATH=/data/sideout.db`.
   The seed ran on the first boot; every later deploy migrates the same file.
 - **Variables:** `NODE_ENV=production`, `LUCRA_MODE=mock`, `NEXT_PUBLIC_LUCRA_MODE=mock`,
   `DATABASE_PATH=/data/sideout.db`, `TRUSTED_PROXY_HOPS=1`, `FEATURE_REAL_MONEY=false`,
   `BUILD_SHA=<commit>`, `NEXT_TELEMETRY_DISABLED=1`, `RAILWAY_RUN_UID=0` (the container
   must start as root for the entrypoint's ownership fix; the app itself runs as `node`),
-  and the secrets `SESSION_SECRET` and `LUCRA_WEBHOOK_SECRET` (48 random bytes each,
-  generated locally and piped straight into `railway variable set --stdin`; never
-  written down). `PORT` is Railway's.
+  `DEMO_ACCOUNTS=true`, `NEXT_PUBLIC_DEMO_ACCOUNTS=true` ("Public demo", below), and the
+  secrets `SESSION_SECRET`, `LUCRA_WEBHOOK_SECRET` and `DEMO_RESET_TOKEN` (48 random
+  bytes each, generated locally and piped straight into `railway variable set --stdin`;
+  never written down — the Railway dashboard's Variables tab for the service is the
+  only place to read them). `PORT` is Railway's.
 - **Build:** the Dockerfile, declared in `railway.json` (`build.builder: DOCKERFILE`),
   restart policy `ON_FAILURE` with 10 retries, one replica (SQLite: see "One instance").
 
@@ -168,7 +177,7 @@ is the commit and `migrations.pending` is 0. `railway logs -d` shows the boot (t
 entrypoint line, the migrate summary, `next start`); `railway deployment list` the
 history. Update the "Deployed commit" line above when the deployed commit changes.
 
-## What the public demo can and cannot do
+## Public demo
 
 Everything a visitor can reach without signing in works from the seeded dataset: the
 Home page with the three seeded events, every `/t/[slug]` tab (Overview, Bracket with
@@ -176,23 +185,87 @@ pool sheets, Standings, Impact), `/events`, `/impact`, every `/m/[id]` match pag
 installable PWA and its offline page. `/admin/lucra` and every `/organizer/**` page are
 gated (organizer access required, or 404), and `/api/admin/*` answers 401.
 
-The demo is **read-only for visitors**. Sign-in issues no codes: the process is
-production and no SMS provider is configured, so `POST /api/auth/request-code` answers
-503 `sms_unavailable` ("Sign-in needs an SMS provider", above), and `POST /api/dev/login`
-is compiled out (`devLogin: false` on `/health`). The profile (`/me`), team creation,
-registration and its Lucra entry step, score submission, the dispute queue, the close
-flow and the organizer console are therefore only reachable through the seeded data —
-as pages a visitor cannot sign in to — until one of these follow-ups lands:
+Signing in on the public demo goes through the **demo-accounts switch** (`DEMO_ACCOUNTS`),
+because the process is production and no SMS provider is configured
+(`POST /api/auth/request-code` answers 503 `sms_unavailable`; `POST /api/dev/login` is
+compiled out, `devLogin: false` on `/health`). With the switch on, `/sign-in` shows a
+"Demo accounts" section above the unchanged phone form. Picking a card calls
+`POST /api/auth/demo`, which issues the normal session cookie marked `via: "demo"` (the
+shell shows a red "Demo · name" pill on every screen until sign-out), writes an
+`auth.demo_sign_in` audit row on the user, and is rate-limited per address (30 per ten
+minutes) and process-wide (600). The accounts are named by seeded phone number in
+`src/seed/demo.ts` and resolved against the live rows by `src/db/queries/demo.ts`, so
+each card also shows the account's current state:
 
-1. **Configure an SMS provider:** implement `SmsSender` in `src/server/auth/sms.ts`
-   against a provider and return it from `getSmsSender()` in production. Real phones can
-   then sign in; the seeded players and organizers keep their seeded numbers.
-2. **A demo-accounts switch** (needs the captain's approval before it is built): a
-   production-safe way to sign in as a seeded user on the demo host only, distinct from
-   `SIDEOUT_DEV_LOGIN`, which stays off on a public deployment.
+| Card | Seeded user | What it can do |
+|---|---|---|
+| Captain A | Nadia Haddad (Haddad / Delgado) | Captain of team A in the Sandbar Classic quarterfinal at bracket position 12, `awaiting_scores`. Their scoreline is already in: the match page shows "Waiting on Nogueira / El-Amin" and offers "Change your scoreline". Lands on `/m/<match>`. |
+| Captain B | Beatriz Nogueira (Nogueira / El-Amin) | Captain of team B in the same match. Offered "Confirm the result": typing the same result makes the match `final` and writes it to the (mock) Lucra; a different one opens a dispute for the organizer. Lands on `/m/<match>`. |
+| Registering captain | Priya Raman (Raman / Mensah) | Captain of a complete pair (partner accepted) that has not entered Pier 9 Open (`registration_open`). Lands on `/t/pier-9-open-2026/register` with the entry donation step, then the Lucra entry step. |
+| Organizer | Carmen Ibarra | Runs the events: `/organizer/events`, the court board, the dispute queue (Sandbar Classic has one open dispute), `/organizer/events/<id>/lucra`, the two-step close, `/admin/lucra`. Lands on `/organizer/events`. |
+| Restricted player | Marcus Bell | Lucra state `not_allowed`: `/me` shows the support path and no retry. |
+| Player with details to add | Elijah Brooks | Lucra state `demographics_missing`: `/me` walks the identity flow through the (mock) Lucra sheet. |
 
-Neither is built. Custom domains, Lucra sandbox credentials and a second database engine
-are also not part of the deployment.
+Two phones, one match: sign in as Captain A on one and Captain B on the other, and the
+second scoreline settles the quarterfinal live on both, on the bracket and on the court
+board. The switch is off by default, cannot be enabled outside mock mode (`src/env.ts`
+refuses `DEMO_ACCOUNTS=true` with any other `LUCRA_MODE`), and needs the same value at
+build and at runtime (`NEXT_PUBLIC_DEMO_ACCOUNTS` is derived from it; a disagreement
+refuses to boot). The phone-code sign-in is untouched.
+
+### Resetting the demo
+
+`POST /api/admin/demo/reset` with `Authorization: Bearer $DEMO_RESET_TOKEN` writes the
+seed dataset back over the live database in one transaction (every table emptied and
+re-inserted, anchored on the current day in the venue's time zone, exactly what
+`npm run seed` writes), then rebuilds the mock Lucra from the new rows on its next use.
+Overlapping requests see the old rows or the new ones, never a half-empty database; a
+second reset while one runs answers 409 `reset_in_progress`. The route exists only with
+the switch on (404 otherwise), answers 503 while no token is configured, and 401 for any
+other token. The response carries the anchor day and the row counts per table. Because the
+audit log is part of the seed, a reset also clears the `auth.demo_sign_in` rows written
+since the last one; the server log (`railway logs`) keeps the `auth: demo sign-in` lines.
+
+**Before a recording**, from the repository root with the token in the shell (read it from
+the Railway dashboard, service `sideout`, Variables, `DEMO_RESET_TOKEN`):
+
+```sh
+DEMO_RESET_TOKEN=<token> npm run demo:reset -- --url https://sideout-production-7db6.up.railway.app
+```
+
+`--token-env NAME` reads a differently named variable; the token is never printed. Exit
+status 0 means the reset happened and the anchor and counts were logged.
+
+**Nightly**, the same call runs from a second Railway service, `sideout-demo-reset`, built
+from the same Dockerfile with `railway/reset.railway.json` as its config file: a cron
+service (`deploy.cronSchedule: "0 10 * * *"`, 10:00 UTC = 03:00 Pacific; no health check,
+restart policy `NEVER`) whose start command is `npm run demo:reset` (the CLI reads
+`SIDEOUT_URL` when `--url` is absent: Railway runs the start command without a shell, so
+nothing expands there), so each run boots the image, POSTs the reset and exits (the CLI ships under `src/seed/demo-reset-cli.ts` because only `src/` and the
+pruned dependencies exist in the runtime stage). Its variables are `SIDEOUT_URL` (the
+public URL) and `DEMO_RESET_TOKEN=${{sideout.DEMO_RESET_TOKEN}}`, a reference to the app
+service's variable, so the token exists in one place. The CLI has no cron flag and
+`railway functions` refused the CLI's session, so the service was created and
+configured through Railway's public GraphQL API with the CLI's access token
+(`serviceCreate`, `serviceInstanceUpdate` with `railwayConfigFile` and `cronSchedule`,
+`variableCollectionUpsert`) and then deployed from the repository root with:
+
+```sh
+railway up --ci --service sideout-demo-reset
+```
+
+Redeploy the same way after a change to the CLI or the config file; the service-level
+settings (start command, cron, restart policy) live on the service, not in the file, because
+Railway's API now refuses a per-service config file. To run the reset from the cron service
+right now instead of waiting for the schedule:
+`railway restart --service sideout-demo-reset --yes`. Each run's output
+(`demo reset: done` with the anchor and counts, or the refusal) is in that service's
+logs (`railway logs --service sideout-demo-reset`), and a refused reset exits non-zero
+so the run shows as failed.
+
+Custom domains, Lucra sandbox credentials and a second database engine are not part of
+the deployment; neither is an SMS provider (`getSmsSender()` in `src/server/auth/sms.ts`
+is where one goes, and the seeded players keep their seeded numbers).
 
 ## What is not covered here
 

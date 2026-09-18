@@ -54,6 +54,8 @@ function installedLucraSdkVersion(): string {
  * built for; `src/env.ts` refuses to boot when the two disagree.
  */
 const lucraMode = (process.env.LUCRA_MODE ?? "").trim() || "mock";
+/** `NEXT_PUBLIC_DEMO_ACCOUNTS` follows `DEMO_ACCOUNTS` the same way (`src/env.ts` refuses a disagreement). */
+const demoAccounts = ["true", "1"].includes((process.env.DEMO_ACCOUNTS ?? "").trim());
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -86,6 +88,7 @@ const nextConfig: NextConfig = {
   env: {
     BUILD_SHA: resolveBuildSha(),
     NEXT_PUBLIC_LUCRA_MODE: lucraMode,
+    NEXT_PUBLIC_DEMO_ACCOUNTS: demoAccounts ? "true" : "false",
     LUCRA_SDK_INSTALLED_VERSION: installedLucraSdkVersion(),
   },
 };

@@ -45,6 +45,23 @@ const serverSchema = z
      */
     SIDEOUT_DEV_LOGIN: booleanFromEnv,
     /**
+     * The public demo's sign-in switch: `/sign-in` offers a "Demo accounts"
+     * picker that signs a visitor in as one of the curated seeded users
+     * through `POST /api/auth/demo`, and `POST /api/admin/demo/reset` puts the
+     * database back to the seed. Off by default; on only with `LUCRA_MODE=mock`
+     * (a demo picker must never exist beside real Lucra credentials, and the
+     * process refuses to boot otherwise). `NEXT_PUBLIC_DEMO_ACCOUNTS` is
+     * derived from it by `next.config.ts` and must agree at runtime. Every demo
+     * sign-in is audited (`auth.demo_sign_in`) and the session is marked.
+     */
+    DEMO_ACCOUNTS: booleanFromEnv,
+    /**
+     * Bearer token for `POST /api/admin/demo/reset` (the nightly reseed and the
+     * one-line manual reset). Only read while `DEMO_ACCOUNTS` is on; without it
+     * the reset route answers 503 rather than accepting anything.
+     */
+    DEMO_RESET_TOKEN: z.string().min(32, "DEMO_RESET_TOKEN must be at least 32 characters").optional(),
+    /**
      * How many trusted reverse proxies sit in front of this process. Each one
      * appends the address it saw to `x-forwarded-for`, so the client address is
      * that many hops from the right. With 0 (the default) the header is
@@ -86,6 +103,13 @@ const serverSchema = z
     LUCRA_SDK_INSTALLED_VERSION: z.string().trim().min(1).optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.DEMO_ACCOUNTS && env.LUCRA_MODE !== "mock") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["DEMO_ACCOUNTS"],
+        message: `DEMO_ACCOUNTS=true requires LUCRA_MODE=mock (it is ${env.LUCRA_MODE}); a demo picker must never run beside real Lucra credentials`,
+      });
+    }
     // OPEN: (§17.1) sandbox credentials are issued by a Lucra representative. The
     // fallback is mock mode, which needs nothing. Any live mode must be fully
     // configured or the process refuses to start rather than half-working.
@@ -115,6 +139,8 @@ export interface DerivedEnv {
   sessionSecretSource: SessionSecretSource;
   /** `POST /api/dev/login` exists in this process. */
   devLoginEnabled: boolean;
+  /** The demo-accounts picker, `POST /api/auth/demo` and the reset route exist in this process. */
+  demoAccountsEnabled: boolean;
 }
 
 export type ServerEnv = z.infer<typeof serverSchema> & PublicEnv & DerivedEnv;
@@ -186,6 +212,8 @@ export function parseServerEnv(raw: RawEnv, options: { mintEphemeralSecret?: () 
     NEXT_PUBLIC_LUCRA_MODE: cleaned.NEXT_PUBLIC_LUCRA_MODE ?? parsed.data.LUCRA_MODE,
     NEXT_PUBLIC_LUCRA_WEB_API_KEY: cleaned.NEXT_PUBLIC_LUCRA_WEB_API_KEY,
     NEXT_PUBLIC_LUCRA_TENANT_ID: cleaned.NEXT_PUBLIC_LUCRA_TENANT_ID,
+    // Same rule for the demo switch: unset outside a Next build means "as the server".
+    NEXT_PUBLIC_DEMO_ACCOUNTS: cleaned.NEXT_PUBLIC_DEMO_ACCOUNTS ?? String(parsed.data.DEMO_ACCOUNTS),
   });
   // The browser SDK runs in the mode the server was built for: `next.config.ts`
   // derives NEXT_PUBLIC_LUCRA_MODE from LUCRA_MODE, so a disagreement means a
@@ -194,11 +222,19 @@ export function parseServerEnv(raw: RawEnv, options: { mintEphemeralSecret?: () 
   if (pub.NEXT_PUBLIC_LUCRA_MODE !== parsed.data.LUCRA_MODE) {
     throw new Error(`Invalid server environment:\n  NEXT_PUBLIC_LUCRA_MODE: is ${pub.NEXT_PUBLIC_LUCRA_MODE} but LUCRA_MODE is ${parsed.data.LUCRA_MODE}; the build must be made with the LUCRA_MODE it runs under`);
   }
+  // The demo picker is rendered from the server flag and the browser's copy is
+  // inlined at build time; a build made without the switch started with it (or
+  // the reverse) would show a picker that the routes refuse, or hide one they
+  // accept. Refuse the disagreement, as for the Lucra mode.
+  if (pub.NEXT_PUBLIC_DEMO_ACCOUNTS !== parsed.data.DEMO_ACCOUNTS) {
+    throw new Error(`Invalid server environment:\n  NEXT_PUBLIC_DEMO_ACCOUNTS: is ${pub.NEXT_PUBLIC_DEMO_ACCOUNTS} but DEMO_ACCOUNTS is ${parsed.data.DEMO_ACCOUNTS}; the build must be made with the DEMO_ACCOUNTS it runs under`);
+  }
   return {
     ...parsed.data,
     ...pub,
     ...resolveSessionSecret(parsed.data, options.mintEphemeralSecret),
     devLoginEnabled: isDevLoginEnabled(parsed.data),
+    demoAccountsEnabled: parsed.data.DEMO_ACCOUNTS,
   };
 }
 
@@ -220,6 +256,9 @@ export const env: ServerEnv = parseServerEnv({
   NEXT_PUBLIC_LUCRA_TENANT_ID: process.env.NEXT_PUBLIC_LUCRA_TENANT_ID,
   SESSION_SECRET: process.env.SESSION_SECRET,
   SIDEOUT_DEV_LOGIN: process.env.SIDEOUT_DEV_LOGIN,
+  DEMO_ACCOUNTS: process.env.DEMO_ACCOUNTS,
+  DEMO_RESET_TOKEN: process.env.DEMO_RESET_TOKEN,
+  NEXT_PUBLIC_DEMO_ACCOUNTS: process.env.NEXT_PUBLIC_DEMO_ACCOUNTS,
   TRUSTED_PROXY_HOPS: process.env.TRUSTED_PROXY_HOPS,
   AUTH_CODE_GLOBAL_CAP: process.env.AUTH_CODE_GLOBAL_CAP,
   LUCRA_RESPONSIBLE_GAMING_URL: process.env.LUCRA_RESPONSIBLE_GAMING_URL,
@@ -233,6 +272,9 @@ if (env.sessionSecretSource === "ephemeral") {
 }
 if (env.NODE_ENV === "production" && env.devLoginEnabled) {
   log.warn("SIDEOUT_DEV_LOGIN is set: POST /api/dev/login is compiled into this production build; never do this on a public deployment");
+}
+if (env.demoAccountsEnabled) {
+  log.warn("DEMO_ACCOUNTS is set: /sign-in offers the demo-accounts picker and POST /api/auth/demo signs visitors in as seeded users; every such sign-in is audited", { resetToken: env.DEMO_RESET_TOKEN ? "configured" : "missing" });
 }
 if (!env.LUCRA_WEBHOOK_SECRET && (env.LUCRA_MODE !== "mock" || env.NODE_ENV === "production")) {
   // OPEN: (§17.3) without a shared secret no delivery can be verified; the receiver refuses every event until one is configured.

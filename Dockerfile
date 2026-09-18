@@ -14,6 +14,10 @@
 #   BUILD_SHA   the deployed commit, reported by /health and used as the
 #               service worker's cache version. `railway up` uploads a
 #               tarball without `.git`, so set it explicitly (docs/deploy.md).
+#   DEMO_ACCOUNTS  the public demo's account picker (docs/deploy.md, "Public
+#               demo"): baked into the browser bundle as
+#               NEXT_PUBLIC_DEMO_ACCOUNTS; the runtime DEMO_ACCOUNTS must match
+#               or src/env.ts refuses to boot. Off unless the variable says true.
 
 FROM node:22-bookworm-slim AS build
 RUN apt-get update \
@@ -27,8 +31,10 @@ RUN npm ci
 COPY . .
 ARG LUCRA_MODE=mock
 ARG BUILD_SHA
+ARG DEMO_ACCOUNTS=false
 ENV NODE_ENV=production \
     LUCRA_MODE=${LUCRA_MODE} \
+    DEMO_ACCOUNTS=${DEMO_ACCOUNTS} \
     NEXT_TELEMETRY_DISABLED=1
 # NODE_ENV=production at build time keeps `route.dev.ts` out of the build
 # (src/lib/build-gates.ts); `.next/cache` is build-only; the prune leaves

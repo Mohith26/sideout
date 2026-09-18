@@ -117,7 +117,7 @@ describe("session secret and dev login", () => {
 describe("parsePublicEnv", () => {
   it("only knows the mode, the WEB key and the tenant id", () => {
     const pub = parsePublicEnv({ NEXT_PUBLIC_LUCRA_TENANT_ID: "t", NEXT_PUBLIC_LUCRA_WEB_API_KEY: "" });
-    expect(pub).toEqual({ NEXT_PUBLIC_LUCRA_MODE: "mock", NEXT_PUBLIC_LUCRA_TENANT_ID: "t" });
+    expect(pub).toEqual({ NEXT_PUBLIC_LUCRA_MODE: "mock", NEXT_PUBLIC_LUCRA_TENANT_ID: "t", NEXT_PUBLIC_DEMO_ACCOUNTS: false });
     expect(Object.keys(pub)).not.toContain("LUCRA_BACKEND_API_KEY");
     expect(publicLucraCredentials(pub)).toBeNull();
     expect(publicLucraCredentials(parsePublicEnv({ NEXT_PUBLIC_LUCRA_TENANT_ID: "t", NEXT_PUBLIC_LUCRA_WEB_API_KEY: "web" }))).toEqual({ apiKey: "web", tenantId: "t" });
@@ -131,6 +131,24 @@ describe("parsePublicEnv", () => {
     expect(parseServerEnv({ ...live, NEXT_PUBLIC_LUCRA_MODE: "sandbox" }).NEXT_PUBLIC_LUCRA_MODE).toBe("sandbox");
     expect(() => parseServerEnv({ ...live, NEXT_PUBLIC_LUCRA_MODE: "mock" })).toThrow(/NEXT_PUBLIC_LUCRA_MODE: is mock but LUCRA_MODE is sandbox/);
     expect(() => parseServerEnv({ LUCRA_MODE: "mock", NEXT_PUBLIC_LUCRA_MODE: "production" })).toThrow(/NEXT_PUBLIC_LUCRA_MODE/);
+  });
+
+  it("demo accounts: off by default, only with the mock Lucra, and the browser's copy must agree", () => {
+    expect(parseServerEnv({}).demoAccountsEnabled).toBe(false);
+    expect(parseServerEnv({}).NEXT_PUBLIC_DEMO_ACCOUNTS).toBe(false);
+    expect(parseServerEnv({ DEMO_ACCOUNTS: "false" }).demoAccountsEnabled).toBe(false);
+    const on = parseServerEnv({ LUCRA_MODE: "mock", DEMO_ACCOUNTS: "true", DEMO_RESET_TOKEN: "x".repeat(32) });
+    expect(on.demoAccountsEnabled).toBe(true);
+    expect(on.NEXT_PUBLIC_DEMO_ACCOUNTS).toBe(true);
+    expect(parseServerEnv({ DEMO_ACCOUNTS: "1", NEXT_PUBLIC_DEMO_ACCOUNTS: "true" }).demoAccountsEnabled).toBe(true);
+    // Never beside real Lucra credentials, in any live mode.
+    const live = { LUCRA_MODE: "sandbox", LUCRA_BASE_URL: "https://api.sandbox.lucrasports.com", LUCRA_BACKEND_API_KEY: "sk_test" };
+    expect(() => parseServerEnv({ ...live, DEMO_ACCOUNTS: "true" })).toThrow(/DEMO_ACCOUNTS=true requires LUCRA_MODE=mock/);
+    expect(() => parseServerEnv({ ...live, LUCRA_MODE: "production", DEMO_ACCOUNTS: "true" })).toThrow(/DEMO_ACCOUNTS/);
+    // A build made one way and started the other.
+    expect(() => parseServerEnv({ DEMO_ACCOUNTS: "true", NEXT_PUBLIC_DEMO_ACCOUNTS: "false" })).toThrow(/NEXT_PUBLIC_DEMO_ACCOUNTS: is false but DEMO_ACCOUNTS is true/);
+    expect(() => parseServerEnv({ NEXT_PUBLIC_DEMO_ACCOUNTS: "true" })).toThrow(/NEXT_PUBLIC_DEMO_ACCOUNTS/);
+    expect(() => parseServerEnv({ DEMO_ACCOUNTS: "true", DEMO_RESET_TOKEN: "short" })).toThrow(/DEMO_RESET_TOKEN/);
   });
 
   it("carries the installed SDK version and the responsible-play URLs", () => {

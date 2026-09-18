@@ -5,19 +5,36 @@ import { getDb } from "@/db/client";
 import { users, type User } from "@/db/schema";
 import { env } from "@/env";
 import { systemClock, type Clock } from "@/lib/clock";
-import { SESSION_COOKIE, verifySession } from "@/server/auth/session";
+import { SESSION_COOKIE, verifySession, type SessionVia } from "@/server/auth/session";
+
+export interface ViewerSession {
+  user: User;
+  /** How the session was opened; `demo` for the public demo's account picker. */
+  via: SessionVia | null;
+}
+
+/** The account behind a session cookie value and how it signed in, or null for anything that is not a valid session. */
+export function sessionForToken(token: string | undefined, clock: Clock = systemClock): ViewerSession | null {
+  const payload = verifySession(token, env.sessionSecret, clock);
+  if (!payload) return null;
+  const user = getDb().select().from(users).where(eq(users.id, payload.uid)).get() ?? null;
+  return user ? { user, via: payload.via ?? null } : null;
+}
 
 /** The account behind a session cookie value, or null for anything that is not a valid session. */
 export function userForSessionToken(token: string | undefined, clock: Clock = systemClock): User | null {
-  const uid = verifySession(token, env.sessionSecret, clock)?.uid;
-  if (!uid) return null;
-  return getDb().select().from(users).where(eq(users.id, uid)).get() ?? null;
+  return sessionForToken(token, clock)?.user ?? null;
 }
 
-/** The signed-in user rendering a server component, read from the request cookies; null when anonymous. */
-export async function viewer(): Promise<User | null> {
+/** The signed-in session rendering a server component, read from the request cookies; null when anonymous. */
+export async function viewerSession(): Promise<ViewerSession | null> {
   const store = await cookies();
-  return userForSessionToken(store.get(SESSION_COOKIE)?.value);
+  return sessionForToken(store.get(SESSION_COOKIE)?.value);
+}
+
+/** The signed-in user rendering a server component; null when anonymous. */
+export async function viewer(): Promise<User | null> {
+  return (await viewerSession())?.user ?? null;
 }
 
 export type OrganizerGate = { organizer: User } | { organizer: null; user: User | null };

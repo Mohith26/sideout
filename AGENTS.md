@@ -186,6 +186,16 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   404), the dispute queue and the close flow through `organizerViewer()`.
   `POST /api/dev/login` lives in `route.dev.ts`, an extension
   `next.config.ts` registers only outside production or with `SIDEOUT_DEV_LOGIN=true`.
+  The public demo's sign-in is a separate, runtime-gated switch: `DEMO_ACCOUNTS=true`
+  (refused at boot unless `LUCRA_MODE=mock`; `NEXT_PUBLIC_DEMO_ACCOUNTS` is derived from
+  it by `next.config.ts` and must agree) makes `/sign-in` render the picker
+  (`src/components/auth/DemoAccounts.tsx`), `POST /api/auth/demo` sign in as one of the
+  six accounts `src/seed/demo.ts` names by seeded phone (resolved with live state by
+  `src/db/queries/demo.ts`; audit `auth.demo_sign_in`, session `via: "demo"`, the shell's
+  `DemoPill`), and `POST /api/admin/demo/reset` (bearer `DEMO_RESET_TOKEN`,
+  `src/server/demo-reset.ts`) reseed the live database in place. Both routes 404 while
+  the switch is off. `docs/deploy.md` "Public demo" has the accounts, the reset one-liner
+  and the nightly cron service (`railway/reset.railway.json`, `src/seed/demo-reset-cli.ts`).
   Sign-in rate limits key on `x-forwarded-for` only when `TRUSTED_PROXY_HOPS` says how
   many proxies vouch for it: a public deploy behind a proxy must set `1` (production
   warns at boot while it is 0); `AUTH_CODE_GLOBAL_CAP` is the process-wide backstop.
@@ -283,7 +293,8 @@ service worker and the score outbox, shape-matched loading/error/empty states, t
 keyboard pass, the §15.25–26 Playwright flows (`e2e/flows.spec.ts`) and the offline flow
 (`e2e/offline.spec.ts`) in CI, the copy audit, the README and `docs/deploy.md`. Real money
 stays behind `FEATURE_REAL_MONEY=false`. Deployed on Railway (`docs/deploy.md`,
-"Deployed"), read-only for visitors until sign-in has an SMS provider. Not built, on
+"Deployed") with the demo-accounts switch on, so visitors sign in as seeded users;
+real phones wait on an SMS provider. Not built, on
 purpose: a real SMS provider, sandbox/production Lucra credentials, `double_elim` (see
 `docs/open-questions.md`, "Follow-ups").
 
