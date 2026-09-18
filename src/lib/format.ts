@@ -87,3 +87,33 @@ export function surname(displayName: string): string {
 export function pairName(nameA: string, nameB: string): string {
   return `${surname(nameA)} / ${surname(nameB)}`;
 }
+
+/**
+ * "$75", "75.00", "1,250.5" → cents. Null for anything that is not a
+ * non-negative amount with at most two decimals; money is never a float.
+ */
+export function parseAmountToCents(input: string): number | null {
+  const cleaned = input.trim().replace(/^[$€£]/, "").replace(/,/g, "");
+  if (!/^\d+(?:\.\d{1,2})?$/.test(cleaned)) return null;
+  const [whole = "0", fraction = ""] = cleaned.split(".");
+  return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+}
+
+/** Cents → "75" or "12.50", the value an amount input shows. */
+export function centsToAmountString(cents: number): string {
+  const amount = cents / 100;
+  return Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+}
+
+export function ordinal(n: number): string {
+  const rules = new Intl.PluralRules("en-US", { type: "ordinal" });
+  const suffix = { one: "st", two: "nd", few: "rd", other: "th", zero: "th", many: "th" }[rules.select(n)];
+  return `${n}${suffix}`;
+}
+
+/** "+12", "−4", "0" — a signed differential with a real minus sign. */
+export function formatSigned(n: number): string {
+  if (n > 0) return `+${n}`;
+  if (n < 0) return `−${Math.abs(n)}`;
+  return "0";
+}

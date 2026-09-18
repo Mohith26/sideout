@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";

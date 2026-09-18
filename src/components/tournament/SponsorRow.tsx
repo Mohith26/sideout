@@ -1,12 +1,8 @@
-import type { Sponsor, SponsorTier } from "@/db/schema";
+import type { Sponsor } from "@/db/schema";
+import { SPONSOR_TIER_LABEL as TIER_LABEL } from "@/components/tournament/labels";
 import { formatCents } from "@/lib/format";
 import { cx } from "@/lib/cx";
 
-const TIER_LABEL: Record<SponsorTier, string> = {
-  presenting: "Presenting",
-  court: "Court",
-  prize: "Prize",
-};
 
 export interface SponsorRowProps {
   sponsors: readonly Sponsor[];

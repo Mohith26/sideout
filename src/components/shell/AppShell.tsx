@@ -1,14 +1,20 @@
 import type { ReactNode } from "react";
+import { navItemsFor } from "@/components/shell/nav";
 import { NavRail } from "@/components/shell/NavRail";
 import { TabBar } from "@/components/shell/TabBar";
 import { Wordmark } from "@/components/shell/Wordmark";
 import { ToastProvider } from "@/components/ui/Toast";
+import { DatabaseNotReadyError } from "@/db/connection";
+import { viewer } from "@/server/auth/viewer";
 
 /**
  * Bottom tab bar on mobile, left rail from 1280px, one content column with
- * 16px gutters that grow to 32px at desktop (spec §12.3).
+ * 16px gutters that grow to 32px at desktop (spec §12.3). The organizer
+ * console tab appears only for an organizer session; the page itself is
+ * gated again on the server.
  */
-export function AppShell({ children }: { children: ReactNode }) {
+export async function AppShell({ children }: { children: ReactNode }) {
+  const items = navItemsFor(await viewerRole());
   return (
     <ToastProvider>
       <a
@@ -17,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         Skip to content
       </a>
-      <NavRail />
+      <NavRail items={items} />
       <div className="xl:pl-navrail">
         <header className="flex h-14 items-center border-b border-border-subtle px-gutter xl:hidden">
           <Wordmark />
@@ -26,12 +32,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
-      <TabBar />
+      <TabBar items={items} />
     </ToastProvider>
   );
 }
 
-/** Standard content column. */
-export function Container({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={["mx-auto w-full max-w-content px-gutter", className].filter(Boolean).join(" ")}>{children}</div>;
+/** The shell must render even before `npm run seed`; without a database there is no session either. */
+async function viewerRole(): Promise<"player" | "organizer" | null> {
+  try {
+    return (await viewer())?.role ?? null;
+  } catch (err) {
+    if (err instanceof DatabaseNotReadyError) return null;
+    throw err;
+  }
 }

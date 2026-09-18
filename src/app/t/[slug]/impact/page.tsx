@@ -1,4 +1,4 @@
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Icons } from "@/components/ui/icons";
@@ -7,7 +7,7 @@ import { SPONSOR_TIER_LABEL } from "@/components/tournament/SponsorRow";
 import { getTournamentImpact, type DonorWallEntry, type TournamentImpact } from "@/db/queries/impact";
 import { SPONSOR_TIER_ORDER } from "@/db/queries/tournaments";
 import type { RewardStatus } from "@/db/schema";
-import { formatCents, formatDate } from "@/lib/format";
+import { formatCents, formatDate, ordinal } from "@/lib/format";
 import { cx } from "@/lib/cx";
 import { requireTournament } from "../_lib";
 
@@ -143,10 +143,4 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
       {hint ? <dd className="tabular type-label mt-0.5 text-text-tertiary">{hint}</dd> : null}
     </div>
   );
-}
-
-function ordinal(n: number): string {
-  const rules = new Intl.PluralRules("en-US", { type: "ordinal" });
-  const suffix = { one: "st", two: "nd", few: "rd", other: "th", zero: "th", many: "th" }[rules.select(n)];
-  return `${n}${suffix}`;
 }

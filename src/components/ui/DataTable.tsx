@@ -27,6 +27,8 @@ export interface DataTableProps<Row> {
   emptyLabel?: string;
   className?: string;
   rowClassName?: (row: Row) => string | undefined;
+  /** Extra `data-*` attributes per row, e.g. a stable id for a FLIP reorder to measure. */
+  rowAttributes?: (row: Row) => Record<`data-${string}`, string | number>;
 }
 
 export function DataTable<Row>({
@@ -38,6 +40,7 @@ export function DataTable<Row>({
   emptyLabel = "Nothing to show yet.",
   className,
   rowClassName,
+  rowAttributes,
 }: DataTableProps<Row>) {
   return (
     <div className={cx("surface-raised overflow-x-auto rounded-md", className)}>
@@ -50,7 +53,7 @@ export function DataTable<Row>({
                 key={col.key}
                 scope="col"
                 className={cx(
-                  "px-3 py-2.5 type-label text-text-tertiary first:pl-4 last:pr-4",
+                  "px-3 py-2.5 type-label whitespace-nowrap text-text-tertiary first:pl-4 last:pr-4",
                   col.align === "end" || col.numeric ? "text-end" : "text-start",
                   col.width,
                   col.hideBelowMd && "hidden md:table-cell",
@@ -70,14 +73,14 @@ export function DataTable<Row>({
             </tr>
           ) : (
             rows.map((row) => (
-              <tr key={getRowKey(row)} className={cx("border-b border-border-subtle last:border-b-0", rowClassName?.(row))}>
+              <tr key={getRowKey(row)} className={cx("border-b border-border-subtle last:border-b-0", rowClassName?.(row))} {...rowAttributes?.(row)}>
                 {columns.map((col) => (
                   <td
                     key={col.key}
                     className={cx(
                       "px-3 py-2.5 align-middle first:pl-4 last:pr-4",
                       col.align === "end" || col.numeric ? "text-end" : "text-start",
-                      col.numeric && "tabular",
+                      col.numeric && "tabular whitespace-nowrap",
                       col.hideBelowMd && "hidden md:table-cell",
                     )}
                   >

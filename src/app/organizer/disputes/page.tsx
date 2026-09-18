@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { DisputeCard } from "@/components/consensus/DisputeCard";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { OrganizerAccessRequired } from "@/components/shell/OrganizerAccessRequired";
 import { EmptyState } from "@/components/ui/EmptyState";

@@ -1,4 +1,4 @@
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { User } from "@/db/schema";

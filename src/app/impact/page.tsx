@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";

@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icons } from "@/components/ui/icons";
-import { isActivePath, NAV_ITEMS } from "@/components/shell/nav";
+import { isActivePath, type NavItem } from "@/components/shell/nav";
 import { Wordmark } from "@/components/shell/Wordmark";
 import { cx } from "@/lib/cx";
 
 /** Left rail at 1280px and up. */
-export function NavRail() {
+export function NavRail({ items }: { items: readonly NavItem[] }) {
   const pathname = usePathname();
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-navrail flex-col border-r border-border-subtle bg-bg-base xl:flex">
@@ -17,7 +17,7 @@ export function NavRail() {
       </div>
       <nav aria-label="Primary" className="flex-1 px-3 py-2">
         <ul className="space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {items.map((item) => {
             const Icon = Icons[item.icon];
             const active = isActivePath(pathname, item.href);
             return (

@@ -91,3 +91,8 @@ export function transitionTournament(from: TournamentStatus, to: TournamentStatu
 export function transitionMatch(from: MatchStatus, to: MatchStatus, actor: TransitionActor): TransitionVerdict {
   return judge(MATCH_TRANSITIONS, "match", from, to, actor);
 }
+
+/** Every status `actor` may move a tournament to from `from`, in machine order. The console renders exactly these. */
+export function allowedTournamentTargets(from: TournamentStatus, actor: Pick<TransitionActor, "kind">): TournamentStatus[] {
+  return TOURNAMENT_TRANSITIONS.filter((e) => e.from === from && e.actors.includes(actor.kind)).map((e) => e.to);
+}

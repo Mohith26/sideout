@@ -139,8 +139,10 @@ test.describe("Organizer consensus screens", () => {
     const anyMember = detail.bracket.matches.flatMap((m) => m.teamA?.members ?? [])[0];
     if (!anyMember) throw new Error("no member");
     expect((await page.request.post("/api/dev/login", { data: { userId: anyMember.userId } })).ok()).toBe(true);
-    await page.goto("/organizer/disputes");
-    await expect(page.getByRole("heading", { name: "Organizer access required" })).toBeVisible();
+    // The console layout 404s the whole of /organizer/** for anyone but an organizer (see `src/app/organizer/_lib.ts`).
+    const asPlayer = await page.goto("/organizer/disputes");
+    expect(asPlayer?.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: "Organizer access required" })).toHaveCount(0);
     const api = await page.request.get("/api/admin/disputes");
     expect(api.status()).toBe(403);
   });

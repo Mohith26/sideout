@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icons } from "@/components/ui/icons";
-import { isActivePath, NAV_ITEMS } from "@/components/shell/nav";
+import { isActivePath, type NavItem } from "@/components/shell/nav";
 import { cx } from "@/lib/cx";
 
 /** Mobile bottom navigation with safe-area insets. Hidden at the rail breakpoint. */
-export function TabBar() {
+export function TabBar({ items }: { items: readonly NavItem[] }) {
   const pathname = usePathname();
   return (
     <nav
@@ -15,7 +15,7 @@ export function TabBar() {
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border-subtle bg-bg-base pb-safe xl:hidden"
     >
       <ul className="mx-auto flex h-tabbar max-w-content items-stretch">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon = Icons[item.icon];
           const active = isActivePath(pathname, item.href);
           return (

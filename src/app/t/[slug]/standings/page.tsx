@@ -1,27 +1,73 @@
-import { Container } from "@/components/shell/AppShell";
+import { StandingsFootnote, StandingsTable } from "@/components/bracket/StandingsTable";
+import { Container } from "@/components/shell/Container";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LiveRefresh } from "@/components/ui/LiveRefresh";
+import { SectionHeading } from "@/components/ui/SectionHeading";
+import { getPoolStandings } from "@/db/queries/standings";
 import { getTournamentOverview } from "@/db/queries/tournaments";
-import { requireTournament } from "../_lib";
+import { requireTournament, viewerTeamId } from "../_lib";
 
 export const dynamic = "force-dynamic";
 
-/** Honest placeholder; standings with tiebreaks are phase 2 domain logic. */
+/** Matches the standings endpoint's `max-age=10`. */
+const LIVE_REFRESH_MS = 10_000;
+
+/**
+ * Standings tab (spec §11.2): one table per pool from the same computation
+ * `GET /api/tournaments/:slug/standings` serves, updated politely while live.
+ * The FLIP reorder is phase 5; rows already carry stable ids for it.
+ */
 export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
-  const { tournament } = await requireTournament(slug);
-  const overview = getTournamentOverview(tournament.id);
-  const poolMatches = overview.rounds.filter((r) => r.key.startsWith("pool-")).reduce((n, r) => n + r.total, 0);
+  const { tournament: t, activeTeams } = await requireTournament(slug);
+  const standings = getPoolStandings(t.id);
+  const overview = getTournamentOverview(t.id);
+  const highlight = await viewerTeamId(t.id);
+  const live = t.status === "live";
+
+  if (standings.length === 0) {
+    return (
+      <Container className="py-6 md:py-8">
+        <EmptyState
+          icon="table"
+          title="No pools yet"
+          body={
+            t.format === "single_elim"
+              ? "This event is a straight bracket, so there are no pool standings; results live on the Bracket tab."
+              : `Standings appear once the draw is generated and pool play begins. ${activeTeams} of ${t.maxTeams} teams are in so far.`
+          }
+        />
+      </Container>
+    );
+  }
+
+  const played = standings.reduce((n, p) => n + p.played, 0);
+  const total = standings.reduce((n, p) => n + p.total, 0);
+
   return (
     <Container className="py-6 md:py-8">
-      <EmptyState
-        icon="table"
-        title="Standings arrive with the draw engine"
-        body={
-          overview.pools.length > 0
-            ? `${overview.pools.length} pools and ${poolMatches} pool matches are recorded. Per-pool tables with point-differential tiebreaks are the next phase of the build; the pool compositions are listed on Overview.`
-            : "No pools exist for this event yet. Standings appear once the draw is generated and pool play begins."
-        }
-      />
+      {live ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
+      <SectionHeading id="standings-heading" aside={<span className="tabular">{`${played} of ${total} pool matches played`}</span>}>
+        Standings
+      </SectionHeading>
+      <div aria-live="polite" aria-atomic="false" className="grid gap-6 xl:grid-cols-2">
+        {standings.map((pool) => {
+          const teams = overview.pools.find((p) => p.id === pool.poolId)?.teams ?? [];
+          return (
+            <StandingsTable
+              key={pool.poolId}
+              label={pool.label}
+              courtLabel={pool.courtLabel}
+              rows={pool.rows}
+              teams={teams}
+              played={pool.played}
+              total={pool.total}
+              highlightTeamId={highlight}
+            />
+          );
+        })}
+      </div>
+      <StandingsFootnote className="mt-6" />
     </Container>
   );
 }

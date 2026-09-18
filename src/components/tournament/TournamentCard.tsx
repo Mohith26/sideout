@@ -3,6 +3,7 @@ import type { TournamentSummary } from "@/db/queries/tournaments";
 import { Icons } from "@/components/ui/icons";
 import { StatusPill, TOURNAMENT_STATUS_PILL } from "@/components/ui/StatusPill";
 import { ImpactMeter } from "@/components/tournament/ImpactMeter";
+import { DIVISION_LABEL, FORMAT_LABEL } from "@/components/tournament/labels";
 import { formatCents, formatDate, formatDateRange, formatRelative } from "@/lib/format";
 import { cx } from "@/lib/cx";
 
@@ -12,21 +13,6 @@ export interface TournamentCardProps {
   nowMs: number;
   className?: string;
 }
-
-const DIVISION_LABEL: Record<TournamentSummary["tournament"]["division"], string> = {
-  open: "Open",
-  womens: "Women's",
-  mens: "Men's",
-  coed: "Coed",
-  rec: "Rec",
-};
-
-const FORMAT_LABEL: Record<TournamentSummary["tournament"]["format"], string> = {
-  pool_to_bracket: "Pools to bracket",
-  single_elim: "Single elimination",
-  double_elim: "Double elimination",
-  round_robin: "Round robin",
-};
 
 export { DIVISION_LABEL, FORMAT_LABEL };
 

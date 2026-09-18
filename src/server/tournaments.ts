@@ -227,7 +227,7 @@ export function createTournament(input: CreateTournamentInput, actor: Transition
 // ---------------------------------------------------------------------------
 
 /** Edges the PATCH route may take; closing is `@/server/close` (preview, hash, confirm) and `settled` is the settlement outcome (phase 4). */
-const PATCHABLE_TARGETS: ReadonlySet<TournamentStatus> = new Set(["registration_open", "registration_closed", "live", "cancelled"]);
+export const PATCHABLE_TARGETS: ReadonlySet<TournamentStatus> = new Set(["registration_open", "registration_closed", "live", "cancelled"]);
 
 export function updateTournament(id: string, input: UpdateTournamentInput, actor: TransitionActor, clock: Clock = systemClock): TournamentDetail {
   const db = getDb();

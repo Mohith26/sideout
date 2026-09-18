@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CloseFlow } from "@/components/consensus/CloseFlow";
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { OrganizerAccessRequired } from "@/components/shell/OrganizerAccessRequired";
 import { Icons } from "@/components/ui/icons";

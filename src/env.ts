@@ -51,6 +51,12 @@ const serverSchema = z
      * trusted. Size it to the largest crowd expected to sign in at once.
      */
     AUTH_CODE_GLOBAL_CAP: z.coerce.number().int().min(1).max(1_000_000).default(2000),
+    /**
+     * Lucra's responsible gaming policy, linked wherever a wallet or reward is
+     * shown (spec §4.7). Configuration rather than copy so the deployment can
+     * point at the page Lucra names for the tenant.
+     */
+    LUCRA_RESPONSIBLE_GAMING_URL: z.url().default("https://lucrasports.com/pages/responsible-gaming.html"),
   })
   .superRefine((env, ctx) => {
     // OPEN: (§17.1) sandbox credentials are issued by a Lucra representative. The
@@ -178,6 +184,7 @@ export const env: ServerEnv = parseServerEnv({
   SIDEOUT_DEV_LOGIN: process.env.SIDEOUT_DEV_LOGIN,
   TRUSTED_PROXY_HOPS: process.env.TRUSTED_PROXY_HOPS,
   AUTH_CODE_GLOBAL_CAP: process.env.AUTH_CODE_GLOBAL_CAP,
+  LUCRA_RESPONSIBLE_GAMING_URL: process.env.LUCRA_RESPONSIBLE_GAMING_URL,
 });
 
 if (env.sessionSecretSource === "ephemeral") {

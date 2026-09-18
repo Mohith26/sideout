@@ -100,12 +100,15 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   and the submission check all key on the match status.
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
-  production when unset — `/health` reports which). `users.role` gates `/api/admin/*`
-  via `requireOrganizer`; server components read the same cookie through
-  `src/server/auth/viewer.ts`, and every page under `/organizer` calls its
-  `organizerViewer()` before reading any data (a layout's check does not keep a page
-  segment out of the RSC payload, so there is no gating layout). `POST /api/dev/login`
-  lives in `route.dev.ts`, an extension
+  production when unset — `/health` reports which; the ephemeral value lives on
+  `globalThis` because a production server evaluates `src/env.ts` once per route bundle).
+  `users.role` gates `/api/admin/*` via `requireOrganizer`; server components read the
+  same cookie through `src/server/auth/viewer.ts`. Every page under `/organizer` gates
+  itself before reading any data (a layout's check does not keep a page segment out of
+  the RSC payload): the console pages and `src/app/organizer/layout.tsx` through
+  `src/app/organizer/_lib.ts` (`requireOrganizerViewer`: players and anonymous get
+  404), the dispute queue and the close flow through `organizerViewer()`.
+  `POST /api/dev/login` lives in `route.dev.ts`, an extension
   `next.config.ts` registers only outside production or with `SIDEOUT_DEV_LOGIN=true`.
   Sign-in rate limits key on `x-forwarded-for` only when `TRUSTED_PROXY_HOPS` says how
   many proxies vouch for it: a public deploy behind a proxy must set `1` (production
@@ -118,23 +121,49 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   read). Lucra entry at registration is `lucraEntryHook` in
   `src/server/registration.ts`, which returns `not_available` until phase 4.
 
+## Screens (phase 2b conventions)
+
+- Client components never import a server module: `Container` is
+  `src/components/shell/Container.tsx` (client-safe), `AppShell` reads the viewer for
+  the nav. Enum labels live in `src/components/tournament/labels.ts`; pure round names
+  in `src/lib/rounds.ts`. Pass enum vocabularies from a server page as props rather
+  than importing `src/db/schema` values into a client component.
+- Browser writes go through `src/lib/api-client.ts` to the existing route handlers (the
+  tested write path), with the same zod rules mirrored on the form; there are no server
+  actions. Pages that need a session `redirect(signInHref(path))`
+  (`src/lib/redirects.ts` only honours same-origin paths).
+- Live figures re-render through `src/components/ui/LiveRefresh.tsx` (`router.refresh`
+  on a cadence, 10s for standings/bracket/board, while the tab is visible); pages stay
+  `force-dynamic`, and the standings API keeps its 10s `Cache-Control`.
+- Bracket: `src/components/bracket/model.ts` is the pure layout/keyboard model used by
+  the public tab, the organizer preview (`DrawPanel`) and the tests; `Bracket.tsx` is
+  the SVG. Connectors are one `<path data-from data-to data-advanced>` per feeder for
+  the phase-5 draw animation; standings rows carry `data-team-id` for the FLIP.
+- The console (`src/app/organizer/**`, `layout.tsx` + `ConsoleNav`) links to
+  `/organizer/disputes`, `/organizer/events/[id]/close` and `/m/[id]`, which the
+  consensus phase owns. `e2e/screens.spec.ts` screenshots every screen at
+  390/768/1280 into `test-results/screens/` and asserts no sideways scroll at 390.
+- Testing Library does not auto-cleanup here (no vitest globals): component tests add
+  `afterEach(cleanup)`. In `next dev`, open `http://localhost:<port>` (not `127.0.0.1`)
+  or client components never hydrate.
+
 ## Phase status
 
-Phase 1 (Foundation), phase 2a (Domain + application API) and phase 3 (Consensus)
-are complete: shell, primitives, schema, seed, `/health`, Home, `/t/[slug]` Overview
-and Impact, the draw engine, bracket advancement, standings tiebreaks, status
-machines, phone sign-in, every §9 public, player and organizer route except the
-Lucra ones, the score consensus machine with `/m/[id]` and its score sheet, the
-dispute queue (`/organizer/disputes`) and the two-step close
-(`/organizer/events/[id]/close`). The last pool match to become terminal — agreed,
-resolved or forfeited — seeds the bracket through `seedBracketIfPoolsComplete`
-(`src/server/matches.ts`, after the resolving transaction commits). Bracket and
-Standings tabs, registration, sign-in, profile and the organizer console shell
-(none exists; the two console pages gate themselves) are the phase-2b task.
-`double_elim` is in the enum
-but refused by `draw()`. No Lucra code exists yet (phase 4); `src/lucra/version.ts`
-is the only file there, and `lucraSettlementHook` / `lucraEntryHook` report
-`not_available`.
+Phases 1 (Foundation), 2a (Domain + application API), 2b (Screens) and 3 (Consensus)
+are complete: shell, primitives, schema, seed, `/health`, Home, every `/t/[slug]` tab
+(Overview, Bracket with pool sheets, Standings, Impact), the draw engine, bracket
+advancement, standings tiebreaks, status machines, phone sign-in (`/sign-in`), teams
+and registration (`/teams/new`, `/t/[slug]/register`, `/me`), the organizer console
+(`/organizer/events`, the builder with its live draw preview, the court board), every
+§9 public, player and organizer route except the Lucra ones, the score consensus
+machine with `/m/[id]` and its score sheet, the dispute queue (`/organizer/disputes`)
+and the two-step close (`/organizer/events/[id]/close`). The last pool match to become
+terminal — agreed, resolved or forfeited — seeds the bracket through
+`seedBracketIfPoolsComplete` (`src/server/matches.ts`, after the resolving transaction
+commits). `double_elim` is in the enum but refused by `draw()`. No Lucra code exists
+yet (phase 4); `src/lucra/version.ts` is the only file there, `lucraSettlementHook` /
+`lucraEntryHook` report `not_available`, and the profile leaves a documented slot for
+the verification row and wallet chip.
 
 ## Maintaining this file
 

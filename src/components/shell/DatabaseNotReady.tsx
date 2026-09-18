@@ -1,4 +1,4 @@
-import { Container } from "@/components/shell/AppShell";
+import { Container } from "@/components/shell/Container";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 /** Shown when the SQLite file is missing or unmigrated, instead of a stack trace. */

@@ -117,7 +117,7 @@ export function listUserTeams(userId: string): UserTeamView[] {
 export interface PendingInviteView {
   invite: TeamInvite;
   team: Pick<Team, "id" | "name" | "status">;
-  tournament: Pick<Tournament, "id" | "slug" | "name" | "status" | "startsAt">;
+  tournament: Pick<Tournament, "id" | "slug" | "name" | "status" | "startsAt" | "venueTimezone">;
   invitedBy: { userId: string; displayName: string };
 }
 
@@ -134,7 +134,7 @@ export function listPendingInvitesForPhone(phoneE164: string): PendingInviteView
     .map(({ invite, team, tournament, inviter }) => ({
       invite,
       team: { id: team.id, name: team.name, status: team.status },
-      tournament: { id: tournament.id, slug: tournament.slug, name: tournament.name, status: tournament.status, startsAt: tournament.startsAt },
+      tournament: { id: tournament.id, slug: tournament.slug, name: tournament.name, status: tournament.status, startsAt: tournament.startsAt, venueTimezone: tournament.venueTimezone },
       invitedBy: { userId: inviter.id, displayName: inviter.displayName },
     }));
 }
