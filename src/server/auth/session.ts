@@ -19,13 +19,26 @@ import { log } from "@/lib/log";
 export const SESSION_COOKIE = "sideout_session";
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * How the session was opened. `demo` marks a sign-in through the public
+ * demo's account picker (`POST /api/auth/demo`, `DEMO_ACCOUNTS`): the shell
+ * shows a "Demo" pill for it. A code-based sign-in carries no marker.
+ */
+export const SESSION_VIA = ["demo"] as const;
+export type SessionVia = (typeof SESSION_VIA)[number];
+
 const payloadSchema = z.object({
   v: z.literal(1),
   uid: z.string().min(1),
   iat: z.number().int().nonnegative(),
   exp: z.number().int().positive(),
+  via: z.enum(SESSION_VIA).optional(),
 });
 export type SessionPayload = z.infer<typeof payloadSchema>;
+
+export interface SessionOptions {
+  via?: SessionVia | undefined;
+}
 
 function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64url");
@@ -35,9 +48,9 @@ function sign(payload: string, secret: string): string {
   return createHmac("sha256", secret).update(payload).digest("base64url");
 }
 
-export function signSession(userId: string, secret: string, clock: Clock = systemClock): string {
+export function signSession(userId: string, secret: string, clock: Clock = systemClock, options: SessionOptions = {}): string {
   const iat = clock.now();
-  const payload: SessionPayload = { v: 1, uid: userId, iat, exp: iat + SESSION_TTL_MS };
+  const payload: SessionPayload = { v: 1, uid: userId, iat, exp: iat + SESSION_TTL_MS, ...(options.via ? { via: options.via } : {}) };
   const encoded = b64url(JSON.stringify(payload));
   return `v1.${encoded}.${sign(encoded, secret)}`;
 }
@@ -83,8 +96,8 @@ export function isSecureRequest(request: Pick<NextRequest, "headers" | "nextUrl"
   return secure;
 }
 
-export function setSessionCookie(response: NextResponse, request: Pick<NextRequest, "headers" | "nextUrl">, userId: string, clock: Clock = systemClock): void {
-  response.cookies.set(SESSION_COOKIE, signSession(userId, env.sessionSecret, clock), {
+export function setSessionCookie(response: NextResponse, request: Pick<NextRequest, "headers" | "nextUrl">, userId: string, clock: Clock = systemClock, options: SessionOptions = {}): void {
+  response.cookies.set(SESSION_COOKIE, signSession(userId, env.sessionSecret, clock, options), {
     httpOnly: true,
     sameSite: "lax",
     secure: isSecureRequest(request),

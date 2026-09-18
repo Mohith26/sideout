@@ -28,6 +28,8 @@ export interface HealthData {
   /** Where the session signing key came from; "ephemeral" means SESSION_SECRET is unset in production. */
   session: typeof env.sessionSecretSource;
   devLogin: boolean;
+  /** The demo-accounts picker and the reset route exist (`DEMO_ACCOUNTS`, mock mode only). */
+  demoAccounts: boolean;
   migrations: MigrationState;
 }
 
@@ -40,6 +42,7 @@ export async function GET() {
     lucraMatcherInterpretation: env.LUCRA_MATCHER_INTERPRETATION,
     session: env.sessionSecretSource,
     devLogin: env.devLoginEnabled,
+    demoAccounts: env.demoAccountsEnabled,
   };
 
   let migrations: MigrationState;

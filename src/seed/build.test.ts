@@ -6,6 +6,7 @@ import { hashScoreline } from "@/domain/scoreline-hash";
 import { draw, drawConfigSchema, seedBracketSlots, selectAdvancing } from "@/domain/draw";
 import { computeStandings, type StandingsMatch } from "@/domain/standings";
 import { isUuidV7 } from "@/lib/uuid";
+import { DEMO_MATCH_BRACKET_POSITION, demoRoster } from "@/seed/demo";
 import { buildSeed, DEFAULT_RNG_SEED, SEED_DRAWS, seedDrawConfig, seedDrawOptions, SLUGS, startOfTodayIn, VENUE_TIMEZONE, type SeedDataset } from "@/seed/build";
 
 // Fixed anchor: a Saturday midnight in Los Angeles. Tests never depend on today.
@@ -457,20 +458,26 @@ describe("seed dataset (spec §13)", () => {
   });
 
   describe("Pier 9 Open (registration open)", () => {
-    it("is 40% full counting only registered teams, with one withdrawn and one still forming", () => {
+    it("is 40% full counting only registered teams, with one withdrawn, one still forming and one complete but unregistered", () => {
       const teams = teamsOf(upcoming.id);
       const active = teams.filter((t) => t.status === "registered" || t.status === "checked_in");
       expect(active.length / upcoming.maxTeams).toBeCloseTo(0.4, 5);
       expect(teams.filter((t) => t.status === "withdrawn")).toHaveLength(1);
       const forming = teams.filter((t) => t.status === "forming");
-      expect(forming).toHaveLength(1);
-      const formingMembers = data.teamMembers.filter((m) => m.teamId === forming[0]?.id);
-      expect(formingMembers.map((m) => m.role)).toEqual(["captain"]);
-      const invites = data.teamInvites.filter((i) => i.teamId === forming[0]?.id);
+      expect(forming).toHaveLength(2);
+      const membersOf = (teamId: string | undefined) => data.teamMembers.filter((m) => m.teamId === teamId);
+      const waiting = forming.find((t) => membersOf(t.id).length === 1);
+      const ready = forming.find((t) => membersOf(t.id).length === 2);
+      expect(waiting).toBeDefined();
+      expect(ready).toBeDefined();
+
+      // The waiting team: captain in, partner invited by phone.
+      expect(membersOf(waiting?.id).map((m) => m.role)).toEqual(["captain"]);
+      const invites = data.teamInvites.filter((i) => i.teamId === waiting?.id);
       expect(invites).toHaveLength(1);
       expect(invites[0]?.status).toBe("pending");
       // The audit row records that the invitee is a known player, never the phone itself.
-      const inviteAudit = data.auditLog.filter((a) => a.subjectId === forming[0]?.id && a.action === "team.invite_sent");
+      const inviteAudit = data.auditLog.filter((a) => a.subjectId === waiting?.id && a.action === "team.invite_sent");
       expect(inviteAudit.map((a) => JSON.parse(a.detailJson ?? "null"))).toEqual([{ knownPlayer: true }]);
       expect(data.auditLog.some((a) => (a.detailJson ?? "").includes(invites[0]?.phoneE164 ?? "+"))).toBe(false);
       // The invitee is a real seeded player with no team in this event yet.
@@ -478,7 +485,21 @@ describe("seed dataset (spec §13)", () => {
       expect(invitee?.role).toBe("player");
       const inviteeTeams = data.teamMembers.filter((m) => m.userId === invitee?.id).map((m) => data.teams.find((t) => t.id === m.teamId));
       expect(inviteeTeams.some((t) => t?.tournamentId === upcoming.id)).toBe(false);
-      expect(data.donations.some((d) => d.teamId === forming[0]?.id)).toBe(false);
+      expect(data.donations.some((d) => d.teamId === waiting?.id)).toBe(false);
+
+      // The ready team: the partner accepted (as the join route writes it), no donation yet.
+      expect(membersOf(ready?.id).map((m) => m.role).sort()).toEqual(["captain", "player"]);
+      const accepted = data.teamInvites.filter((i) => i.teamId === ready?.id);
+      expect(accepted).toHaveLength(1);
+      expect(accepted[0]?.status).toBe("accepted");
+      expect(accepted[0]?.acceptedByUserId).toBe(membersOf(ready?.id).find((m) => m.role === "player")?.userId);
+      expect(data.auditLog.filter((a) => a.subjectId === ready?.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent", "team.member_joined"]);
+      expect(data.donations.some((d) => d.teamId === ready?.id)).toBe(false);
+      // Neither member is on another team in this event.
+      for (const m of membersOf(ready?.id)) {
+        const others = data.teamMembers.filter((x) => x.userId === m.userId && x.teamId !== ready?.id).map((x) => data.teams.find((t) => t.id === x.teamId));
+        expect(others.some((t) => t?.tournamentId === upcoming.id)).toBe(false);
+      }
       expect(matchesOf(upcoming.id)).toHaveLength(0);
       expect(upcoming.startsAt).toBeGreaterThan(ANCHOR);
       const withdrawn = teams.find((t) => t.status === "withdrawn");
@@ -538,5 +559,41 @@ describe("seed dataset (spec §13)", () => {
     // Just before local midnight is still the previous local day.
     expect(startOfTodayIn("America/Los_Angeles", Date.UTC(2026, 8, 19, 6, 59))).toBe(Date.UTC(2026, 8, 18, 7));
     expect(live.startsAt).toBe(ANCHOR + 8 * 3_600_000);
+  });
+
+  describe("demo roster (src/seed/demo.ts)", () => {
+    it("names six distinct seeded users by phone, the same on any day", () => {
+      const roster = demoRoster(data);
+      const phones = Object.values(roster.phones);
+      expect(new Set(phones).size).toBe(6);
+      for (const phone of phones) expect(data.users.find((u) => u.phoneE164 === phone)).toBeDefined();
+      expect(demoRoster(buildSeed({ anchorMs: ANCHOR - 40 * 24 * 3_600_000, rngSeed: DEFAULT_RNG_SEED })).phones).toEqual(roster.phones);
+    });
+
+    it("captains A and B lead the two teams of a Sandbar Classic quarterfinal awaiting scores", () => {
+      const roster = demoRoster(data);
+      const match = matchesOf(live.id).find((m) => m.bracketPosition === DEMO_MATCH_BRACKET_POSITION);
+      expect(match?.status).toBe("awaiting_scores");
+      expect(match?.round).toBe(2);
+      const captain = (teamId: string | null) => data.users.find((u) => u.id === data.teamMembers.find((m) => m.teamId === teamId && m.role === "captain")?.userId)?.phoneE164;
+      expect(captain(match?.teamAId ?? null)).toBe(roster.phones.captain_a);
+      expect(captain(match?.teamBId ?? null)).toBe(roster.phones.captain_b);
+      // Team A's scoreline is in; team B's captain answers it.
+      const submissions = data.scoreSubmissions.filter((s) => s.matchId === match?.id);
+      expect(submissions.map((s) => s.submittedForTeamId)).toEqual([match?.teamAId]);
+    });
+
+    it("the registrant captains a complete, unregistered Pier 9 team; the rest are the organizer and the two Lucra states", () => {
+      const roster = demoRoster(data);
+      const registrant = data.users.find((u) => u.phoneE164 === roster.phones.registrant);
+      const membership = data.teamMembers.filter((m) => m.userId === registrant?.id).map((m) => ({ m, team: data.teams.find((t) => t.id === m.teamId) })).find((x) => x.team?.tournamentId === upcoming.id);
+      expect(membership?.m.role).toBe("captain");
+      expect(membership?.team?.status).toBe("forming");
+      expect(data.teamMembers.filter((m) => m.teamId === membership?.team?.id)).toHaveLength(2);
+      expect(data.users.find((u) => u.phoneE164 === roster.phones.organizer)?.role).toBe("organizer");
+      const stateOf = (phone: string) => data.lucraLinks.find((l) => l.userId === data.users.find((u) => u.phoneE164 === phone)?.id)?.verificationState;
+      expect(stateOf(roster.phones.not_allowed)).toBe("not_allowed");
+      expect(stateOf(roster.phones.demographics_missing)).toBe("demographics_missing");
+    });
   });
 });

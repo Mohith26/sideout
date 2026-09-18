@@ -437,7 +437,7 @@ class SeedBuilder {
    * A team mid-formation: the captain is in, the partner has a pending invite
    * by phone. Forming teams never count toward capacity and have no donation.
    */
-  buildFormingTeam(t: NewTournament, captain: SeedUser, invitee: SeedUser, name: string, createdAt: number): NewTeam {
+  buildFormingTeam(t: NewTournament, captain: SeedUser, invitee: SeedUser, name: string, createdAt: number, options: { accepted?: boolean } = {}): NewTeam {
     const row: NewTeam = { id: this.id(createdAt), tournamentId: t.id, name, seed: null, status: "forming", createdAt };
     this.data.teams.push(row);
     this.data.teamMembers.push({ id: this.id(createdAt + 1), teamId: row.id, userId: captain.row.id, role: "captain" });
@@ -471,6 +471,26 @@ class SeedBuilder {
       detailJson: JSON.stringify({ knownPlayer: true }),
       createdAt: createdAt + 2,
     });
+    if (options.accepted) {
+      // The partner accepted (what `POST /api/teams/:id/join` writes): the roster is
+      // complete and the team is ready to register, with no donation yet.
+      const invite = this.data.teamInvites[this.data.teamInvites.length - 1];
+      if (!invite) throw new Error("seed: invite missing");
+      const respondedAt = createdAt + 20 * MINUTE;
+      invite.status = "accepted";
+      invite.acceptedByUserId = invitee.row.id;
+      invite.respondedAt = respondedAt;
+      this.data.teamMembers.push({ id: this.id(respondedAt), teamId: row.id, userId: invitee.row.id, role: "player" });
+      this.audit({
+        actorUserId: invitee.row.id,
+        actorKind: "player",
+        action: "team.member_joined",
+        subjectType: "team",
+        subjectId: row.id,
+        detailJson: JSON.stringify({ inviteId: invite.id, supersedes: null }),
+        createdAt: respondedAt,
+      });
+    }
     return row;
   }
 
@@ -1449,6 +1469,12 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     const invitee = users[idx[19] ?? 1];
     if (!captain || !invitee) throw new Error("seed: forming team needs two spare players");
     b.buildFormingTeam(t, captain, invitee, `${surname(captain.row.displayName)} / TBD`, anchor - 3 * HOUR);
+    // One more team is complete (partner accepted an hour ago) and has not registered
+    // yet: the demo's registrant (`src/seed/demo.ts`) walks it through the two steps.
+    const readyCaptain = users[idx[20] ?? 0];
+    const readyPartner = users[idx[21] ?? 1];
+    if (!readyCaptain || !readyPartner) throw new Error("seed: ready team needs two spare players");
+    b.buildFormingTeam(t, readyCaptain, readyPartner, pairName(readyCaptain.row.displayName, readyPartner.row.displayName), anchor - 1 * HOUR, { accepted: true });
     b.sponsor(t, "Saltwater Coffee Roasters", "court", 50000);
     b.entryDonations(t, teams);
     b.supporterDonations(t, users, { from: createdAt + 2 * DAY, to: anchor - 1 * HOUR }, { minFraction: 0.14, maxFraction: 0.2 });

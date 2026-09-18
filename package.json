@@ -17,7 +17,8 @@
     "test:e2e": "playwright test",
     "seed": "tsx src/seed/cli.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate-cli.ts"
+    "db:migrate": "tsx src/db/migrate-cli.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

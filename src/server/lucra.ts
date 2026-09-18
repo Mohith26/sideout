@@ -273,11 +273,18 @@ export function getLucra(): LucraAdapter {
   return adapter;
 }
 
-/** Forget the seeded state so the next `getLucra()` rebuilds it (tests install a new database per case). */
-export function resetLucraForTests(): void {
+/**
+ * Forget the seeded state so the next `getLucra()` rebuilds it from the
+ * database: tests install a new database per case, and the public demo's
+ * reset (`src/server/demo-reset.ts`) reseeds the live one.
+ */
+export function resetLucraProcessState(): void {
   globalThis.__sideoutLucraMockSeeded = false;
   globalThis.__sideoutLucraSwept = false;
 }
+
+/** @deprecated alias kept for the test harness; same as `resetLucraProcessState`. */
+export const resetLucraForTests = resetLucraProcessState;
 
 // ---------------------------------------------------------------------------
 // 7.3.4: exactly one matchup per tournament

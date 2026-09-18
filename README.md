@@ -20,7 +20,7 @@ npm run dev      # http://localhost:3000
 
 The seed is deterministic: one beneficiary, 48 players in every verification state, and three events — one live (24 teams, pools finished, a semifinal in progress, a disputed quarterfinal, one waiting on scores, a first-round bye), one open for registration, one settled with rewards. Every number on a screen is derived from those rows.
 
-To sign in during development, `POST /api/auth/request-code` returns the one-time code in the response as `devCode` (there is no SMS provider yet; see [`docs/deploy.md`](docs/deploy.md)), and `POST /api/dev/login` signs you in as any seeded user by phone. Seeded organizers can open the console at `/organizer/events`.
+To sign in during development, `POST /api/auth/request-code` returns the one-time code in the response as `devCode` (there is no SMS provider yet; see [`docs/deploy.md`](docs/deploy.md)), and `POST /api/dev/login` signs you in as any seeded user by phone. Seeded organizers can open the console at `/organizer/events`. The public demo instead signs visitors in through the demo-accounts picker on `/sign-in` (`DEMO_ACCOUNTS=true`, mock mode only; see [`docs/deploy.md`](docs/deploy.md), "Public demo").
 
 ## Architecture
 

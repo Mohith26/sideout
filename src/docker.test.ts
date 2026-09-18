@@ -46,6 +46,14 @@ describe("Dockerfile", () => {
     expect(runtime).toMatch(/HEALTHCHECK[\s\S]*\/health/);
   });
 
+  it("bakes the demo switch into the build off by default, and only from the variable of the same name", () => {
+    // The browser's NEXT_PUBLIC_DEMO_ACCOUNTS is inlined at build time from DEMO_ACCOUNTS
+    // (next.config.ts); the runtime value comes from the service variables, so both must be set.
+    expect(dockerfile).toContain("ARG DEMO_ACCOUNTS=false");
+    expect(dockerfile).toContain("DEMO_ACCOUNTS=${DEMO_ACCOUNTS}");
+    expect(runtime).not.toContain("DEMO_ACCOUNTS");
+  });
+
   it("copies no env file into the runtime stage", () => {
     expect(runtime).not.toMatch(/COPY[^\n]*\.env/);
   });
