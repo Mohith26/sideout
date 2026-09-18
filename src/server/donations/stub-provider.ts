@@ -1,6 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, eq, lte } from "drizzle-orm";
+import { getDb } from "@/db/client";
 import { donations, type DonationProvider } from "@/db/schema";
 import type { Db } from "@/db/connection";
 import { writeAudit, SYSTEM_ACTOR } from "@/server/audit";
@@ -13,8 +14,9 @@ import { writeAudit, SYSTEM_ACTOR } from "@/server/audit";
  * intent as `pending` and marks it `succeeded` once `STUB_SETTLE_DELAY_MS`
  * has passed on the injected clock. `settleDueDonations` is the sweep that
  * applies that rule; the registration, impact and profile paths call it before
- * reading, so a pending donation flips on the next read after the delay with
- * no timers and no wall-clock dependence in tests.
+ * reading (routes and pages through `sweepDueDonations`, which owns the
+ * connection), so a pending donation flips on the next read after the delay
+ * with no timers and no wall-clock dependence in tests.
  *
  * A real provider (Stripe is the enum's other value) replaces `createIntent`
  * with a PaymentIntent and `settleDueDonations` with a webhook handler, and
@@ -41,6 +43,11 @@ export const stubDonationProvider: DonationProviderAdapter = {
 
 export function getDonationProvider(): DonationProviderAdapter {
   return stubDonationProvider;
+}
+
+/** The sweep on the process connection, for a route or page that reads impact figures. */
+export function sweepDueDonations(nowMs: number): number {
+  return settleDueDonations(getDb(), nowMs);
 }
 
 /** Flip every stub donation whose delay has elapsed to `succeeded`. Returns how many changed. */

@@ -1,9 +1,8 @@
 import type { NextRequest } from "next/server";
-import { getDb } from "@/db/client";
 import { getTournamentImpact } from "@/db/queries/impact";
 import { ok } from "@/lib/api";
 import { requestNow } from "@/lib/clock";
-import { settleDueDonations } from "@/server/donations/stub-provider";
+import { sweepDueDonations } from "@/server/donations/stub-provider";
 import { handle } from "@/server/http";
 import { requireTournamentBySlug } from "@/server/tournaments";
 
@@ -15,7 +14,7 @@ export async function GET(_request: NextRequest, ctx: RouteContext<"/api/tournam
   return handle(async () => {
     const { slug } = await ctx.params;
     const { tournament, charity } = requireTournamentBySlug(slug);
-    settleDueDonations(getDb(), requestNow());
+    sweepDueDonations(requestNow());
     const impact = getTournamentImpact(tournament);
     return ok({ tournamentId: tournament.id, slug: tournament.slug, charity, ...impact }, { headers: { "Cache-Control": "public, max-age=10" } });
   });

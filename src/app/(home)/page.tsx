@@ -4,11 +4,10 @@ import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LiveMatchStrip } from "@/components/tournament/LiveMatchStrip";
 import { TournamentCard } from "@/components/tournament/TournamentCard";
-import { getDb } from "@/db/client";
 import { getBracketRoundCount, listLiveMatches, listTournamentSummaries, type TournamentSummary } from "@/db/queries/tournaments";
 import { load } from "@/lib/load";
 import { requestNow } from "@/lib/clock";
-import { settleDueDonations } from "@/server/donations/stub-provider";
+import { sweepDueDonations } from "@/server/donations/stub-provider";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +27,7 @@ export default function HomePage() {
   const nowMs = requestNow();
   const loaded = load(() => {
     // Stub donation provider: pending intents past their delay become succeeded on read.
-    settleDueDonations(getDb(), nowMs);
+    sweepDueDonations(nowMs);
     const summaries = listTournamentSummaries();
     const live = summaries.filter((s) => s.tournament.status === "live");
     const strips = live.map((s) => ({
