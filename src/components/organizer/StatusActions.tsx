@@ -97,7 +97,14 @@ export function StatusActions({ tournamentId, status, patchable, matchCount }: S
           </Link>
         ) : null}
       </div>
-      {status === "awaiting_settlement" ? <p className="text-text-tertiary">Closed. Settlement is Lucra&rsquo;s outcome and arrives with phase 4; there is nothing to do here.</p> : null}
+      {status === "awaiting_settlement" || status === "settled" ? (
+        <p className="text-text-tertiary">
+          {status === "awaiting_settlement" ? "Closed. Settlement is Lucra’s outcome and arrives with phase 4; there is nothing to do here. " : null}
+          <Link href={`/organizer/events/${tournamentId}/close`} className="text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">
+            See the frozen close preview
+          </Link>
+        </p>
+      ) : null}
       {status === "registration_closed" && matchCount === 0 ? <p className="type-label text-text-tertiary">Going live needs a draw; generate one below first.</p> : null}
       <ConfirmDialog
         open={pending !== null}

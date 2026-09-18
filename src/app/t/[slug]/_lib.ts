@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { DatabaseNotReadyError } from "@/db/connection";
 import { findUserTeamInTournament } from "@/db/queries/teams";
 import { getTournamentSummaryBySlug, isPublished, type TournamentSummary } from "@/db/queries/tournaments";
-import type { User } from "@/db/schema";
+import type { Team, User } from "@/db/schema";
 import { viewer } from "@/server/auth/viewer";
 
 /**
@@ -36,9 +36,14 @@ export async function requireTournament(slug: string): Promise<TournamentSummary
   return summary;
 }
 
-/** The signed-in viewer's live team in this event, for highlighting their own row; null when anonymous or not entered. */
-export async function viewerTeamId(tournamentId: string): Promise<string | null> {
+/** The signed-in viewer's live team in this event; null when anonymous or not entered. */
+export async function viewerTeam(tournamentId: string): Promise<Team | null> {
   const user = await viewer();
   if (!user) return null;
-  return findUserTeamInTournament(user.id, tournamentId)?.id ?? null;
+  return findUserTeamInTournament(user.id, tournamentId);
+}
+
+/** Its id alone, for highlighting the viewer's own row. */
+export async function viewerTeamId(tournamentId: string): Promise<string | null> {
+  return (await viewerTeam(tournamentId))?.id ?? null;
 }

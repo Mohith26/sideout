@@ -13,7 +13,7 @@ import { DIVISION_LABEL, FORMAT_LABEL } from "@/components/tournament/labels";
 import { getTournamentOverview, listLiveMatches, type RoundView } from "@/db/queries/tournaments";
 import { MATCH_STATUSES, type MatchStatus } from "@/db/schema";
 import { formatCents, formatTime } from "@/lib/format";
-import { requireTournament, viewerTeamId } from "./_lib";
+import { requireTournament, viewerTeam } from "./_lib";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +39,8 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
   const summary = await requireTournament(slug);
   const { tournament: t, charity, activeTeams, raisedCents, donorCount } = summary;
   const overview = getTournamentOverview(t.id);
-  const viewerTeam = t.status === "registration_open" ? await viewerTeamId(t.id) : null;
+  const team = t.status === "registration_open" ? await viewerTeam(t.id) : null;
+  const registerHref = `/t/${t.slug}/register`;
   const live = t.status === "live" ? listLiveMatches(t.id) : [];
   const bracketRounds = overview.rounds.filter((r) => r.key.startsWith("bracket-")).length;
 
@@ -85,9 +86,15 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
               .
             </p>
           </div>
-          <Button variant="primary" size="lg" href={viewerTeam ? `/t/${t.slug}/register` : `/teams/new?t=${t.slug}`} iconEnd={<Icons.arrowRight size={18} />}>
-            {viewerTeam ? "Register" : "Create a team"}
-          </Button>
+          {team && team.status !== "forming" ? (
+            <Button variant="secondary" size="lg" href={registerHref} iconEnd={<Icons.arrowRight size={18} />}>
+              Your registration
+            </Button>
+          ) : (
+            <Button variant="primary" size="lg" href={team ? registerHref : `/teams/new?t=${t.slug}`} iconEnd={<Icons.arrowRight size={18} />}>
+              {team ? "Register" : "Create a team"}
+            </Button>
+          )}
         </section>
       ) : null}
       <section aria-label="Event facts">
