@@ -119,7 +119,7 @@ The public demo runs on Railway, project `sideout`, service `sideout`, environme
 
 - **URL:** https://sideout-production-7db6.up.railway.app (the Railway-provided domain,
   from `railway domain`).
-- **Deployed commit:** `25f83b2a089b0a82d993cf0771e4d0da108d1016` on `fm/sideout-deploy`
+- **Deployed commit:** `3695c6c22a0bb9c8cde8be3e7062485744e9b9e3` on `fm/sideout-deploy`
   (the `buildSha` `/health` reports; `railway up` uploads the working tree without `.git`,
   so `BUILD_SHA` is set as a service variable before each deploy).
 - **Health check:** `GET /health` answers 200 with `lucraMode: "mock"`, `session: "env"`,
