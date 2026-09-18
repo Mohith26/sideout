@@ -36,7 +36,7 @@ const rewardColumns: DataTableColumn<RewardRow>[] = [
     key: "event",
     header: "Event",
     render: (r) => (
-      <Link href={`/t/${r.tournamentSlug}/impact`} className="font-medium text-text-primary hover:text-volt">
+      <Link href={`/t/${r.tournamentSlug}/impact`} className="target -my-2.5 flex items-center py-2.5 font-medium text-text-primary hover:text-volt">
         {r.tournamentName}
       </Link>
     ),

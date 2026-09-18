@@ -24,8 +24,8 @@ export function TeamHistoryCard({ history: h, pendingInvite, primaryAction }: { 
   return (
     <article className="surface-raised flex flex-col gap-4 rounded-md p-4 md:p-5" aria-label={`${h.team.name} at ${h.tournament.name}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link href={`/t/${h.tournament.slug}`} className="min-w-0 truncate font-medium text-text-primary hover:text-volt">
-          {h.tournament.name}
+        <Link href={`/t/${h.tournament.slug}`} className="target inline-flex min-w-0 items-center font-medium text-text-primary hover:text-volt">
+          <span className="truncate">{h.tournament.name}</span>
         </Link>
         <span className="flex items-center gap-2">
           <span className="tabular type-label text-text-tertiary">{formatDate(h.tournament.startsAt, tz)}</span>

@@ -36,22 +36,15 @@ export function registrationState(input: RegistrationInput): RegistrationState {
 }
 
 /** Step 1's visual state: what the donation card says. */
-export type DonationStepState = "locked" | "due" | "processing" | "received" | "refunded" | "failed" | "free";
+export type DonationStepState = "locked" | "due" | "processing" | "received" | "failed" | "free";
 
 export function donationStep(state: RegistrationState, entryDonationCents: number): DonationStepState {
   if (state.kind === "ready") return entryDonationCents > 0 ? "due" : "free";
   if (state.kind === "registered") {
     if (!state.donation) return entryDonationCents > 0 ? "locked" : "free";
-    switch (state.donation.status) {
-      case "pending":
-        return "processing";
-      case "succeeded":
-        return "received";
-      case "refunded":
-        return "refunded";
-      case "failed":
-        return "failed";
-    }
+    if (state.donation.status === "pending") return "processing";
+    if (state.donation.status === "succeeded") return "received";
+    if (state.donation.status === "failed") return "failed";
   }
   return "locked";
 }

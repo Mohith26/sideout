@@ -34,10 +34,9 @@ describe("registrationState", () => {
     expect(donationStep({ kind: "waiting_partner", invitePhone: null }, 7500)).toBe("locked");
     expect(donationStep({ kind: "ready", full: false }, 7500)).toBe("due");
     expect(donationStep({ kind: "ready", full: false }, 0)).toBe("free");
-    const d = (status: "pending" | "succeeded" | "refunded" | "failed") => ({ kind: "registered" as const, donation: { status, amountCents: 7500, currency: "USD" } });
+    const d = (status: "pending" | "succeeded" | "failed") => ({ kind: "registered" as const, donation: { status, amountCents: 7500, currency: "USD" } });
     expect(donationStep(d("pending"), 7500)).toBe("processing");
     expect(donationStep(d("succeeded"), 7500)).toBe("received");
-    expect(donationStep(d("refunded"), 7500)).toBe("refunded");
     expect(donationStep(d("failed"), 7500)).toBe("failed");
     expect(donationStep({ kind: "registered", donation: null }, 0)).toBe("free");
     expect(donationStep({ kind: "registered", donation: null }, 7500)).toBe("locked");

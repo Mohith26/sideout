@@ -12,18 +12,16 @@ export interface AvatarPerson {
 
 export interface TeamAvatarPairProps {
   members: ReadonlyArray<AvatarPerson>;
-  teamName?: string;
-  className?: string;
+  teamName: string;
 }
 
 const DISC = "size-9 text-[13px]";
 
-export function TeamAvatarPair({ members, teamName, className }: TeamAvatarPairProps) {
+export function TeamAvatarPair({ members, teamName }: TeamAvatarPairProps) {
   const pair = members.slice(0, 2);
-  const label = teamName ?? pair.map((m) => m.displayName).join(" & ");
   return (
-    <span className={cx("inline-flex min-w-0 items-center gap-3", className)}>
-      <span className="flex shrink-0 -space-x-2" role="img" aria-label={label}>
+    <span className="inline-flex min-w-0 items-center gap-3">
+      <span className="flex shrink-0 -space-x-2" role="img" aria-label={teamName}>
         {pair.map((m, i) => (
           <span
             key={`${m.displayName}-${i}`}
@@ -39,10 +37,10 @@ export function TeamAvatarPair({ members, teamName, className }: TeamAvatarPairP
         ) : null}
       </span>
       <span className="flex min-w-0 flex-col">
-        {teamName ? <span className="truncate font-medium text-text-primary">{teamName}</span> : null}
-        <span className={cx("truncate", teamName ? "type-label text-text-tertiary" : "font-medium text-text-primary")}>
+        <span className="truncate font-medium text-text-primary">{teamName}</span>
+        <span className="truncate type-label text-text-tertiary">
           {pair.map((m) => m.displayName).join(" & ")}
-          {pair.length < 2 ? <span className="text-text-tertiary">{pair.length ? " & partner pending" : "No players yet"}</span> : null}
+          {pair.length < 2 ? (pair.length ? " & partner pending" : "No players yet") : null}
         </span>
       </span>
     </span>

@@ -25,7 +25,7 @@ export function InviteCard({ invite, timeZone, primary = false }: { invite: Pend
           {invite.invitedBy.displayName} invited you to play as &ldquo;{invite.team.name}&rdquo;
         </p>
         <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-text-secondary">
-          <Link href={`/t/${invite.tournament.slug}`} className="hover:text-text-primary">
+          <Link href={`/t/${invite.tournament.slug}`} className="target inline-flex items-center hover:text-text-primary">
             {invite.tournament.name}
           </Link>
           <span className="tabular text-text-tertiary">· {formatDate(invite.tournament.startsAt, timeZone)}</span>

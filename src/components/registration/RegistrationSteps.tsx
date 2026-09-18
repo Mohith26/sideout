@@ -110,7 +110,6 @@ export function RegistrationSteps({ slug, tournamentName, charityName, entryDona
             {donation ? `${formatCents(donation.amountCents, donation.currency)} went to ${charityName}. Thank you.` : null}
           </Notice>
         ) : null}
-        {step1 === "refunded" ? <Notice tone="info" title="Donation refunded">{`The team withdrew and ${donation ? formatCents(donation.amountCents, donation.currency) : amount} was returned.`}</Notice> : null}
         {step1 === "failed" ? (
           <Notice tone="error" title="The donation did not go through">
             Contact the organizer to sort out the entry.
