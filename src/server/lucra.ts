@@ -11,6 +11,8 @@ import {
   matches,
   rewards,
   sets,
+  teamMembers,
+  teams,
   tournaments,
   users,
   type ConsensusState,
@@ -120,6 +122,27 @@ export function mockMatchupMetadata(t: Pick<Tournament, "lucraExternalId" | "slu
   return { externalId: t.lucraExternalId, sideout_slug: t.slug, season: `${new Date(t.startsAt).getUTCFullYear()}`, venue: t.venueName, city: t.venueCity };
 }
 
+/**
+ * The account state the mock gives a seeded link (§13: the `not_allowed` and
+ * `demographics_missing` players must produce those states through the SDK
+ * without contrivance): `verified` is a verified account, `not_allowed` a
+ * `BLOCKED` one (the SDK's `NotAllowed`), `demographics_missing` an account
+ * whose free-to-play form is outstanding, `unverified` one that has never
+ * been through Lucra's identity flow.
+ */
+export function mockAccountFor(state: LucraLink["verificationState"]): Pick<MockSeedUser, "accountStatus" | "demographicsComplete"> {
+  switch (state) {
+    case "verified":
+      return { accountStatus: "VERIFIED", demographicsComplete: true };
+    case "not_allowed":
+      return { accountStatus: "BLOCKED", demographicsComplete: true };
+    case "demographics_missing":
+      return { accountStatus: "UNVERIFIED", demographicsComplete: false };
+    case "unverified":
+      return { accountStatus: "UNVERIFIED", demographicsComplete: true };
+  }
+}
+
 /** The Lucra user id the mock knows a link by: the recorded one, else a stable id derived from the external id. */
 export function mockLucraUserId(link: Pick<LucraLink, "lucraUserId" | "externalId">): string {
   return link.lucraUserId ?? uuidFromSeed(`lucra-user:${link.externalId}`);
@@ -144,6 +167,7 @@ export function buildMockSeedFromDb(): MockSeed {
     username: userRows.get(l.userId)?.displayName.toLowerCase().replace(/[^a-z0-9]+/g, ".") ?? l.externalId,
     phoneNumber: userRows.get(l.userId)?.phoneE164 ?? null,
     metadata: { externalId: l.externalId },
+    ...mockAccountFor(l.verificationState),
   }));
   const lucraIdByUser = new Map(links.map((l) => [l.userId, mockLucraUserId(l)]));
 
@@ -981,6 +1005,181 @@ export function linkLucraAccount(user: Pick<User, "id">, clock: Clock = systemCl
     writeAudit(tx, { actor: { kind: "player", userId: user.id }, action: LUCRA_AUDIT.linkMinted, subjectType: "user", subjectId: user.id, detail: { externalId: row.externalId }, at: now });
     return { externalId: row.externalId, lucraUserId: null, verificationState: row.verificationState, linkedAt: null, minted: true };
   });
+}
+
+export const bindRequestSchema = z.object({ lucraUserId: z.string().trim().min(1).max(200).nullable().optional() }).strict();
+
+export type BindSource = "already_bound" | "mock" | "participant_read_back";
+
+export interface BindResult {
+  externalId: string;
+  lucraUserId: string | null;
+  verificationState: LucraLink["verificationState"];
+  /** True when the link now carries a Lucra user id. */
+  bound: boolean;
+  /** Where the id came from; `null` when nothing could vouch for one yet. */
+  source: BindSource | null;
+  /** Why an unbound answer is unbound. */
+  reason: "not_visible_yet" | null;
+}
+
+/**
+ * `POST /api/me/lucra/bind` (phase 4b): after the SDK sign-in, record the
+ * caller's Lucra user id on their own link — but only an id Lucra itself
+ * vouches for. The id the browser reports (`client.user.id`) is a hint that
+ * is checked, never the source: the payout destination and the key the
+ * verification webhook matches on cannot come from the client (§4.6, §7.5).
+ *
+ * Sources, in order: the link already carries one (a webhook or an earlier
+ * read-back got there first); in mock mode the in-process Lucra's own account
+ * for this phone; otherwise the documented participant read-back
+ * (`GET /pool-tournament/:matchupId`) of every verified matchup the caller has
+ * a registered team in, matched on the `externalId` Lucra echoes. A hint
+ * that disagrees with what Lucra says is refused. When nothing can vouch yet
+ * — the user has not entered a tournament — the answer is honest
+ * (`not_visible_yet`): the `UserSignedUp` / `TournamentUserJoined` webhooks
+ * and the pre-settlement read-back record it later.
+ */
+export async function bindLucraAccount(user: Pick<User, "id" | "phoneE164">, input: { lucraUserId?: string | null | undefined }, clock: Clock = systemClock): Promise<BindResult> {
+  const db = getDb();
+  linkLucraAccount(user, clock);
+  const done = (row: Pick<LucraLink, "externalId" | "lucraUserId" | "verificationState">, source: BindSource | null, reason: BindResult["reason"]): BindResult => ({
+    externalId: row.externalId,
+    lucraUserId: row.lucraUserId,
+    verificationState: row.verificationState,
+    bound: row.lucraUserId !== null,
+    source,
+    reason,
+  });
+  const current = () => {
+    const row = db.select().from(lucraLinks).where(eq(lucraLinks.userId, user.id)).get();
+    if (!row) throw new ApiFailure("internal", "The Lucra link disappeared.");
+    return row;
+  };
+  const existing = current();
+  const hint = input.lucraUserId ?? null;
+  if (existing.lucraUserId !== null) {
+    if (hint !== null && hint !== existing.lucraUserId) throw new ApiFailure("conflict", "The signed-in Lucra account is not the one linked to this Sideout account.", { code: "lucra_account_mismatch" });
+    return done(existing, "already_bound", null);
+  }
+
+  const adapter = getLucra();
+  let vouched: { id: string; source: BindSource } | null = null;
+  if (adapter.mock) {
+    const account = (user.phoneE164 ? adapter.mock.findUserByPhone(user.phoneE164) : undefined) ?? adapter.mock.findUserByExternalId(existing.externalId);
+    if (account) vouched = { id: account.id, source: "mock" };
+  } else {
+    const teamIds = new Set(db.select({ teamId: teamMembers.teamId }).from(teamMembers).where(eq(teamMembers.userId, user.id)).all().map((r) => r.teamId));
+    const candidates = teamIds.size
+      ? db
+          .select({ matchupId: tournaments.lucraMatchupId, verifiedAt: tournaments.lucraMatchupVerifiedAt, teamStatus: teams.status })
+          .from(teams)
+          .innerJoin(tournaments, eq(tournaments.id, teams.tournamentId))
+          .where(inArray(teams.id, [...teamIds]))
+          .all()
+      : [];
+    for (const c of candidates) {
+      if (!c.matchupId || c.verifiedAt === null || (c.teamStatus !== "registered" && c.teamStatus !== "checked_in")) continue;
+      const { matchup } = await adapter.getTournament(c.matchupId);
+      const hit = matchup.users.find((u) => u.userMetadata?.externalId === existing.externalId);
+      if (hit) {
+        vouched = { id: hit.userId, source: "participant_read_back" };
+        break;
+      }
+    }
+  }
+  if (!vouched) {
+    log.info("lucra: bind deferred, nothing vouches for a Lucra user id yet", { userId: user.id, hinted: hint !== null });
+    return done(existing, null, "not_visible_yet");
+  }
+  if (hint !== null && hint !== vouched.id) throw new ApiFailure("conflict", "The signed-in Lucra account is not the one Lucra reports for this Sideout account.", { code: "lucra_account_mismatch" });
+  const now = clock.now();
+  const recorded = db.transaction((tx) => {
+    const row = current();
+    if (row.lucraUserId !== null) return row;
+    const claimed = tx.select({ id: lucraLinks.id }).from(lucraLinks).where(eq(lucraLinks.lucraUserId, vouched.id)).get();
+    if (claimed) throw new ApiFailure("conflict", "That Lucra account is already linked to another Sideout account.", { code: "lucra_account_claimed" });
+    tx.update(lucraLinks).set({ lucraUserId: vouched.id, linkedAt: row.linkedAt ?? now, lastSyncedAt: now }).where(eq(lucraLinks.id, row.id)).run();
+    writeAudit(tx, { actor: { kind: "player", userId: user.id }, action: LUCRA_AUDIT.linkUpdated, subjectType: "user", subjectId: user.id, detail: { externalId: row.externalId, lucraUserId: vouched.id, source: `sdk_bind:${vouched.source}` }, at: now });
+    return { ...row, lucraUserId: vouched.id };
+  });
+  return done(recorded, vouched.source, null);
+}
+
+// ---------------------------------------------------------------------------
+// Tournament entry (phase 4b): what the registration step shows
+// ---------------------------------------------------------------------------
+
+export interface LucraEntryPlayer {
+  userId: string;
+  displayName: string;
+  /** Whether this is the caller. */
+  you: boolean;
+  /** Has a `lucra_links` row (signed in to Lucra at least once, or seeded as such). */
+  linked: boolean;
+  /** Listed as a participant by Lucra's read-back; `null` when the read-back could not run. */
+  entered: boolean | null;
+}
+
+export interface LucraEntryStatus {
+  tournamentId: string;
+  teamId: string;
+  /** The verified matchup the SDK joins (§7.3.4), or why there is none yet. */
+  matchup: { id: string; verifiedAt: number } | { id: null; reason: "matchup_missing" | "matchup_ambiguous" | "matchup_query_failed" };
+  players: LucraEntryPlayer[];
+  /** The caller's own opaque id (the key Lucra echoes back); never a teammate's. */
+  externalId: string | null;
+  /** When the participant list was read, or null when it was not. */
+  readBackAt: number | null;
+  /** Both players linked and listed by Lucra. */
+  complete: boolean;
+}
+
+/**
+ * The entry step's truth: the verified matchup to join, and — from Lucra's
+ * participant list, never from the browser — who on the roster has entered.
+ * Runs the §7.3.4 assertion when the matchup is not yet cached (a count
+ * other than one raises the organizer's alert but never freezes the event
+ * from here: this is a read, not a write), then the documented read-back.
+ * A Lucra that does not answer leaves `entered` null rather than guessing.
+ */
+export async function lucraEntryStatus(input: { tournamentId: string; teamId: string; roster: ReadonlyArray<{ userId: string; displayName: string }>; callerUserId: string }, clock: Clock = systemClock): Promise<LucraEntryStatus> {
+  const db = getDb();
+  const links = linksForUsers(db, input.roster.map((m) => m.userId));
+  const actor: TransitionActor = { kind: "player", userId: input.callerUserId };
+  let matchup: LucraEntryStatus["matchup"];
+  try {
+    const target = await ensureMatchupTarget(input.tournamentId, actor, clock);
+    matchup = { id: target.matchupId, verifiedAt: target.verifiedAt };
+  } catch (err) {
+    if (!isLucraError(err)) throw err;
+    matchup = { id: null, reason: err.code === "ambiguous_matchup" ? "matchup_ambiguous" : err.code === "matchup_not_found" ? "matchup_missing" : "matchup_query_failed" };
+  }
+  let participants: TournamentMatchup["users"] | null = null;
+  let readBackAt: number | null = null;
+  if (matchup.id) {
+    try {
+      participants = (await getLucra().getTournament(matchup.id)).matchup.users;
+      readBackAt = clock.now();
+    } catch (err) {
+      if (!isLucraError(err)) throw err;
+      log.warn("lucra: entry read-back did not answer", { tournamentId: input.tournamentId, matchupId: matchup.id, code: err.code });
+    }
+  }
+  const players = input.roster.map((m): LucraEntryPlayer => {
+    const link = links.get(m.userId);
+    const entered = participants === null ? null : participants.some((u) => (link !== undefined && u.userMetadata?.externalId === link.externalId) || (link?.lucraUserId !== null && link?.lucraUserId !== undefined && u.userId === link.lucraUserId));
+    return { userId: m.userId, displayName: m.displayName, you: m.userId === input.callerUserId, linked: link !== undefined, entered: link ? entered : false };
+  });
+  return {
+    tournamentId: input.tournamentId,
+    teamId: input.teamId,
+    matchup,
+    players,
+    externalId: links.get(input.callerUserId)?.externalId ?? null,
+    readBackAt,
+    complete: players.length > 0 && players.every((p) => p.linked && p.entered === true),
+  };
 }
 
 /**

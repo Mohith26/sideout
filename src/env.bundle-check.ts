@@ -27,12 +27,21 @@ import { log } from "@/lib/log";
  * needs `node:crypto` lives in `@/domain/scoreline-hash` so a client component
  * that reaches it would pull the whole `crypto-browserify` bundle down to a
  * phone on the sand.
+ *
+ * The browser SDK follows the mode too (spec §7.5): a sandbox build must ship
+ * the real `lucra-web-sdk` (its iframe id is the marker) and none of the mock
+ * stand-in (`src/lucra/sdk-mock.ts`, marked by its sheet attribute), because
+ * `LucraGate` branches on the inlined `NEXT_PUBLIC_LUCRA_MODE`.
  */
 const VARIABLE_NAME = "LUCRA_BACKEND_API_KEY";
 const SENTINEL = "sideout-backend-key-sentinel-4b1f9e2d";
 const SECRET_VARIABLE_NAME = "LUCRA_WEBHOOK_SECRET";
 const SECRET_SENTINEL = "sideout-webhook-secret-sentinel-9c7e21aa";
 const CRYPTO_POLYFILL = "/crypto-browserify/";
+/** `LucraClientIframeId` in lucra-web-sdk: present only when the real SDK is bundled. */
+const REAL_SDK_MARKER = "__lucrasports__";
+/** The stand-in's sheet attribute: present only when `src/lucra/sdk-mock.ts` is bundled. */
+const MOCK_SDK_MARKER = "data-lucra-mock-sheet";
 const CLIENT_OUTPUT = resolve(process.cwd(), ".next", "static");
 const DEV_LOGIN_OUTPUT = resolve(process.cwd(), ".next", "server", "app", "api", "dev");
 /** The `%5Fmock` folder (a URL-encoded underscore segment) may be emitted under either spelling. */
@@ -69,11 +78,15 @@ if (files.length === 0) {
 const leaks: string[] = [];
 const secretLeaks: string[] = [];
 const polyfilled: string[] = [];
+const mockSdk: string[] = [];
+let realSdk = false;
 for (const file of files) {
   const bytes = readFileSync(file);
   if (bytes.includes(SENTINEL) || bytes.includes(VARIABLE_NAME)) leaks.push(file);
   if (bytes.includes(SECRET_SENTINEL) || bytes.includes(SECRET_VARIABLE_NAME)) secretLeaks.push(file);
   if (bytes.includes(CRYPTO_POLYFILL)) polyfilled.push(file);
+  if (bytes.includes(MOCK_SDK_MARKER)) mockSdk.push(file);
+  if (bytes.includes(REAL_SDK_MARKER)) realSdk = true;
 }
 
 if (leaks.length > 0) {
@@ -101,6 +114,22 @@ if (polyfilled.length > 0) {
   process.exitCode = 1;
 } else {
   log.info("client bundle has no node crypto polyfill");
+}
+
+if (mockSdk.length > 0) {
+  for (const file of mockSdk) {
+    log.error("the mock Lucra SDK stand-in reached a sandbox client bundle", { file: relative(process.cwd(), file) });
+  }
+  process.exitCode = 1;
+} else {
+  log.info("sandbox client bundle has no mock SDK stand-in");
+}
+
+if (!realSdk) {
+  log.error("the real Lucra Web SDK is missing from the sandbox client bundle", { marker: REAL_SDK_MARKER });
+  process.exitCode = 1;
+} else {
+  log.info("sandbox client bundle carries the real Lucra Web SDK");
 }
 
 if (existsSync(DEV_LOGIN_OUTPUT)) {

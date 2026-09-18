@@ -13,6 +13,7 @@ import { env } from "@/env";
 import { formatDate, formatTime } from "@/lib/format";
 import { load, loadAsync } from "@/lib/load";
 import { LUCRA_API_VERSION, LUCRA_PATHS, LUCRA_SDK_VERSION } from "@/lucra";
+import { LUCRA_WEB_THEME, LUCRA_WEB_THEME_OPTIONS } from "@/lucra/theme";
 import { organizerViewer } from "@/server/auth/viewer";
 import { readLucraAlert } from "@/server/lucra";
 
@@ -169,9 +170,9 @@ export default async function LucraAdminPage({ searchParams }: PageProps<"/admin
             <dd className="font-mono text-[13px] text-text-secondary">{env.LUCRA_MATCHER_INTERPRETATION}</dd>
           </div>
           <div>
-            <dt className="type-label text-text-tertiary">Web SDK pin · REST</dt>
+            <dt className="type-label text-text-tertiary">Web SDK pin · installed · REST</dt>
             <dd className="font-mono text-[13px] text-text-secondary">
-              {LUCRA_SDK_VERSION} · {LUCRA_API_VERSION}
+              {LUCRA_SDK_VERSION} · {env.LUCRA_SDK_INSTALLED_VERSION ?? "unknown"} · {LUCRA_API_VERSION}
             </dd>
           </div>
           <div>
@@ -231,12 +232,33 @@ export default async function LucraAdminPage({ searchParams }: PageProps<"/admin
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <LucraActionButton action={{ kind: "verify", tournamentId: t.id }} />
                   <LucraActionButton action={{ kind: "reconcile", tournamentId: t.id }} />
+                  <Link href={`/organizer/events/${t.id}/lucra`} className="target inline-flex items-center gap-1.5 rounded-sm px-2 type-label text-text-secondary hover:text-text-primary">
+                    Participants
+                    <Icons.arrowRight size={12} />
+                  </Link>
                   {t.status === "awaiting_settlement" ? <LucraActionButton action={{ kind: "settle", tournamentId: t.id }} variant="primary" /> : null}
                 </div>
               </article>
             );
           })}
         </div>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="theme">
+        <h2 id="theme" className="type-heading">
+          Web theme, for Lucra
+        </h2>
+        <p className="max-w-prose text-text-secondary">
+          Lucra&apos;s web theming is configured on the tenant, not at runtime: these are Sideout&apos;s tokens in the ten documented options (HSL), computed from <code className="font-mono text-[13px]">src/styles/tokens.css</code> and handed to the Lucra representative. In mock mode the stand-in renders on the same tokens.
+        </p>
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 surface-raised rounded-md p-4 sm:grid-cols-2 lg:grid-cols-5" data-testid="lucra-theme">
+          {LUCRA_WEB_THEME_OPTIONS.map((option) => (
+            <div key={option}>
+              <dt className="font-mono text-[13px] text-text-tertiary">{option}</dt>
+              <dd className="font-mono text-[13px] text-text-secondary">{LUCRA_WEB_THEME[option] ?? "—"}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
 
       <section className="space-y-3" aria-labelledby="writes">

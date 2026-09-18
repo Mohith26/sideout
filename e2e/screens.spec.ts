@@ -177,8 +177,8 @@ test.describe("screens", () => {
     await expect(captainPage).toHaveURL(new RegExp(`/t/${OPEN}/register$`));
     await expect(captainPage.getByText("Waiting for your partner")).toBeVisible();
     await expect(captainPage.getByRole("heading", { name: /Charitable donation/ })).toBeVisible();
-    await expect(captainPage.getByRole("heading", { name: /Tournament entry/ })).toBeVisible();
-    await expect(captainPage.getByText("Opens with Lucra")).toBeVisible();
+    await expect(captainPage.getByRole("heading", { name: /Enter the tournament with Lucra/ })).toBeVisible();
+    await expect(captainPage.getByText("Opens after step 1")).toBeVisible();
 
     const partner = await browser.newContext();
     const partnerPage = await partner.newPage();
@@ -196,7 +196,14 @@ test.describe("screens", () => {
     // Exact: the success toast's body carries the same sentence with a full stop.
     await expect(captainPage.getByText("Your donation is being processed", { exact: true })).toBeVisible();
     await expect(captainPage.getByText("Processing")).toBeVisible();
-    await expect(captainPage.getByText("Not available in this build · phase 4")).toBeVisible();
+    // Step 2 unlocks as its own card, run by Lucra: the roster's entry state and one action, nothing assumed.
+    const step2 = captainPage.getByRole("region", { name: /Step 2: Enter the tournament with Lucra/ });
+    await expect(step2).toContainText("Run by Lucra");
+    await expect(step2.getByTestId("entry-player")).toHaveCount(2);
+    // The seed lists one player Lucra knows who is on no team (§7.5's "extra"); if the captain is that player the read-back already shows them entered.
+    const mine = step2.getByTestId("entry-player").filter({ hasText: "you" });
+    if (((await mine.getAttribute("data-entered")) ?? "") === "true") await expect(step2.getByTestId("lucra-enter")).toHaveCount(0);
+    else await expect(step2.getByTestId("lucra-enter")).toHaveText("Sign in with Lucra and enter");
     // The registration is real: the team now counts on the public roster and the donation is a pending stub intent.
     const me = (await (await captainPage.request.get("/api/me")).json()) as { data: { teams: Array<{ team: { name: string; status: string }; donation: { status: string; amountCents: number } | null }> } };
     const entry = me.data.teams.find((t) => t.team.name === teamName);

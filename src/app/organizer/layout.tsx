@@ -12,8 +12,9 @@ export const metadata: Metadata = { title: { default: "Console", template: "%s �
  * Organizer console shell (spec §11.6): role-gated here for every page beneath
  * it, with its own dense navigation. The dispute queue and the close flow are
  * the consensus phase's pages; they render beneath this layout and gate
- * themselves. The Lucra audit page (`/admin/lucra`, spec §11.6) joins this nav
- * in phase 4.
+ * themselves. "Lucra" is the audit page (`/admin/lucra`), which lists every
+ * event's targeting state, alerts and writes; each event's participant
+ * reconciliation is `/organizer/events/[id]/lucra`, linked from the builder.
  */
 export default async function OrganizerLayout({ children }: LayoutProps<"/organizer">) {
   const loaded = await loadAsync(async () => {
@@ -24,6 +25,7 @@ export default async function OrganizerLayout({ children }: LayoutProps<"/organi
   const items: ConsoleNavItem[] = [
     { href: "/organizer/events", label: "Events", icon: "calendar" },
     { href: "/organizer/disputes", label: "Disputes", icon: "triangleAlert", badge: loaded.data },
+    { href: "/admin/lucra", label: "Lucra", icon: "shieldCheck" },
   ];
   return (
     <>

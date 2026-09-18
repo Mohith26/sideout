@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { LucraEntryStep } from "@/components/lucra/LucraEntryStep";
+import { LucraGate } from "@/components/lucra/LucraGate";
 import { RegistrationSteps } from "@/components/registration/RegistrationSteps";
 import { registrationState } from "@/components/registration/state";
 import { Container } from "@/components/shell/Container";
 import { LiveRefresh } from "@/components/ui/LiveRefresh";
 import { findUserTeamInTournament, getTeamDetail } from "@/db/queries/teams";
 import { listUserTeams } from "@/db/queries/teams";
+import { env } from "@/env";
 import { signInHref } from "@/lib/redirects";
 import { viewer } from "@/server/auth/viewer";
+import { lucraEntryStatus } from "@/server/lucra";
 import { requireTournament } from "../_lib";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +23,9 @@ const PENDING_REFRESH_MS = 15_000;
 /**
  * Registration (spec §11.4): the two visually distinct steps for the viewer's
  * team in this event. Anonymous visitors sign in first and come back here.
+ * Once the team is registered, step 2 is live: the entry state is read from
+ * Lucra's participant list on the server and handed to `LucraEntryStep`
+ * inside a `LucraGate`, the only place the SDK is loaded.
  */
 export default async function RegisterPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
@@ -38,6 +45,25 @@ export default async function RegisterPage({ params }: PageProps<"/t/[slug]">) {
     full: activeTeams >= tournament.maxTeams,
   });
 
+  const entry =
+    state.kind === "registered" && detail
+      ? await lucraEntryStatus({ tournamentId: tournament.id, teamId: detail.id, roster: detail.members.map((m) => ({ userId: m.userId, displayName: m.displayName })), callerUserId: user.id })
+      : null;
+
+  const steps = (
+    <RegistrationSteps
+      slug={tournament.slug}
+      tournamentName={tournament.name}
+      charityName={charity.name}
+      entryDonationCents={tournament.entryDonationCents}
+      currency={tournament.currency}
+      state={state}
+      teamId={detail?.id ?? null}
+      teamName={detail?.name ?? null}
+      entry={entry ? <LucraEntryStep slug={tournament.slug} tournamentName={tournament.name} initial={entry} supportHref={env.LUCRA_SUPPORT_URL} /> : null}
+    />
+  );
+
   return (
     <Container className="py-6 md:py-8">
       {state.kind === "registered" && state.donation?.status === "pending" ? <LiveRefresh intervalMs={PENDING_REFRESH_MS} /> : null}
@@ -49,16 +75,7 @@ export default async function RegisterPage({ params }: PageProps<"/t/[slug]">) {
             {detail.members.length ? <span className="text-text-tertiary"> · {detail.members.map((m) => m.displayName).join(" & ")}</span> : null}
           </p>
         ) : null}
-        <RegistrationSteps
-          slug={tournament.slug}
-          tournamentName={tournament.name}
-          charityName={charity.name}
-          entryDonationCents={tournament.entryDonationCents}
-          currency={tournament.currency}
-          state={state}
-          teamId={detail?.id ?? null}
-          teamName={detail?.name ?? null}
-        />
+        {entry ? <LucraGate>{steps}</LucraGate> : steps}
       </div>
     </Container>
   );

@@ -89,6 +89,12 @@ export default async function EventBuilderPage({ params }: PageProps<"/organizer
               Live board
             </Link>
           ) : null}
+          {t.status !== "draft" ? (
+            <Link href={`/organizer/events/${t.id}/lucra`} className="target surface-raised inline-flex items-center gap-2 rounded-sm px-3 type-label text-text-secondary hover:text-text-primary">
+              <Icons.shieldCheck size={14} />
+              Lucra entry
+            </Link>
+          ) : null}
         </div>
       </div>
 

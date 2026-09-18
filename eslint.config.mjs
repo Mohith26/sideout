@@ -25,13 +25,42 @@ const restrictedImports = {
  * and nothing may name a Lucra host in a fetch. `src/lucra/import-boundary.test.ts`
  * runs ESLint over fixtures to prove each rule fires.
  */
+const serverLucraPattern = {
+  group: ["**/lucra/client", "**/lucra/mock", "@/lucra/client", "@/lucra/mock"],
+  message: "Only src/lucra/adapter.ts may use the Lucra client or mock; import from @/lucra.",
+};
+
+/**
+ * Spec §7.5, §12.5: `LucraGate` is the single wrapper that owns the browser
+ * SDK; no other component touches it. The real package and the mock stand-in
+ * are importable only from `src/components/lucra/LucraGate.tsx` (and the
+ * test helper `src/test/lucra-sdk.ts`, which needs the stand-in's error
+ * classes to script failures); everything else goes through `useLucra()`.
+ */
+const LUCRA_GATE_FILES = ["src/components/lucra/LucraGate.tsx", "src/components/lucra/LucraGate.test.tsx", "src/test/lucra-sdk.ts"];
+const browserSdkPattern = {
+  group: ["lucra-web-sdk", "lucra-web-sdk/*", "**/lucra/sdk-mock", "@/lucra/sdk-mock"],
+  message: "Only src/components/lucra/LucraGate.tsx may load the Lucra Web SDK or its mock stand-in; use useLucra().",
+};
+const realSdkPattern = {
+  group: ["lucra-web-sdk", "lucra-web-sdk/*"],
+  message: "Only src/components/lucra/LucraGate.tsx may load the Lucra Web SDK; src/lucra/sdk-surface.ts types it.",
+};
+
 const lucraBoundary = {
+  ...restrictedImports,
+  patterns: [...restrictedImports.patterns, serverLucraPattern, browserSdkPattern],
+};
+
+/** What the gate itself may not import: the server client and mock, and the scoreline hash (it is a component). */
+const gateBoundary = {
   ...restrictedImports,
   patterns: [
     ...restrictedImports.patterns,
+    serverLucraPattern,
     {
-      group: ["**/lucra/client", "**/lucra/mock", "@/lucra/client", "@/lucra/mock"],
-      message: "Only src/lucra/adapter.ts may use the Lucra client or mock; import from @/lucra.",
+      group: ["**/scoreline-hash"],
+      message: "The scoreline hash is server-side; components judge legality with @/domain/scoreline alone.",
     },
   ],
 };
@@ -69,7 +98,14 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // Everything outside src/lucra: no client, no mock, no fetch against a Lucra host.
+    // Inside src/lucra: the stand-in is internal, but the real browser SDK is still the gate's alone.
+    files: ["src/lucra/**"],
+    rules: {
+      "no-restricted-imports": ["error", { ...restrictedImports, patterns: [...restrictedImports.patterns, realSdkPattern] }],
+    },
+  },
+  {
+    // Everything outside src/lucra: no client, no mock, no browser SDK, no fetch against a Lucra host.
     files: ["src/**"],
     ignores: ["src/lucra/**"],
     rules: {
@@ -101,6 +137,13 @@ const eslintConfig = defineConfig([
           ],
         },
       ],
+    },
+  },
+  {
+    // The one component that loads the browser SDK (real or stand-in).
+    files: LUCRA_GATE_FILES,
+    rules: {
+      "no-restricted-imports": ["error", gateBoundary],
     },
   },
   {

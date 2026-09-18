@@ -74,7 +74,10 @@ processes in-process, so the webhook path runs on every close in mock mode.
 | `X-Lucra-Api-Key` never appears in a log line or a stored request (8.1) | redaction in `client.ts`; the key string is also scrubbed from response text | `client.test.ts`, `lucra.test.ts` |
 | An attempt row exists before the call and is updated after (8.1) | `submitConsensusScores` step 4 and 6 | `lucra.test.ts` |
 | Only `src/lucra/adapter.ts` makes outbound Lucra calls (§5) | ESLint `no-restricted-imports` on `**/lucra/client`, `**/lucra/mock` and `no-restricted-syntax` on `fetch("…lucrasports.com…")` outside `src/lucra/` | `import-boundary.test.ts` runs ESLint over fixtures |
-| The BACKEND key and the webhook secret reach no client bundle; the mock route is absent from a non-mock build (§5, acceptance 12) | `npm run test:bundle` builds in sandbox mode with sentinels | CI |
+| The BACKEND key and the webhook secret reach no client bundle; the mock routes are absent from a non-mock build (§5, acceptance 12) | `npm run test:bundle` builds in sandbox mode with sentinels | CI |
+| Only `src/components/lucra/LucraGate.tsx` loads the Web SDK or its stand-in; a sandbox build ships the real SDK and none of the stand-in (§7.5, §12.5) | ESLint `no-restricted-imports` on `lucra-web-sdk` and `**/lucra/sdk-mock` everywhere but the gate (and its test helper); `LucraGate` branches on the inlined `NEXT_PUBLIC_LUCRA_MODE` | `import-boundary.test.ts`; `npm run test:bundle` scans for the SDK's iframe id and the stand-in's sheet marker |
+| Every SDK failure is branched on by class and code, never by message (§7.5) | `classifySdkFailure` in `src/lucra/sdk-surface.ts` | `sdk-surface.test.ts` (an impostor class with a matching code is not trusted), `LucraGate.test.tsx` |
+| A Lucra user id is recorded on a link only from Lucra's side (§4.6, §7.5) | `bindLucraAccount` in `src/server/lucra.ts`: the mock's account or the participant read-back; the client's id is a hint that is checked | `src/app/api/lucra-sdk.test.ts` |
 
 ## What is sent
 
@@ -156,10 +159,116 @@ random per-process secret shared by the in-process mock signer and the receiver 
 in, and in production there is no fallback in any mode (boot warns, every delivery is
 refused until the secret is configured).
 
-## Not built here (phase 4b and later)
+## The browser
 
-The browser SDK (`lucra-web-sdk` v1.12.0, GitHub-only), `LucraGate`, the SDK-launched
-identity, wallet and demographic flows, the registration entry step's join button, the
-profile's Lucra rows and the rewards sheet. `POST /api/me/lucra/link` and
-`GET /api/admin/tournaments/:id/lucra/participants` are the server halves those build on.
-Real-money head-to-head stays behind `FEATURE_REAL_MONEY=false`.
+Spec §7.5 and §12.5: the Lucra Web SDK runs client-side, Sideout launches Lucra's
+flows and never reimplements them, and one component owns the SDK.
+
+**Loading.** `lucra-web-sdk` is installed from the GitHub release tag
+(`package.json`: `github:Lucra-Sports/lucra-web-sdk#v1.12.0`; the lockfile pins the
+commit, fetched as a tarball over https, so `npm ci` needs no SSH). The pin is
+repeated in `src/lucra/version.ts` for `/health`, which also reports the version read
+from the installed manifest at build time (`lucraSdk.installed`); `version.test.ts`
+keeps the three in step. Only `src/components/lucra/LucraGate.tsx` imports the
+package, through a dynamic `import()` on the client, initialized with the WEB key and
+tenant id from `src/env.public.ts` (`NEXT_PUBLIC_LUCRA_WEB_API_KEY`,
+`NEXT_PUBLIC_LUCRA_TENANT_ID`), `env` from the mode, and `autoJoin: false`. ESLint
+refuses `lucra-web-sdk` and `@/lucra/sdk-mock` everywhere else
+(`src/lucra/import-boundary.test.ts`), and `npm run test:bundle` proves over a sandbox
+build that the real SDK is in the client output and the stand-in is not.
+
+**Mode.** `NEXT_PUBLIC_LUCRA_MODE` is derived from `LUCRA_MODE` by `next.config.ts` and
+inlined, so `LucraGate` branches at build time: `mock` loads `src/lucra/sdk-mock.ts`,
+anything else the real package. `src/env.ts` refuses to boot when the two disagree. A
+live mode with no WEB credentials renders the gate's `unconfigured` state (the profile
+and the entry step say so) rather than initializing with half a pair.
+
+**Theming.** Lucra's Web Theming Guide publishes ten options (colors in HSL) configured
+on the tenant — the SDK has no runtime theme API. `src/lucra/theme.ts` computes them
+from `src/styles/tokens.css` (`primary` = volt, `on-primary` = on-volt, `secondary` =
+the overlay surface, no imagery; `theme.test.ts` pins every source hex to the CSS) and
+`/admin/lucra` shows them for handing to the Lucra representative. The mock stand-in
+renders on the same tokens, which is what the themed iframe looks like once applied.
+
+**`LucraGate` and `useLucra()`.** The gate mounts a host element, opens the SDK into
+it hidden (`client.open(host, undefined, { hidden: true }).home()`), waits on
+`client.ready`, and exposes `status`, `user` (the SDK's session: balance and account
+status, never persisted), `launch(flow)` for `auth` (Lucra's login screen on the host,
+awaited until `loginSuccess`), `identity` (`dialog().kyc()` until `kycComplete`),
+`demographics` (`dialog().demographic()` until `demographicComplete`), `addFunds`,
+`withdraw`, `wallet`, `profile`, `location` (`dialog().locationGrant()` until
+`locationGranted`) and `rewards` (see the open question), plus `joinTournament(matchupId)`
+(`client.api.joinTournament`). Every rejection goes through `classifySdkFailure` in
+`src/lucra/sdk-surface.ts`, which branches on `instanceof` the loaded module's classes
+and on `LucraApiError.code` — never on message text — into the states the spec table
+names:
+
+| Spec (§7.5) | Web SDK 1.12.0 | Gate |
+|---|---|---|
+| `NotInitialized` | `LucraUserNotLoggedIn`, or `ready` rejecting with `{ success: false }` | gate on ready; one automatic re-initialization; `retry()`; a user-scoped flow signs in first |
+| `Unverified` | `LucraApiErrorCode.unverified` | launch identity, retry the call once |
+| `NotAllowed` | `SDKLucraUser.accountStatus` in `BLOCKED`/`SUSPENDED`/`CLOSED`/`CLOSED_PENDING`/`HIDDEN` (the web SDK has no code for it; a blocked account fails with the catch-all) | terminal: messaging, `LUCRA_SUPPORT_URL`, no retry |
+| `InsufficientFunds` | `insufficientFunds` | launch add funds, retry once |
+| `DemographicInformationMissing` | `demographicInformationMissing` | launch the demographic form, retry once |
+| `LocationError` | `locationError`; `locationNeeded` when Lucra has no location yet | location-help state and retry; the grant page first for `locationNeeded` |
+| `APIError` | `apiError`, the SDK's plain-string rejections (`"Timeout"`) | three tries with backoff, then surfaced |
+
+`src/components/lucra/LucraFailureNotice.tsx` is the one rendering of that table's
+right-hand column. `LucraGate.test.tsx` drives every row through a scripted module
+that throws the stand-in's classes.
+
+**Sign-in binding.** On `loginSuccess` (and on a session the SDK restores) the gate
+mints the link (`POST /api/me/lucra/link`), sends the documented user link
+(`client.sendMessage.userUpdated({ metadata: { externalId } })`) and calls
+`POST /api/me/lucra/bind`. The server records a Lucra user id only when Lucra's side
+vouches for it: in mock mode the in-process Lucra's account for the phone, otherwise
+the participant read-back of every verified matchup the player has a registered team
+in, matched on the echoed `externalId`; the SDK's `user.id` is a hint that is checked
+and refused when it disagrees. When nothing vouches yet the answer is
+`bound: false, reason: "not_visible_yet"` and the `UserSignedUp` /
+`TournamentUserJoined` webhooks or the pre-settlement read-back record it later.
+
+**Registration step 2.** `/t/[slug]/register` renders `LucraEntryStep` inside a
+`LucraGate` once the team is registered. The server computes `lucraEntryStatus`: the
+§7.3.4-verified matchup (running the assertion when it is not cached; a count other
+than one raises the organizer's alert without freezing anything, since this is a
+read) and, from `GET /pool-tournament/:matchupId`, who on the roster Lucra lists. The
+one volt action runs `joinTournament(matchupId)` (signing in first if needed), then
+re-reads `GET /api/tournaments/:slug/lucra/entry` on a short schedule — Lucra's
+enrolment is asynchronous — and shows exactly what the read-back says. Auto-join is
+off and never relied on; the organizer's reconciliation (`/organizer/events/[id]/lucra`,
+`GET /api/admin/tournaments/:id/lucra/participants`, a "Re-check" action) is the proof.
+
+**Profile.** `VerificationRow` renders `lucra_links.verification_state`, refined by
+the SDK's live `accountStatus` (a blocked account is `not_allowed`, a verified one
+`verified`); `unverified` launches identity, `demographics_missing` the form,
+`not_allowed` is the terminal row. `WalletChip` shows the SDK's balance with
+`ResponsiblePlayLinks` directly beneath it (`LUCRA_RESPONSIBLE_GAMING_URL`,
+`LUCRA_SELF_LIMIT_URL`, and Lucra's own profile flow for limits when signed in), a
+sign-in affordance otherwise; add funds and withdraw are offered only behind
+`FEATURE_REAL_MONEY`. `RewardsAction` opens the rewards sheet.
+
+**The stand-in (`LUCRA_MODE=mock`).** `src/lucra/sdk-mock.ts` exports the same
+surface as the package — `LucraClient.initialize/getInstance/destroy`, `ready`,
+`user`, `open().home()/login()`, `dialog().<route>()` returning a `LucraDialog`,
+`on/off`, `api.joinTournament`, `sendMessage.userUpdated` — and the same error classes
+with the same codes. Where the SDK mounts Lucra's iframe, it mounts a small sheet on
+the design tokens into the same host and resolves each flow against the server-side
+mock through `POST /api/rest/_mock/sdk` (`route.mock.ts`; absent from any non-mock
+build; every action scoped to the signed-in Sideout account, which stands in for
+Lucra's session; `src/server/lucra-sdk-mock.ts`). Outcomes are deterministic per
+seeded account: `verified` → `VERIFIED`, `not_allowed` → `BLOCKED`,
+`demographics_missing` → the form is outstanding, `unverified` → the identity flow
+verifies. Every change travels the production path: the mock emits its signed
+`UserSignedUp`, `UserKYCVerified`, `FundsDeposited` and `TournamentUserJoined`
+webhooks and the receiver updates the rows before the route answers — which is why a
+production build in mock mode needs `LUCRA_WEBHOOK_SECRET` set for those changes to
+land (`playwright.config.ts` sets one). The mock session and the location grant live
+in `localStorage`, like the iframe's own state.
+
+## Not built here (later)
+
+Real-money head-to-head stays behind `FEATURE_REAL_MONEY=false`: the add-funds and
+withdraw launches exist in `LucraGate` and the wallet chip offers them only when the
+flag is on. The six named transitions' polish, PWA/offline, the two Playwright flows
+of §15 and the README are the polish phase.

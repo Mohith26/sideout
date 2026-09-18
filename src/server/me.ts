@@ -18,7 +18,7 @@ export interface Profile {
   lucra: { verificationState: VerificationState; linkedAt: number | null; lastSyncedAt: number | null } | null;
   teams: UserTeamView[];
   invites: PendingInviteView[];
-  rewards: Array<Reward & { tournamentSlug: string; tournamentName: string; teamName: string }>;
+  rewards: Array<Reward & { tournamentSlug: string; tournamentName: string; teamName: string; lucraMatchupId: string | null }>;
 }
 
 export function getProfile(user: User, clock: Clock = systemClock): Profile {
@@ -29,7 +29,7 @@ export function getProfile(user: User, clock: Clock = systemClock): Profile {
   const teamIds = teams.map((t) => t.team.id);
   const rewardRows = teamIds.length
     ? db
-        .select({ reward: rewards, tournamentSlug: tournaments.slug, tournamentName: tournaments.name })
+        .select({ reward: rewards, tournamentSlug: tournaments.slug, tournamentName: tournaments.name, lucraMatchupId: tournaments.lucraMatchupId })
         .from(rewards)
         .innerJoin(tournaments, eq(tournaments.id, rewards.tournamentId))
         .where(inArray(rewards.teamId, teamIds))
@@ -54,6 +54,7 @@ export function getProfile(user: User, clock: Clock = systemClock): Profile {
       tournamentSlug: r.tournamentSlug,
       tournamentName: r.tournamentName,
       teamName: teams.find((t) => t.team.id === r.reward.teamId)?.team.name ?? "",
+      lucraMatchupId: r.lucraMatchupId,
     })),
   };
 }

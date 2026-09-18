@@ -22,7 +22,7 @@ export {
 export { LUCRA_API_KEY_HEADER, LUCRA_API_VERSION, LUCRA_ERROR_BODIES, LUCRA_PATHS, LUCRA_WEBHOOK_EVENTS, REDACTED } from "@/lucra/endpoints";
 export { isLucraError, LUCRA_ERROR_MESSAGE, LucraError, type LucraErrorCode } from "@/lucra/errors";
 export { MATCHER_INTERPRETATIONS, type MatcherInterpretation } from "@/lucra/matcher";
-export type { MockSeed, MockSeedMatchup, MockSeedUser, MockStateSnapshot, MockWebhookDelivery } from "@/lucra/mock";
+export type { MockAccountStatus, MockSeed, MockSeedMatchup, MockSeedUser, MockStateSnapshot, MockUser, MockWebhookDelivery } from "@/lucra/mock";
 export * from "@/lucra/types";
 export { LUCRA_SDK_PACKAGE, LUCRA_SDK_SOURCE, LUCRA_SDK_VERSION, LUCRA_STATE_COVERAGE } from "@/lucra/version";
 export { LUCRA_SIGNATURE_HEADER, signWebhookBody, verifyWebhookSignature, type SignatureVerdict } from "@/lucra/webhook-signature";

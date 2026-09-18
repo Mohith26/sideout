@@ -17,8 +17,10 @@ import { cx } from "@/lib/cx";
  * 1. Charitable donation — the ember accent, the beneficiary's name, and copy
  *    that says "donation". The stub provider's pending → received state is
  *    shown as it is.
- * 2. Tournament entry — a neutral, locked card explaining that entry runs
- *    through Lucra's own flow in a later phase. It never renders a success.
+ * 2. Tournament entry — a neutral card that, once the team is registered,
+ *    holds `LucraEntryStep` (spec §11.4, phase 4b): Lucra's own sign-in and
+ *    the SDK's join, confirmed by reading Lucra's participant list back.
+ *    Before registration it is locked and says so.
  */
 export interface RegistrationStepsProps {
   slug: string;
@@ -29,6 +31,8 @@ export interface RegistrationStepsProps {
   state: RegistrationState;
   teamId: string | null;
   teamName: string | null;
+  /** Step 2's live content once the team is registered (`LucraEntryStep`), else null. */
+  entry?: ReactNode;
 }
 
 function StepCard({ number, title, tone, status, children, className }: { number: number; title: string; tone: "ember" | "neutral"; status: ReactNode; children: ReactNode; className?: string }) {
@@ -56,7 +60,7 @@ function StepCard({ number, title, tone, status, children, className }: { number
   );
 }
 
-export function RegistrationSteps({ slug, tournamentName, charityName, entryDonationCents, currency, state, teamId, teamName }: RegistrationStepsProps) {
+export function RegistrationSteps({ slug, tournamentName, charityName, entryDonationCents, currency, state, teamId, teamName, entry = null }: RegistrationStepsProps) {
   const step1 = donationStep(state, entryDonationCents);
   const amount = formatCents(entryDonationCents, currency);
   const donation = state.kind === "registered" ? state.donation : null;
@@ -128,20 +132,27 @@ export function RegistrationSteps({ slug, tournamentName, charityName, entryDona
 
       <StepCard
         number={2}
-        title="Tournament entry"
+        title="Enter the tournament with Lucra"
         tone="neutral"
         status={
-          <span className="inline-flex items-center gap-1.5 type-label text-text-tertiary">
-            <Icons.lock size={14} />
-            Opens with Lucra
-          </span>
+          entry ? (
+            <span className="inline-flex items-center gap-1.5 type-label text-text-secondary">
+              <Icons.shieldCheck size={14} />
+              Run by Lucra
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 type-label text-text-tertiary">
+              <Icons.lock size={14} />
+              Opens after step 1
+            </span>
+          )
         }
       >
-        <p className="text-text-secondary">
-          Entering the competition itself is a separate step handled by Lucra, who run the tournament, rewards and settlement. That flow is not wired in yet, so there is nothing to
-          do here; your donation above is not affected by it and is never staked.
-        </p>
-        <p className="type-label text-text-tertiary">Not available in this build · phase 4</p>
+        {entry ?? (
+          <p className="text-text-secondary">
+            Entering the competition is a separate step run by Lucra, who host the tournament, its rewards and its settlement. It unlocks once the team is registered; your donation above is not affected by it and is never staked.
+          </p>
+        )}
       </StepCard>
 
       <p className="text-text-secondary">
