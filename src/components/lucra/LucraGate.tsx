@@ -101,14 +101,19 @@ export interface LucraGateProps {
   backoffMs?: (attempt: number) => number;
 }
 
-async function loadForMode(mode: PublicLucraMode): Promise<LucraSdkModule> {
-  // Both are separate chunks; a build only ever loads the one its mode names.
-  if (mode === "mock") return import("@/lucra/sdk-mock");
-  const real = await import("lucra-web-sdk");
-  return real;
+/**
+ * The literal `process.env.NEXT_PUBLIC_LUCRA_MODE` (not `publicEnv`) so Next
+ * inlines the build's mode and the bundler drops the other branch: a sandbox
+ * or production build ships no stand-in, a mock build no real SDK.
+ * `npm run test:bundle` asserts both over the built output.
+ */
+async function loadForMode(): Promise<LucraSdkModule> {
+  if (process.env.NEXT_PUBLIC_LUCRA_MODE === "mock") return import("@/lucra/sdk-mock");
+  return import("lucra-web-sdk");
 }
 
-const HOST_OVERLAY_CSS = "position:fixed;inset:0;z-index:2147483647;display:block;background:var(--bg-inset);";
+/** The host while Lucra's login screen is up: the same overlay the SDK's own dialogs use (the iframe paints its own background). */
+const HOST_OVERLAY_CSS = "position:fixed;inset:0;z-index:2147483647;display:block;";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -118,7 +123,9 @@ export function LucraGate({ children, loadSdk, backoffMs = apiErrorBackoffMs }: 
   const router = useRouter();
   // Server components re-read the rows the receiver changed; the ref keeps the router's identity out of the effect below.
   const routerRef = useRef(router);
-  routerRef.current = router;
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
   const mode = publicEnv.NEXT_PUBLIC_LUCRA_MODE;
   const credentials = useMemo(() => (mode === "mock" ? { apiKey: "mock", tenantId: "sideout-mock" } : publicLucraCredentials(publicEnv)), [mode]);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -159,19 +166,16 @@ export function LucraGate({ children, loadSdk, backoffMs = apiErrorBackoffMs }: 
   );
 
   useEffect(() => {
-    if (!credentials) {
-      setStatus({ kind: "unconfigured" });
-      return;
-    }
+    // Without credentials the initial status is `unconfigured` and nothing loads; `retry()` sets `loading` before re-running this.
+    if (!credentials) return;
     const host = hostRef.current;
     if (!host) return;
     let cancelled = false;
     let sdk: LucraSdkModule | null = null;
     const listeners: Array<{ type: keyof SdkEventMap; fn: (data: never) => void }> = [];
-    setStatus({ kind: "loading" });
 
     const initialize = async (attempt: number): Promise<void> => {
-      if (!sdk) sdk = await (loadSdk ?? (() => loadForMode(mode)))();
+      if (!sdk) sdk = await (loadSdk ?? loadForMode)();
       if (cancelled) return;
       sdkRef.current = sdk;
       // The SDK is a singleton; a previous mount (strict mode, a navigation) is torn down first.
@@ -273,6 +277,7 @@ export function LucraGate({ children, loadSdk, backoffMs = apiErrorBackoffMs }: 
           client.off("loginSuccess", onLogin);
           client.off("exitLucra", onExit);
           document.removeEventListener("keydown", onKey);
+          // The stand-in closes its own sheet (restoring the host) before it reports the sign-in, so this restore is the last word.
           host.style.cssText = previousCss;
           client.hide();
           resolve(ok);
@@ -484,6 +489,7 @@ export function LucraGate({ children, loadSdk, backoffMs = apiErrorBackoffMs }: 
 
   const retry = useCallback(() => {
     setFailure(null);
+    setStatus({ kind: "loading" });
     setGeneration((g) => g + 1);
   }, []);
 

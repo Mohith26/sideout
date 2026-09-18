@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LucraGate, useLucra, type LucraContextValue } from "@/components/lucra/LucraGate";
-import { LucraApiError, LucraApiErrorCode, LucraUserNotLoggedIn } from "@/lucra/sdk-mock";
-import type { LucraSdkModule, SdkClient, SdkClientConfig, SdkDialog, SdkDialogNavigation, SdkEventMap, SdkUser } from "@/lucra/sdk-surface";
+import * as standIn from "@/lucra/sdk-mock";
+import { LucraApiError, LucraApiErrorCode, moduleFor, type Script } from "@/test/lucra-sdk";
 
 /**
  * `LucraGate`'s state mapping for every sealed failure the SDK can produce
@@ -18,148 +19,13 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
 const envelope = (data: unknown, status = 200) => new Response(JSON.stringify({ ok: true, data }), { status, headers: { "content-type": "application/json" } });
 
-interface Script {
-  /** What `client.ready` does: resolve (signed in), reject not-logged-in, or reject with a failed initialized body. */
-  ready?: "signed_in" | "signed_out" | "init_failed";
-  user?: SdkUser | null;
-  /** Rejections for successive `joinTournament` calls; a `null` entry resolves. */
-  join?: Array<unknown | null>;
-  /** Which dialogs complete (fire their event) when opened; the rest close without it. */
-  completes?: Partial<Record<keyof SdkDialogNavigation, boolean>>;
-}
-
-class FakeClient implements SdkClient {
-  private listeners = new Map<keyof SdkEventMap, Set<(d: never) => void>>();
-  readonly opened: string[] = [];
-  readonly joins: string[] = [];
-  readonly sent: unknown[] = [];
-  private _user: SdkUser | null;
-  isInitialized = false;
-  ready: Promise<void>;
-  constructor(
-    readonly config: SdkClientConfig,
-    private script: Script,
-  ) {
-    this._user = script.ready === "signed_in" ? (script.user ?? { id: "lucra-user-1", balance: 12.5, accountStatus: "VERIFIED" }) : null;
-    this.ready = script.ready === "init_failed" ? Promise.reject({ success: false }) : script.ready === "signed_in" ? Promise.resolve() : Promise.reject(new LucraUserNotLoggedIn());
-    this.ready.catch(() => {});
-  }
-  get user() {
-    return this._user;
-  }
-  emit<K extends keyof SdkEventMap>(type: K, data: SdkEventMap[K]) {
-    // As the SDK does: a `userInfo` push updates `client.user` before listeners hear of it.
-    if (type === "userInfo") this._user = data as SdkUser;
-    for (const l of [...(this.listeners.get(type) ?? [])]) (l as (d: SdkEventMap[K]) => void)(data);
-  }
-  on<K extends keyof SdkEventMap>(type: K, fn: (d: SdkEventMap[K]) => void) {
-    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
-    this.listeners.get(type)!.add(fn as (d: never) => void);
-  }
-  off<K extends keyof SdkEventMap>(type: K, fn: (d: SdkEventMap[K]) => void) {
-    this.listeners.get(type)?.delete(fn as (d: never) => void);
-  }
-  open() {
-    this.isInitialized = this.script.ready !== "init_failed";
-    return {
-      home: () => undefined,
-      login: () => {
-        this.opened.push("login");
-        // Lucra's login screen: the script says whether the user completes it.
-        queueMicrotask(() => {
-          if (this.script.completes?.profile === false) {
-            this.emit("exitLucra", undefined);
-            return;
-          }
-          this._user = this.script.user ?? { id: "lucra-user-1", balance: 0, accountStatus: "UNVERIFIED" };
-          this.emit("loginSuccess", this._user);
-        });
-      },
-    };
-  }
-  private dialogFor(name: keyof SdkDialogNavigation, event?: keyof SdkEventMap): SdkDialog {
-    this.opened.push(name);
-    const closers = new Set<() => void>();
-    let closed = false;
-    const dialog: SdkDialog = {
-      close: () => {
-        if (closed) return;
-        closed = true;
-        closers.forEach((c) => c());
-      },
-      onClose: (cb) => closers.add(cb),
-    };
-    queueMicrotask(() => {
-      if (event && this.script.completes?.[name]) {
-        if (name === "kyc" && this._user) this._user = { ...this._user, accountStatus: "VERIFIED" };
-        this.emit(event, undefined as never);
-      } else dialog.close();
-    });
-    return dialog;
-  }
-  dialog(): SdkDialogNavigation {
-    return {
-      profile: () => this.dialogFor("profile"),
-      wallet: () => this.dialogFor("wallet"),
-      deposit: () => this.dialogFor("deposit"),
-      withdraw: () => this.dialogFor("withdraw"),
-      kyc: () => this.dialogFor("kyc", "kycComplete"),
-      demographic: () => this.dialogFor("demographic", "demographicComplete"),
-      locationGrant: () => this.dialogFor("locationGrant", "locationGranted"),
-      tournamentDetails: () => this.dialogFor("tournamentDetails"),
-    };
-  }
-  hide() {}
-  show() {}
-  logout() {
-    this._user = null;
-  }
-  api = {
-    joinTournament: async (id: string) => {
-      // A user-scoped call with nobody signed in: the SDK's not-logged-in rejection.
-      if (!this._user) throw new LucraUserNotLoggedIn();
-      this.joins.push(id);
-      const next = this.script.join?.shift();
-      if (next) throw next;
-      return { matchupId: id };
-    },
-  };
-  sendMessage = {
-    userUpdated: (data: unknown) => {
-      this.sent.push(data);
-    },
-  };
-}
-
-function moduleFor(script: Script): { module: LucraSdkModule; clients: FakeClient[] } {
-  const clients: FakeClient[] = [];
-  let instance: FakeClient | null = null;
-  const module: LucraSdkModule = {
-    LucraApiError,
-    LucraUserNotLoggedIn,
-    LucraApiErrorCode,
-    LucraClient: {
-      initialize: (config) => {
-        instance = new FakeClient(config, script);
-        clients.push(instance);
-        return instance;
-      },
-      getInstance: () => {
-        if (!instance) throw new Error("not initialized");
-        return instance;
-      },
-      destroy: () => {
-        instance = null;
-      },
-    },
-  };
-  return { module, clients };
-}
-
 let latest: LucraContextValue | null = null;
 function Probe() {
-  latest = useLucra();
-  const { status, failure, user, busy } = latest;
+  const value = useLucra();
+  useEffect(() => {
+    latest = value;
+  });
+  const { status, failure, user, busy } = value;
   return (
     <div>
       <p data-testid="status">{status.kind === "ready" ? `ready:${status.signedIn ? "in" : "out"}` : status.kind === "failed" ? `failed:${status.failure.kind}` : status.kind}</p>
@@ -171,9 +37,9 @@ function Probe() {
 }
 
 async function mount(script: Script) {
-  const { module, clients } = moduleFor(script);
+  const { mod, clients } = moduleFor(script);
   render(
-    <LucraGate loadSdk={async () => module} backoffMs={() => 0}>
+    <LucraGate loadSdk={async () => mod} backoffMs={() => 0}>
       <Probe />
     </LucraGate>,
   );
@@ -373,5 +239,39 @@ describe("LucraGate", () => {
     expect(screen.getByTestId("status").textContent).toBe("ready:out");
     expect(screen.getByTestId("user").textContent).toBe("-");
     expect(latest?.link).toBeNull();
+  });
+
+  it("with the real stand-in, a sign-in through its sheet leaves the host unstyled: the page is never left covered", async () => {
+    localStorage.clear();
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith(standIn.MOCK_SDK_PATH)) {
+        const { action } = JSON.parse(String(init?.body)) as { action: string };
+        return envelope(action === "login" ? { action, user: { id: "lucra-1", username: "ana", balance: 0, accountStatus: "UNVERIFIED", metadata: {} } } : { action, user: null });
+      }
+      if (url.endsWith("/api/me/lucra/link")) return envelope({ externalId: "ext-1", lucraUserId: null, verificationState: "unverified", minted: true }, 201);
+      return envelope({ externalId: "ext-1", lucraUserId: "lucra-1", verificationState: "unverified", bound: true, source: "mock", reason: null });
+    });
+    render(
+      <LucraGate loadSdk={async () => standIn} backoffMs={() => 0}>
+        <Probe />
+      </LucraGate>,
+    );
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("ready:out"));
+    const host = document.querySelector<HTMLElement>("[data-lucra-host]")!;
+    const launched = act(async () => {
+      await latest!.launch("auth");
+    });
+    await waitFor(() => expect(document.querySelector('[data-lucra-mock-sheet="login"]')).not.toBeNull());
+    expect(host.style.position).toBe("fixed");
+    document.querySelector<HTMLButtonElement>('[data-lucra-mock-action="login"]')!.click();
+    await launched;
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("ready:in"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    expect(document.querySelector("[data-lucra-mock-sheet]")).toBeNull();
+    expect(host.style.cssText).toBe("");
+    standIn.LucraClient.destroy();
   });
 });

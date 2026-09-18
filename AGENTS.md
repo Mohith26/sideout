@@ -129,6 +129,10 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   `external_id` only; Lucra user ids come from the read-back and webhooks, never the
   client). The score and resolve routes call `writeAgreedConsensus` after the consensus
   commits (inline; it never throws; player-facing messages come from `LUCRA_ERROR_MESSAGE`).
+  `bindLucraAccount` (`POST /api/me/lucra/bind`) records a Lucra user id only from
+  Lucra's side (the mock's account, or the participant read-back); the SDK's id is a
+  checked hint. `lucraEntryStatus` is the registration step's truth (verified matchup +
+  who Lucra lists), served by `GET /api/tournaments/:slug/lucra/entry`.
   In mock mode outside production the webhook secret is a random per-process value
   shared by the mock signer and the receiver (`resolveWebhookSecret`); production never
   falls back. A frozen event (`awaiting_settlement`, no close preview) still takes
@@ -141,6 +145,28 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   per process (`buildMockSeedFromDb`: one matchup per tournament plus the overlapping and
   recreational ones, accepted rows replayed); tests get a fresh one per `createTestApp()`.
   `/admin/lucra` and `GET /api/admin/lucra/submissions` show every attempt row verbatim.
+- Browser SDK (spec §7.5, §12.5; `docs/lucra-integration.md` "The browser"):
+  `lucra-web-sdk` is pinned in `package.json` from the GitHub tag (not npm; `npm ci`
+  fetches the tarball over https) and repeated in `src/lucra/version.ts` for `/health`,
+  which also reports the installed manifest's version. **Only
+  `src/components/lucra/LucraGate.tsx` imports `lucra-web-sdk` or `@/lucra/sdk-mock`**
+  (ESLint; `src/test/lucra-sdk.ts` is the test helper); everything else uses
+  `useLucra()`. `src/lucra/sdk-surface.ts` types the slice both modules satisfy and holds
+  `classifySdkFailure`, the one mapping from the SDK's classes and codes to the spec's
+  seven UI states (`instanceof` + `code`, never message text; `NotAllowed` comes from
+  `accountStatus`). The gate branches on the inlined `process.env.NEXT_PUBLIC_LUCRA_MODE`
+  (derived from `LUCRA_MODE` by `next.config.ts`; `src/env.ts` refuses a disagreement):
+  `mock` loads `src/lucra/sdk-mock.ts`, a stand-in with the SDK's surface that renders
+  sheets on the tokens into the same host and resolves flows against the server mock
+  through `POST /api/rest/_mock/sdk` (`route.mock.ts`, `src/server/lucra-sdk-mock.ts`;
+  the Sideout session stands in for Lucra's; every change goes out as the mock's signed
+  webhook, so a production build in mock mode needs `LUCRA_WEBHOOK_SECRET` for rows to
+  change — `playwright.config.ts` sets one). `npm run test:bundle` asserts a sandbox
+  build ships the real SDK and none of the stand-in. The SDK is initialized with
+  `autoJoin: false`: entry is `joinTournament` from `LucraEntryStep`, shown from the
+  read-back only. Lucra's web theme is tenant-side; `src/lucra/theme.ts` computes the ten
+  options from `tokens.css` and `/admin/lucra` shows them. The stand-in's login sheet
+  closes before it emits `loginSuccess` (the gate restores the host after that event).
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
   production when unset — `/health` reports which; the ephemeral value lives on
@@ -161,17 +187,20 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   a provider exists, so request-code answers 503 `sms_unavailable` there); the
   charitable donation provider only through `src/server/donations/stub-provider.ts`
   (pending → succeeded after `STUB_SETTLE_DELAY_MS` on the injected clock, swept on
-  read). Lucra entry at registration is `lucraEntryHook` in
-  `src/server/registration.ts`, which reports the roster's link state
-  (`awaiting_sdk_join`); joining is the player's SDK action (phase 4b).
+  read). Lucra entry at registration is the player's SDK action: `lucraEntryHook` in
+  `src/server/registration.ts` reports the roster's link state at registration time,
+  `entryStatusFor` the live read-back for the step.
 
 ## Screens (phase 2b conventions)
 
-- Client components never import a server module: `Container` is
-  `src/components/shell/Container.tsx` (client-safe), `AppShell` reads the viewer for
-  the nav. Enum labels live in `src/components/tournament/labels.ts`; pure round names
-  in `src/lib/rounds.ts`. Pass enum vocabularies from a server page as props rather
-  than importing `src/db/schema` values into a client component.
+- Client components never import a server module (type-only imports are fine):
+  `Container` is `src/components/shell/Container.tsx` (client-safe), `AppShell` reads
+  the viewer for the nav. Pages that launch Lucra flows (`/me`, `/t/[slug]/register`)
+  wrap their content in `<LucraGate>` and pass the responsible-play, self-limit and
+  support URLs from `env` as props. Enum labels live in
+  `src/components/tournament/labels.ts`; pure round names in `src/lib/rounds.ts`. Pass
+  enum vocabularies from a server page as props rather than importing `src/db/schema`
+  values into a client component.
 - Browser writes go through `src/lib/api-client.ts` to the existing route handlers (the
   tested write path), with the same zod rules mirrored on the form; there are no server
   actions. Pages that need a session `redirect(signInHref(path))`
@@ -184,8 +213,9 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   the SVG. Connectors are one `<path data-from data-to data-advanced>` per feeder for
   the phase-5 draw animation; standings rows carry `data-team-id` for the FLIP.
 - The console (`src/app/organizer/**`, `layout.tsx` + `ConsoleNav`) links to
-  `/organizer/disputes`, `/organizer/events/[id]/close` and `/m/[id]`, which the
-  consensus phase built; the two console pages render under this layout.
+  `/organizer/disputes`, `/organizer/events/[id]/close`, `/organizer/events/[id]/lucra`,
+  `/admin/lucra` and `/m/[id]`; every console page renders under this layout and gates
+  itself.
   `e2e/screens.spec.ts` screenshots every screen at 390/768/1280 into
   `test-results/screens/` and asserts no sideways scroll at 390.
 - Testing Library does not auto-cleanup here (no vitest globals): component tests add
@@ -194,9 +224,9 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 
 ## Phase status
 
-Phases 1 (Foundation), 2a (Domain + application API), 2b (Screens), 3 (Consensus) and
-4a (Lucra integration layer) are complete: shell, primitives, schema, seed, `/health`,
-Home, every `/t/[slug]` tab (Overview, Bracket with pool sheets, Standings, Impact), the
+Phases 1 (Foundation), 2a (Domain + application API), 2b (Screens), 3 (Consensus),
+4a (Lucra integration layer) and 4b (the browser SDK) are complete: shell, primitives,
+schema, seed, `/health`, Home, every `/t/[slug]` tab (Overview, Bracket with pool sheets, Standings, Impact), the
 draw engine, bracket advancement, standings tiebreaks, status machines, phone sign-in
 (`/sign-in`), teams and registration (`/teams/new`, `/t/[slug]/register`, `/me`), the
 organizer console (`/organizer/events`, the builder with its live draw preview, the
@@ -208,10 +238,14 @@ receiver, `POST /api/me/lucra/link`, participant reconciliation and `/admin/lucr
 last pool match to become terminal — agreed, resolved or forfeited — seeds the bracket
 through `seedBracketIfPoolsComplete` (`src/server/matches.ts`, after the resolving
 transaction commits). `double_elim` is in the enum but refused by `draw()`. Phase 4b
-(the browser SDK, `LucraGate`, the SDK-launched flows, the registration join step, the
-profile's verification row and wallet chip, for which the profile leaves a documented
-slot) is not built; `lucraEntryHook` reports `awaiting_sdk_join` with the roster's link
-state.
+added `LucraGate` and `useLucra()`, the SDK stand-in for mock mode, the registration entry step
+(`LucraEntryStep`, with `GET /api/tournaments/:slug/lucra/entry`), the profile's
+`VerificationRow`, `WalletChip`, `ResponsiblePlayLinks` and `RewardsAction`,
+`POST /api/me/lucra/bind`, the organizer's `/organizer/events/[id]/lucra`
+reconciliation page (console nav: Events, Disputes, Lucra) and the installed SDK
+version on `/health`. Real money stays behind `FEATURE_REAL_MONEY=false`. Not built:
+the six transitions' polish, PWA/offline, the two §15 Playwright flows, the README
+(the polish phase).
 
 ## Maintaining this file
 

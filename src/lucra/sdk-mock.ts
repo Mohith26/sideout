@@ -457,10 +457,11 @@ export class LucraClient implements SdkClient {
             try {
               const { user } = await callMock({ action: "login" });
               storage()?.setItem(MOCK_SESSION_KEY, "1");
+              // Close first so the host's styles are restored before anyone reacts to the sign-in.
+              dialog.close();
               this.setUser(user);
               this._ready = Promise.resolve();
               this.emit("loginSuccess", user);
-              dialog.close();
             } catch (err) {
               busy = false;
               dialog.render({ name: "login", title: "Sign in to Lucra", body: [note(err instanceof Error ? err.message : "Sign-in failed.")], actions: [button("Close", SECONDARY, () => dialog.close())] });

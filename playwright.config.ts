@@ -31,6 +31,11 @@ export default defineConfig({
       // The flows sign in as seeded users through POST /api/dev/login, which a
       // production build only contains when this is set (see next.config.ts).
       SIDEOUT_DEV_LOGIN: "true",
+      // A production build never falls back to a random webhook secret, so the
+      // mock's in-process deliveries (UserKYCVerified after the identity flow,
+      // TournamentUserJoined after an entry) need one configured, as a real
+      // deployment has. Any value works: the mock signs with the same secret.
+      LUCRA_WEBHOOK_SECRET: "sideout-e2e-webhook-secret",
     },
   },
 });

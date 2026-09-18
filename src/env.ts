@@ -73,6 +73,12 @@ const serverSchema = z
      */
     LUCRA_SELF_LIMIT_URL: z.url().default("https://www.playlucra.com/legal/responsible-gaming"),
     /**
+     * Where a player restricted by Lucra (`NotAllowed`) is sent (spec §11.5:
+     * "a support path and no retry"). Lucra's documented end-user support is
+     * `support@lucrasports.com`, also reachable inside the SDK's profile.
+     */
+    LUCRA_SUPPORT_URL: z.url().default("mailto:support@lucrasports.com"),
+    /**
      * The `lucra-web-sdk` version actually installed, read from the package
      * manifest by `next.config.ts` at build time and reported by /health
      * beside the pin in `src/lucra/version.ts`.
@@ -218,6 +224,7 @@ export const env: ServerEnv = parseServerEnv({
   AUTH_CODE_GLOBAL_CAP: process.env.AUTH_CODE_GLOBAL_CAP,
   LUCRA_RESPONSIBLE_GAMING_URL: process.env.LUCRA_RESPONSIBLE_GAMING_URL,
   LUCRA_SELF_LIMIT_URL: process.env.LUCRA_SELF_LIMIT_URL,
+  LUCRA_SUPPORT_URL: process.env.LUCRA_SUPPORT_URL,
   LUCRA_SDK_INSTALLED_VERSION: process.env.LUCRA_SDK_INSTALLED_VERSION,
 });
 

@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { LucraGate } from "@/components/lucra/LucraGate";
+import { ResponsiblePlayLinks } from "@/components/lucra/ResponsiblePlayLinks";
+import { RewardsAction } from "@/components/lucra/RewardsAction";
+import { VerificationRow } from "@/components/lucra/VerificationRow";
+import { WalletChip } from "@/components/lucra/WalletChip";
 import { InviteCard } from "@/components/profile/InviteCard";
 import { SignOutButton } from "@/components/profile/SignOutButton";
 import { TeamHistoryCard } from "@/components/profile/TeamHistoryCard";
@@ -49,14 +54,12 @@ const rewardColumns: DataTableColumn<RewardRow>[] = [
 ];
 
 /**
- * Profile (spec §11.5): who you are, invites waiting on you, your teams and
- * how each event went, rewards earned, and the responsible-play links.
- *
- * PHASE 4 SLOT — the Lucra identity/verification row and the wallet chip
- * mount directly under the identity card, before "Invites". `profile.lucra`
- * already carries the verification state enum (and nothing else, spec §4.6);
- * `LucraGate` will own launching the identity and wallet flows. Nothing is
- * rendered in that position today rather than a fake status.
+ * Profile (spec §11.5): who you are, the Lucra identity row and wallet chip
+ * directly under the identity card, invites waiting on you, your teams and
+ * how each event went, rewards earned (with Lucra's rewards sheet), and the
+ * responsible-play links. `profile.lucra` carries the verification state
+ * enum and nothing else (spec §4.6); `LucraGate` owns every Lucra flow the
+ * page launches, and the SDK's live session refines what the rows show.
  */
 export default async function MePage() {
   const loaded = await loadAsync(() => viewer());
@@ -72,125 +75,141 @@ export default async function MePage() {
   const past = history.filter((h) => !CURRENT_EVENT.has(h.tournament.status) && h.team.status !== "disbanded");
   const hasInvites = profile.invites.length > 0;
   const readyTeam = current.find((h) => h.team.status === "forming" && h.members.length === 2 && h.tournament.status === "registration_open");
+  // The rewards sheet opens on the most recently rewarded event's Lucra tournament, when Lucra has confirmed one.
+  const rewardsMatchupId = [...profile.rewards].reverse().find((r) => r.lucraMatchupId)?.lucraMatchupId ?? null;
+  const lucraProps = { policyHref: env.LUCRA_RESPONSIBLE_GAMING_URL, selfLimitHref: env.LUCRA_SELF_LIMIT_URL, supportHref: env.LUCRA_SUPPORT_URL };
 
   return (
-    <Container className="space-y-10 py-6 md:py-8">
-      <section aria-labelledby="identity-heading" className="surface-raised flex flex-wrap items-start justify-between gap-4 rounded-md p-5 md:p-6">
-        <div className="min-w-0">
-          <h1 id="identity-heading" className="type-display-l">
-            {profile.user.displayName}
-          </h1>
-          <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-text-secondary">
-            <div className="flex items-center gap-2">
-              <Icons.phone size={16} className="text-text-tertiary" />
-              <dt className="sr-only">Phone</dt>
-              <dd className="tabular">{profile.user.phoneE164 ? maskPhone(profile.user.phoneE164) : "No phone on file"}</dd>
-            </div>
-            {profile.user.role === "organizer" ? (
+    <LucraGate>
+      <Container className="space-y-10 py-6 md:py-8">
+        <section aria-labelledby="identity-heading" className="surface-raised flex flex-wrap items-start justify-between gap-4 rounded-md p-5 md:p-6">
+          <div className="min-w-0">
+            <h1 id="identity-heading" className="type-display-l">
+              {profile.user.displayName}
+            </h1>
+            <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-text-secondary">
               <div className="flex items-center gap-2">
-                <Icons.console size={16} className="text-text-tertiary" />
-                <dt className="sr-only">Role</dt>
-                <dd>
-                  Organizer ·{" "}
-                  <Link href="/organizer" className="text-text-primary hover:text-volt">
-                    open the console
-                  </Link>
-                </dd>
+                <Icons.phone size={16} className="text-text-tertiary" />
+                <dt className="sr-only">Phone</dt>
+                <dd className="tabular">{profile.user.phoneE164 ? maskPhone(profile.user.phoneE164) : "No phone on file"}</dd>
               </div>
-            ) : null}
-          </dl>
-        </div>
-        <SignOutButton />
-      </section>
+              {profile.user.role === "organizer" ? (
+                <div className="flex items-center gap-2">
+                  <Icons.console size={16} className="text-text-tertiary" />
+                  <dt className="sr-only">Role</dt>
+                  <dd>
+                    Organizer ·{" "}
+                    <Link href="/organizer" className="text-text-primary hover:text-volt">
+                      open the console
+                    </Link>
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+          <SignOutButton />
+        </section>
 
-      {hasInvites ? (
-        <section aria-labelledby="invites-heading">
-          <SectionHeading id="invites-heading" aside={<span className="tabular">{profile.invites.length}</span>}>
-            Invites waiting on you
-          </SectionHeading>
-          <div className="space-y-3">
-            {profile.invites.map((invite, i) => (
-              <InviteCard key={invite.invite.id} invite={invite} timeZone={invite.tournament.venueTimezone} primary={i === 0} />
-            ))}
+        <section aria-labelledby="lucra-heading">
+          <SectionHeading id="lucra-heading">Lucra</SectionHeading>
+          <div className="grid gap-3 md:grid-cols-2">
+            <VerificationRow state={profile.lucra?.verificationState ?? null} supportHref={lucraProps.supportHref} />
+            <WalletChip {...lucraProps} realMoney={env.FEATURE_REAL_MONEY} />
           </div>
         </section>
-      ) : null}
 
-      <section aria-labelledby="teams-heading">
-        <SectionHeading id="teams-heading">Your teams</SectionHeading>
-        {current.length === 0 ? (
-          <EmptyState
-            icon="users"
-            title="No team in an upcoming event"
-            body={openEvents.length ? `Registration is open for ${openEvents.map((s) => s.tournament.name).join(", ")}. Create a team and invite your partner by phone.` : "When an event opens registration, create a team here."}
-            action={
-              openEvents[0] ? (
-                <Button variant={hasInvites ? "secondary" : "primary"} href={`/teams/new?t=${openEvents[0].tournament.slug}`}>
-                  Create a team
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {current.map((h) => (
-              <TeamHistoryCard key={h.team.id} history={h} pendingInvite={inviteFor(h)} primaryAction={!hasInvites && readyTeam?.team.id === h.team.id} />
-            ))}
-          </div>
-        )}
-        {current.length > 0 && openEvents.length > 0 ? (
-          <p className="mt-3 text-text-secondary">
-            Also open:{" "}
-            {openEvents.map((s, i) => (
-              <span key={s.tournament.id}>
-                {i > 0 ? ", " : ""}
-                <Link href={`/teams/new?t=${s.tournament.slug}`} className="text-text-primary hover:text-volt">
-                  {s.tournament.name}
-                </Link>
-              </span>
-            ))}
-          </p>
+        {hasInvites ? (
+          <section aria-labelledby="invites-heading">
+            <SectionHeading id="invites-heading" aside={<span className="tabular">{profile.invites.length}</span>}>
+              Invites waiting on you
+            </SectionHeading>
+            <div className="space-y-3">
+              {profile.invites.map((invite, i) => (
+                <InviteCard key={invite.invite.id} invite={invite} timeZone={invite.tournament.venueTimezone} primary={i === 0} />
+              ))}
+            </div>
+          </section>
         ) : null}
-      </section>
 
-      <section aria-labelledby="history-heading">
-        <SectionHeading id="history-heading" aside={<span className="tabular">{past.length} events</span>}>
-          Tournament history
-        </SectionHeading>
-        {past.length === 0 ? (
-          <EmptyState icon="trophy" title="Nothing played yet" body="Results, pool finishes and bracket runs from past events collect here." />
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {past.map((h) => (
-              <TeamHistoryCard key={h.team.id} history={h} pendingInvite={null} primaryAction={false} />
-            ))}
+        <section aria-labelledby="teams-heading">
+          <SectionHeading id="teams-heading">Your teams</SectionHeading>
+          {current.length === 0 ? (
+            <EmptyState
+              icon="users"
+              title="No team in an upcoming event"
+              body={
+                openEvents.length
+                  ? `Registration is open for ${openEvents.map((s) => s.tournament.name).join(", ")}. Create a team and invite your partner by phone.`
+                  : "When an event opens registration, create a team here."
+              }
+              action={
+                openEvents[0] ? (
+                  <Button variant={hasInvites ? "secondary" : "primary"} href={`/teams/new?t=${openEvents[0].tournament.slug}`}>
+                    Create a team
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {current.map((h) => (
+                <TeamHistoryCard key={h.team.id} history={h} pendingInvite={inviteFor(h)} primaryAction={!hasInvites && readyTeam?.team.id === h.team.id} />
+              ))}
+            </div>
+          )}
+          {current.length > 0 && openEvents.length > 0 ? (
+            <p className="mt-3 text-text-secondary">
+              Also open:{" "}
+              {openEvents.map((s, i) => (
+                <span key={s.tournament.id}>
+                  {i > 0 ? ", " : ""}
+                  <Link href={`/teams/new?t=${s.tournament.slug}`} className="text-text-primary hover:text-volt">
+                    {s.tournament.name}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </section>
+
+        <section aria-labelledby="history-heading">
+          <SectionHeading id="history-heading" aside={<span className="tabular">{past.length} events</span>}>
+            Tournament history
+          </SectionHeading>
+          {past.length === 0 ? (
+            <EmptyState icon="trophy" title="Nothing played yet" body="Results, pool finishes and bracket runs from past events collect here." />
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {past.map((h) => (
+                <TeamHistoryCard key={h.team.id} history={h} pendingInvite={null} primaryAction={false} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section aria-labelledby="rewards-heading">
+          <SectionHeading id="rewards-heading" aside={<span className="tabular">{profile.rewards.length}</span>}>
+            Rewards earned
+          </SectionHeading>
+          <div className="mb-3">
+            <RewardsAction matchupId={rewardsMatchupId} />
           </div>
-        )}
-      </section>
+          {profile.rewards.length === 0 ? (
+            <EmptyState icon="gift" title="No rewards yet" body="Sponsor-funded rewards are awarded by placement when an event settles. They are separate from donations." />
+          ) : (
+            <DataTable columns={rewardColumns} rows={profile.rewards} getRowKey={(r) => r.id} caption="Rewards earned by your teams" />
+          )}
+        </section>
 
-      <section aria-labelledby="rewards-heading">
-        <SectionHeading id="rewards-heading" aside={<span className="tabular">{profile.rewards.length}</span>}>
-          Rewards earned
-        </SectionHeading>
-        {profile.rewards.length === 0 ? (
-          <EmptyState icon="gift" title="No rewards yet" body="Sponsor-funded rewards are awarded by placement when an event settles. They are separate from donations." />
-        ) : (
-          <DataTable columns={rewardColumns} rows={profile.rewards} getRowKey={(r) => r.id} caption="Rewards earned by your teams" />
-        )}
-      </section>
-
-      <section aria-labelledby="responsible-heading" className="surface-inset rounded-md p-5">
-        <SectionHeading id="responsible-heading">Responsible play</SectionHeading>
-        <p className="max-w-prose text-text-secondary">
-          Rewards on Sideout are settled by Lucra. Entry fees are charitable donations and are never staked. If play stops feeling like play, Lucra publishes limits, cooling-off and
-          self-exclusion tools alongside its policy.
-        </p>
-        <a href={env.LUCRA_RESPONSIBLE_GAMING_URL} target="_blank" rel="noreferrer noopener" className="target mt-3 inline-flex items-center gap-1.5 font-medium text-text-primary hover:text-volt">
-          <Icons.shieldCheck size={16} />
-          Lucra responsible gaming policy
-          <Icons.externalLink size={14} />
-        </a>
-      </section>
-    </Container>
+        <section aria-labelledby="responsible-heading" className="surface-inset rounded-md p-5">
+          <SectionHeading id="responsible-heading">Responsible play</SectionHeading>
+          <p className="max-w-prose text-text-secondary">
+            Rewards on Sideout are settled by Lucra. Entry fees are charitable donations and are never staked. If play stops feeling like play, Lucra publishes limits, cooling-off and self-exclusion tools alongside its
+            policy.
+          </p>
+          <ResponsiblePlayLinks policyHref={lucraProps.policyHref} selfLimitHref={lucraProps.selfLimitHref} className="mt-3" />
+        </section>
+      </Container>
+    </LucraGate>
   );
 }

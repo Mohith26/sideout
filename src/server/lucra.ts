@@ -1042,7 +1042,7 @@ export interface BindResult {
  */
 export async function bindLucraAccount(user: Pick<User, "id" | "phoneE164">, input: { lucraUserId?: string | null | undefined }, clock: Clock = systemClock): Promise<BindResult> {
   const db = getDb();
-  const link = linkLucraAccount(user, clock);
+  linkLucraAccount(user, clock);
   const done = (row: Pick<LucraLink, "externalId" | "lucraUserId" | "verificationState">, source: BindSource | null, reason: BindResult["reason"]): BindResult => ({
     externalId: row.externalId,
     lucraUserId: row.lucraUserId,

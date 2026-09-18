@@ -33,11 +33,11 @@ const serverLucraPattern = {
 /**
  * Spec §7.5, §12.5: `LucraGate` is the single wrapper that owns the browser
  * SDK; no other component touches it. The real package and the mock stand-in
- * are importable only from `src/components/lucra/LucraGate.tsx` (and its
- * test, which needs the stand-in's error classes); everything else goes
- * through `useLucra()`.
+ * are importable only from `src/components/lucra/LucraGate.tsx` (and the
+ * test helper `src/test/lucra-sdk.ts`, which needs the stand-in's error
+ * classes to script failures); everything else goes through `useLucra()`.
  */
-const LUCRA_GATE_FILES = ["src/components/lucra/LucraGate.tsx", "src/components/lucra/LucraGate.test.tsx"];
+const LUCRA_GATE_FILES = ["src/components/lucra/LucraGate.tsx", "src/components/lucra/LucraGate.test.tsx", "src/test/lucra-sdk.ts"];
 const browserSdkPattern = {
   group: ["lucra-web-sdk", "lucra-web-sdk/*", "**/lucra/sdk-mock", "@/lucra/sdk-mock"],
   message: "Only src/components/lucra/LucraGate.tsx may load the Lucra Web SDK or its mock stand-in; use useLucra().",
