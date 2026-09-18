@@ -13,6 +13,7 @@ export const API_ERROR_CODES = [
   "unauthorized",
   "forbidden",
   "conflict",
+  "rate_limited",
   "unavailable",
   "internal",
 ] as const;
@@ -36,6 +37,7 @@ const STATUS_FOR_CODE: Record<ApiErrorCode, number> = {
   forbidden: 403,
   not_found: 404,
   conflict: 409,
+  rate_limited: 429,
   unavailable: 503,
   internal: 500,
 };
@@ -52,6 +54,22 @@ export function fail(
 ): NextResponse<ApiFail> {
   const error: ApiError = detail === undefined ? { code, message } : { code, message, detail };
   return NextResponse.json<ApiFail>({ ok: false, error }, { status: STATUS_FOR_CODE[code], ...init });
+}
+
+/**
+ * A failure that already knows its envelope. Services throw these; the route
+ * wrapper (`@/server/http`) turns them into `fail()` responses. Anything else
+ * thrown is an `internal` error with no detail leaked.
+ */
+export class ApiFailure extends Error {
+  constructor(
+    readonly code: ApiErrorCode,
+    message: string,
+    readonly detail?: unknown,
+  ) {
+    super(message);
+    this.name = "ApiFailure";
+  }
 }
 
 /** Build a zod schema for a successful envelope around `data`, for tests and clients. */

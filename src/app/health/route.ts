@@ -17,6 +17,9 @@ export interface HealthData {
   buildSha: string;
   lucraMode: typeof env.LUCRA_MODE;
   lucraSdkVersion: string;
+  /** Where the session signing key came from; "ephemeral" means SESSION_SECRET is unset in production. */
+  session: typeof env.sessionSecretSource;
+  devLogin: boolean;
   migrations: MigrationState;
 }
 
@@ -25,6 +28,8 @@ export async function GET() {
     buildSha: env.BUILD_SHA,
     lucraMode: env.LUCRA_MODE,
     lucraSdkVersion: LUCRA_SDK_VERSION,
+    session: env.sessionSecretSource,
+    devLogin: env.devLoginEnabled,
   };
 
   let migrations: MigrationState;

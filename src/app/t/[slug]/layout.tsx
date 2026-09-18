@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { TournamentHeader } from "@/components/tournament/TournamentHeader";
+import { getDb } from "@/db/client";
 import { getTournamentSummaryBySlug } from "@/db/queries/tournaments";
 import { load } from "@/lib/load";
 import { requestNow } from "@/lib/clock";
+import { settleDueDonations } from "@/server/donations/stub-provider";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +25,11 @@ export async function generateMetadata({ params }: LayoutProps<"/t/[slug]">): Pr
 export default async function TournamentLayout({ params, children }: LayoutProps<"/t/[slug]">) {
   const { slug } = await params;
   const nowMs = requestNow();
-  const loaded = load(() => getTournamentSummaryBySlug(slug));
+  const loaded = load(() => {
+    // Stub donation provider: pending intents past their delay become succeeded on read.
+    settleDueDonations(getDb(), nowMs);
+    return getTournamentSummaryBySlug(slug);
+  });
   if (!loaded.ok) return <DatabaseNotReady message={loaded.message} />;
   if (!loaded.data) notFound();
   const { tournament, charity, liveMatchCount } = loaded.data;

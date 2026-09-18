@@ -54,6 +54,34 @@ describe("parseServerEnv", () => {
   });
 });
 
+describe("session secret and dev login", () => {
+  it("uses a fixed dev secret outside production and the env value when set", () => {
+    const dev = parseServerEnv({ NODE_ENV: "development" });
+    expect(dev.sessionSecretSource).toBe("dev-default");
+    expect(dev.sessionSecret.length).toBeGreaterThan(16);
+    const fromEnv = parseServerEnv({ NODE_ENV: "production", SESSION_SECRET: "a-real-secret-of-decent-length" });
+    expect(fromEnv).toMatchObject({ sessionSecret: "a-real-secret-of-decent-length", sessionSecretSource: "env" });
+    expect(() => parseServerEnv({ SESSION_SECRET: "short" })).toThrow(/SESSION_SECRET/);
+  });
+
+  it("never falls back to the dev secret in production: a missing secret is ephemeral and random", () => {
+    const a = parseServerEnv({ NODE_ENV: "production" });
+    const b = parseServerEnv({ NODE_ENV: "production" });
+    expect(a.sessionSecretSource).toBe("ephemeral");
+    expect(a.sessionSecret).not.toBe(b.sessionSecret);
+    expect(a.sessionSecret).not.toBe(parseServerEnv({ NODE_ENV: "development" }).sessionSecret);
+    expect(a.sessionSecret).toHaveLength(64);
+  });
+
+  it("compiles the dev login route in outside production, and in production only when opted in", () => {
+    expect(parseServerEnv({ NODE_ENV: "development" }).devLoginEnabled).toBe(true);
+    expect(parseServerEnv({ NODE_ENV: "test" }).devLoginEnabled).toBe(true);
+    expect(parseServerEnv({ NODE_ENV: "production" }).devLoginEnabled).toBe(false);
+    expect(parseServerEnv({ NODE_ENV: "production", SIDEOUT_DEV_LOGIN: "false" }).devLoginEnabled).toBe(false);
+    expect(parseServerEnv({ NODE_ENV: "production", SIDEOUT_DEV_LOGIN: "true" }).devLoginEnabled).toBe(true);
+  });
+});
+
 describe("parsePublicEnv", () => {
   it("only knows the WEB key and tenant id", () => {
     const pub = parsePublicEnv({ NEXT_PUBLIC_LUCRA_TENANT_ID: "t", NEXT_PUBLIC_LUCRA_WEB_API_KEY: "" });
