@@ -144,6 +144,30 @@ describe("Bracket", () => {
     expect(node("m1").getAttribute("href")).toBe("/m/m1");
   });
 
+  it("draws a connector that becomes advanced after mount over --d-draw, and never on first paint", () => {
+    const { container, rerender } = render(<Bracket nodes={sixTeamBracket()} timeZone={TZ} />);
+    // Already-advanced feeders (the byes, the final quarterfinal) render settled: no draw on mount.
+    expect(container.querySelectorAll("path.path-draw")).toHaveLength(0);
+    for (const path of container.querySelectorAll("path[data-from]")) expect(path).toHaveAttribute("pathLength", "1");
+
+    // Team 3 wins the live quarterfinal: its feeder into the semifinal draws in.
+    const advanced = sixTeamBracket().map((n) => (n.id === "m4" ? { ...n, status: "final" as const, winnerId: "t3", sets: [{ a: 21, b: 18 }, { a: 21, b: 15 }] } : n.id === "m6" ? { ...n, teamB: team(3) } : n));
+    rerender(<Bracket nodes={advanced} timeZone={TZ} />);
+    const path = container.querySelector('path[data-from="m4"]');
+    expect(path).toHaveAttribute("data-advanced", "true");
+    expect(path).toHaveAttribute("data-drawing", "true");
+    expect(path?.classList.contains("path-draw")).toBe(true);
+    expect(container.querySelectorAll("path.path-draw")).toHaveLength(1);
+    // One beat: the class goes once the animation has run, and a plain re-render does not restart it.
+    // (jsdom has no AnimationEvent, so React listens for the WebKit-prefixed name there.)
+    act(() => {
+      fireEvent(path as Element, new Event("webkitAnimationEnd", { bubbles: true }));
+    });
+    expect(path?.classList.contains("path-draw")).toBe(false);
+    rerender(<Bracket nodes={advanced.map((n) => ({ ...n }))} timeZone={TZ} />);
+    expect(container.querySelectorAll("path.path-draw")).toHaveLength(0);
+  });
+
   it("renders a preview without links as focusable groups and offers the view controls", () => {
     const nodes = sixTeamBracket().map((n) => ({ ...n, href: null }));
     render(<Bracket nodes={nodes} timeZone={TZ} label="Preview" />);

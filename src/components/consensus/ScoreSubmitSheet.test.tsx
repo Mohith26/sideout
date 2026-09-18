@@ -192,4 +192,31 @@ describe("ScoreSubmitSheet", () => {
     expect(within(sheet).getAllByRole("textbox").map((i) => (i as HTMLInputElement).value)).toEqual(["19", "21", "25", "23", "15", "9"]);
     expect(within(sheet).getByRole("button", { name: "Replace scoreline" })).toBeEnabled();
   });
+
+  it("closes by playing the exit (translateY down and a fade) and only then leaves the DOM; without animations it closes at once", async () => {
+    const sheet = openSheet(vi.fn());
+    // jsdom has no Web Animations: Cancel closes immediately.
+    fireEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("score-sheet")).not.toBeInTheDocument();
+
+    // With a running animation, the sheet swaps to the exit keyframes and waits for it to finish.
+    let finish: (() => void) | null = null;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit score" }));
+    const again = screen.getByTestId("score-sheet");
+    Object.defineProperty(again, "getAnimations", { configurable: true, value: () => [{ finished }] });
+    fireEvent.click(within(again).getByRole("button", { name: "Cancel" }));
+    expect(again.className).toContain("sheet-exit");
+    expect(again.className).not.toContain("sheet-enter");
+    expect(again).toHaveAttribute("data-closing", "true");
+    expect(screen.getByTestId("score-sheet")).toBeInTheDocument();
+    await act(async () => {
+      finish!();
+      await finished;
+    });
+    expect(screen.queryByTestId("score-sheet")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { hidden: true })).not.toHaveAttribute("open");
+  });
 });

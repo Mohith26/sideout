@@ -2,11 +2,13 @@ import Link from "next/link";
 import type { MatchView } from "@/db/queries/tournaments";
 import { Icons } from "@/components/ui/icons";
 import { MatchCard } from "@/components/tournament/MatchCard";
+import { LiveDot } from "@/components/motion/LiveDot";
 
 /**
  * The top of Home while an event is in progress: what is on the sand right now
- * and what is waiting for a result. Values are static rows today; ticking
- * arrives with the live-score work in phase 5.
+ * and what is waiting for a result. Home refreshes on a cadence while a strip
+ * is showing (`LiveRefresh`), so the cards' scores roll to each new value and
+ * the list announces changes politely.
  */
 export interface LiveMatchStripProps {
   tournamentName: string;
@@ -24,7 +26,7 @@ export function LiveMatchStrip({ tournamentName, slug, matches, bracketRounds }:
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 id="live-strip-heading" className="flex items-center gap-2 truncate type-label text-surf">
-              <span aria-hidden="true" className="inline-block size-2 shrink-0 rounded-full bg-surf" />
+              <LiveDot />
               Live · {tournamentName}
             </h2>
             <p className="mt-1 type-label text-text-tertiary">
@@ -36,7 +38,7 @@ export function LiveMatchStrip({ tournamentName, slug, matches, bracketRounds }:
             <Icons.chevronRight size={14} />
           </Link>
         </div>
-        <ul className="-mx-gutter mt-3 flex snap-x gap-3 overflow-x-auto px-gutter pb-1 [scrollbar-width:thin]">
+        <ul aria-live="polite" aria-atomic="false" className="-mx-gutter mt-3 flex snap-x gap-3 overflow-x-auto px-gutter pb-1 [scrollbar-width:thin]">
           {matches.map((m) => (
             <li key={m.match.id} className="snap-start">
               <Link href={`/m/${m.match.id}`} className="block rounded-md" aria-label={`Open match: ${m.teamA?.name ?? "TBD"} vs ${m.teamB?.name ?? "TBD"}`}>

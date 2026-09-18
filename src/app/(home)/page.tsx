@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LiveRefresh } from "@/components/ui/LiveRefresh";
 import { LiveMatchStrip } from "@/components/tournament/LiveMatchStrip";
 import { TournamentCard } from "@/components/tournament/TournamentCard";
 import { getBracketRoundCount, listLiveMatches, listTournamentSummaries, type TournamentSummary } from "@/db/queries/tournaments";
@@ -14,6 +15,9 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Live play",
 };
+
+/** Seconds between refreshes while a live strip is showing, so its scores roll as they change. */
+const LIVE_REFRESH_MS = 10_000;
 
 const UPCOMING = new Set(["registration_open", "registration_closed"]);
 const PAST = new Set(["settled", "awaiting_settlement", "cancelled"]);
@@ -47,6 +51,7 @@ export default function HomePage() {
 
   return (
     <>
+      {strips.length > 0 ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
       {strips.map((strip) => (
         <LiveMatchStrip
           key={strip.summary.tournament.id}

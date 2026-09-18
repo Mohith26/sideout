@@ -7,8 +7,9 @@ import { cx } from "@/lib/cx";
 /**
  * One pool's standings (spec §11.2): rank, team, W-L, sets, point differential,
  * every figure from `computeStandings` over agreed rows. Rows are keyed by
- * team id and carry `data-team-id`, which is what the phase-5 FLIP reorder
- * measures; nothing here animates yet.
+ * team id and carry `data-team-id` and `data-rank`, which the FLIP reorder
+ * (`FlipRows`, spec §12.4 transition 2) measures across renders; the rank
+ * cell holds the slot the rank-delta flash writes into.
  */
 
 export interface StandingsTeam {
@@ -50,7 +51,18 @@ export function StandingsTable({ label, courtLabel, rows, teams, played, total, 
   const teamsById = new Map(teams.map((t) => [t.id, t]));
   const data: Row[] = rows.map((r) => ({ ...r, team: teamsById.get(r.teamId) ?? null }));
   const columns: DataTableColumn<Row>[] = [
-    { key: "rank", header: "#", width: "w-10", numeric: true, render: (r) => <span className="font-medium text-text-primary">{r.rank}</span> },
+    {
+      key: "rank",
+      header: "#",
+      width: "w-14",
+      numeric: true,
+      render: (r) => (
+        <span className="inline-flex items-baseline justify-end gap-1">
+          <span data-rank-delta-slot="" aria-hidden="true" className="type-label text-surf" />
+          <span className="font-medium text-text-primary">{r.rank}</span>
+        </span>
+      ),
+    },
     {
       key: "team",
       header: "Team",
