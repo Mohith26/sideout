@@ -185,22 +185,11 @@ export default async function MePage() {
           Rewards on Sideout are settled by Lucra. Entry fees are charitable donations and are never staked. If play stops feeling like play, Lucra publishes limits, cooling-off and
           self-exclusion tools alongside its policy.
         </p>
-        <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
-          <li>
-            <a href={env.LUCRA_RESPONSIBLE_GAMING_URL} target="_blank" rel="noreferrer noopener" className="target inline-flex items-center gap-1.5 font-medium text-text-primary hover:text-volt">
-              <Icons.shieldCheck size={16} />
-              Lucra responsible gaming policy
-              <Icons.externalLink size={14} />
-            </a>
-          </li>
-          <li>
-            <a href={env.LUCRA_RESPONSIBLE_GAMING_URL} target="_blank" rel="noreferrer noopener" className="target inline-flex items-center gap-1.5 font-medium text-text-primary hover:text-volt">
-              <Icons.lock size={16} />
-              Self-limit and self-exclusion
-              <Icons.externalLink size={14} />
-            </a>
-          </li>
-        </ul>
+        <a href={env.LUCRA_RESPONSIBLE_GAMING_URL} target="_blank" rel="noreferrer noopener" className="target mt-3 inline-flex items-center gap-1.5 font-medium text-text-primary hover:text-volt">
+          <Icons.shieldCheck size={16} />
+          Lucra responsible gaming policy
+          <Icons.externalLink size={14} />
+        </a>
       </section>
     </Container>
   );

@@ -65,11 +65,11 @@ export default async function EventBuilderPage({ params }: PageProps<"/organizer
     <Container className="space-y-10 py-6 md:py-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <Link href="/organizer/events" className="inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
+          <Link href="/organizer/events" className="target inline-flex items-center gap-1 rounded-sm type-label text-text-secondary hover:text-text-primary">
             <Icons.chevronLeft size={14} />
             Events
           </Link>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="type-display-l">{t.name}</h1>
             <StatusPill spec={TOURNAMENT_STATUS_PILL[t.status]} />
           </div>

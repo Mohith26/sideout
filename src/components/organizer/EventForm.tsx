@@ -269,7 +269,7 @@ export function EventForm(props: EventFormProps) {
       logoUrl: s.logoUrl === "" ? null : s.logoUrl,
       currency: v.currency,
     }));
-    const sponsorsChanged = props.mode === "create" || sponsorRows.map(sponsorKey).join() !== savedSponsors.map(sponsorKey).join();
+    const sponsorsChanged = sponsorRows.map(sponsorKey).join() !== savedSponsors.map(sponsorKey).join();
     const payload = {
       slug: v.slug,
       name: v.name,

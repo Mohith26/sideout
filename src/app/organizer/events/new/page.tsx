@@ -16,11 +16,11 @@ export default async function NewEventPage() {
   return (
     <Container className="space-y-6 py-6 md:py-8">
       <div>
-        <Link href="/organizer/events" className="inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
+        <Link href="/organizer/events" className="target inline-flex items-center gap-1 rounded-sm type-label text-text-secondary hover:text-text-primary">
           <Icons.chevronLeft size={14} />
           Events
         </Link>
-        <h1 className="type-display-l mt-2">New event</h1>
+        <h1 className="type-display-l">New event</h1>
       </div>
       <EventForm mode="create" options={options} />
     </Container>

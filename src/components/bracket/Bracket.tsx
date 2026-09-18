@@ -259,6 +259,7 @@ export function Bracket({ nodes, timeZone, label = "Bracket" }: BracketProps) {
   // reach the match link underneath, and capturing on pointerdown would
   // retarget the click to the canvas.
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    suppressClick.current = false;
     if (e.button !== 0 && e.pointerType === "mouse") return;
     pointers.current.set(e.pointerId, localPoint(e));
     if (pointers.current.size >= 2) for (const id of pointers.current.keys()) e.currentTarget.setPointerCapture(id);
@@ -299,7 +300,7 @@ export function Bracket({ nodes, timeZone, label = "Bracket" }: BracketProps) {
     pointers.current.delete(e.pointerId);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     if (pointers.current.size === 0) {
-      suppressClick.current = e.type === "pointerup" && e.pointerType === "mouse" && (gesture.current?.moved ?? false);
+      suppressClick.current = e.type === "pointerup" && (gesture.current?.moved ?? false);
       gesture.current = null;
     } else {
       // One finger lifted mid-pinch: restart the gesture from the remaining pointer.
@@ -340,6 +341,7 @@ export function Bracket({ nodes, timeZone, label = "Bracket" }: BracketProps) {
 
   // --- Keyboard ---------------------------------------------------------------
   const onKeyDown = (e: ReactKeyboardEvent<SVGSVGElement>) => {
+    suppressClick.current = false;
     const target = (e.target as Element | null)?.closest<SVGElement>("[data-node-id]");
     const id = target?.dataset.nodeId;
     if (!id) return;

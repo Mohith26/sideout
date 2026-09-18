@@ -9,8 +9,8 @@ import type { ApiEnvelope, ApiError } from "@/lib/api";
  */
 
 export interface ApiRequestOptions {
-  method?: "GET" | "POST" | "PATCH";
-  body?: unknown;
+  method?: "POST" | "PATCH";
+  body: unknown;
 }
 
 export type ApiResult<T> = ApiEnvelope<T> & { status: number; retryAfterMs: number | null };
@@ -24,14 +24,14 @@ function isEnvelope(value: unknown): value is ApiEnvelope<unknown> {
 
 const TRANSPORT_ERROR: ApiError = { code: "unavailable", message: "Could not reach Sideout. Check your connection and try again." };
 
-export async function api<T>(path: string, options: ApiRequestOptions = {}): Promise<ApiResult<T>> {
+export async function api<T>(path: string, options: ApiRequestOptions): Promise<ApiResult<T>> {
   const init: RequestInit = {
-    method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+    method: options.method ?? "POST",
     credentials: "same-origin",
-    headers: options.body === undefined ? { accept: "application/json" } : { accept: "application/json", "content-type": "application/json" },
+    headers: { accept: "application/json", "content-type": "application/json" },
     cache: "no-store",
+    body: JSON.stringify(options.body),
   };
-  if (options.body !== undefined) init.body = JSON.stringify(options.body);
 
   let response: Response;
   try {

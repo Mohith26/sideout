@@ -33,7 +33,7 @@ export function ConsoleNav({ items }: { items: readonly ConsoleNavItem[] }) {
           >
             <Icon size={16} />
             {item.label}
-            {item.badge ? <span className={cx("tabular rounded-full px-1.5 text-[11px]", item.badge > 0 ? "bg-fault/15 text-fault" : "bg-bg-raised text-text-tertiary")}>{item.badge}</span> : null}
+            {item.badge ? <span className="tabular rounded-full bg-fault/15 px-1.5 type-label text-fault">{item.badge}</span> : null}
           </Link>
         );
       })}

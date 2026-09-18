@@ -13,7 +13,7 @@ import { api } from "@/lib/api-client";
  * page re-renders from rows afterwards, so the pending → received change is
  * whatever the provider says, never assumed here.
  */
-export function RegisterButton({ slug, teamId, label, disabled = false }: { slug: string; teamId: string; label: string; disabled?: boolean }) {
+export function RegisterButton({ slug, teamId, label }: { slug: string; teamId: string; label: string }) {
   const router = useRouter();
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,7 @@ export function RegisterButton({ slug, teamId, label, disabled = false }: { slug
         variant="primary"
         size="lg"
         className="w-full"
-        disabled={busy || disabled}
+        disabled={busy}
         aria-busy={busy}
         onClick={async () => {
           setBusy(true);

@@ -72,7 +72,7 @@ export function TeamHistoryCard({ history: h, pendingInvite, primaryAction }: { 
           <span className="flex items-center gap-2">
             <StatusPill spec={DONATION_STATUS_PILL[h.donation.status]} size="sm" />
             {h.tournament.status === "registration_open" ? (
-              <Link href={registerHref} className="type-label text-text-secondary hover:text-text-primary">
+              <Link href={registerHref} className="target inline-flex items-center rounded-sm px-2 type-label text-text-secondary hover:text-text-primary">
                 Details
               </Link>
             ) : null}

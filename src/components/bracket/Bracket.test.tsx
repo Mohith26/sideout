@@ -240,7 +240,7 @@ describe("Bracket", () => {
     return !click.defaultPrevented;
   };
 
-  it("swallows only the click that follows a mouse drag, never one after a touch pan or a cancelled swipe", () => {
+  it("swallows the click that follows a drag, never the next Enter, tap or a cancelled swipe", () => {
     const { container } = render(<Bracket nodes={sixTeamBracket()} timeZone={TZ} />);
     const svg = canvas();
     const link = container.querySelector('[data-node-id="m4"]') as HTMLElement;
@@ -251,10 +251,25 @@ describe("Bracket", () => {
     expect(clickAllowed(link)).toBe(false);
     expect(clickAllowed(link)).toBe(true);
 
-    // A touch pan ends without a click, so the next one (Enter on the focused match) must open it.
+    // A finger that nudges the bracket must not also open the match under it.
     fireEvent.pointerDown(svg, { pointerId: 2, pointerType: "touch", clientX: 10, clientY: 10 });
     fireEvent.pointerMove(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
     fireEvent.pointerUp(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    expect(clickAllowed(link)).toBe(false);
+
+    // A pan that produced no click cannot swallow Enter on the focused match…
+    fireEvent.pointerDown(svg, { pointerId: 2, pointerType: "touch", clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    fireEvent.pointerUp(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    fireEvent.keyDown(link, { key: "Enter" });
+    expect(clickAllowed(link)).toBe(true);
+
+    // …nor the next plain tap.
+    fireEvent.pointerDown(svg, { pointerId: 2, pointerType: "touch", clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    fireEvent.pointerUp(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    fireEvent.pointerDown(svg, { pointerId: 2, pointerType: "touch", clientX: 30, clientY: 30 });
+    fireEvent.pointerUp(svg, { pointerId: 2, pointerType: "touch", clientX: 30, clientY: 30 });
     expect(clickAllowed(link)).toBe(true);
 
     // Under touch-action: pan-y the browser cancels a swipe it turns into a page scroll.

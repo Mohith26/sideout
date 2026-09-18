@@ -62,7 +62,39 @@ function renderEdit() {
   );
 }
 
+function fillRequired() {
+  const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  type("Name", "Dune Cup");
+  type("Venue", "North Jetty");
+  type("City", "Oceanside");
+  type("State", "CA");
+  type("Starts", "2026-08-01T08:00");
+  type("Ends", "2026-08-01T18:00");
+  type("Entry donation per team", "75");
+  type("Fundraising goal", "5000");
+}
+
 describe("EventForm", () => {
+  it("creates a draft without a sponsor list until a sponsor is added", async () => {
+    render(
+      <ToastProvider>
+        <EventForm mode="create" options={options} />
+      </ToastProvider>,
+    );
+    fillRequired();
+    fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.method).toBe("POST");
+    expect(sent[0]?.body.name).toBe("Dune Cup");
+    expect(sent[0]?.body).not.toHaveProperty("sponsors");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add sponsor" }));
+    fireEvent.change(screen.getByLabelText("Sponsor"), { target: { value: "Tidewater Surf Co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect((sent[1]?.body.sponsors as Array<{ name: string }>).map((s) => s.name)).toEqual(["Tidewater Surf Co"]);
+  });
+
   it("only sends the sponsor list when it differs from the stored rows", async () => {
     expect(sponsors.length).toBeGreaterThan(0);
     renderEdit();

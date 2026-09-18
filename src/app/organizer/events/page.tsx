@@ -24,14 +24,12 @@ const columns: DataTableColumn<TournamentSummary>[] = [
     key: "event",
     header: "Event",
     render: (s) => (
-      <span className="flex min-w-0 flex-col">
-        <Link href={`/organizer/events/${s.tournament.id}`} className="truncate font-medium text-text-primary hover:text-volt">
-          {s.tournament.name}
-        </Link>
+      <Link href={`/organizer/events/${s.tournament.id}`} className="group target -my-2.5 flex min-w-0 flex-col justify-center rounded-sm py-2.5">
+        <span className="truncate font-medium text-text-primary group-hover:text-volt">{s.tournament.name}</span>
         <span className="truncate type-label text-text-tertiary">
           {DIVISION_LABEL[s.tournament.division]} · {FORMAT_LABEL[s.tournament.format]} · {s.tournament.venueCity}
         </span>
-      </span>
+      </Link>
     ),
   },
   { key: "status", header: "Status", render: (s) => <StatusPill spec={TOURNAMENT_STATUS_PILL[s.tournament.status]} size="sm" /> },

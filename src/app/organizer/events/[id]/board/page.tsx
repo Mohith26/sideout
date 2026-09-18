@@ -124,11 +124,11 @@ export default async function LiveBoardPage({ params }: PageProps<"/organizer/ev
       {live ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <Link href={`/organizer/events/${t.id}`} className="inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
+          <Link href={`/organizer/events/${t.id}`} className="target inline-flex items-center gap-1 rounded-sm type-label text-text-secondary hover:text-text-primary">
             <Icons.chevronLeft size={14} />
             {t.name}
           </Link>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="type-display-l">Live board</h1>
             <StatusPill spec={TOURNAMENT_STATUS_PILL[t.status]} />
           </div>
