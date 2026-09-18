@@ -48,7 +48,7 @@ describe("CloseFlow", () => {
         data: {
           detail: { tournament: { status: "awaiting_settlement" } },
           frozen: { tournamentId: "t1", standings: clean.standings, rewards: clean.rewards, previewHash: hash, closedAt: 1_700_000_000_000, closedByUserId: "org" },
-          settlement: { state: "not_available" },
+          settlement: { state: "settled", matchupId: "matchup-1", unassignedUserIds: [], writes: 0 },
         },
       }),
     );
@@ -65,8 +65,8 @@ describe("CloseFlow", () => {
       fireEvent.click(screen.getByRole("button", { name: "Close tournament" }));
     });
     expect(close).toHaveBeenCalledWith("t1", hash);
-    expect(screen.getByTestId("close-result")).toHaveTextContent("closed and awaiting settlement");
-    expect(screen.getByTestId("close-result")).toHaveTextContent("Lucra settlement is not wired in this build");
+    expect(screen.getByTestId("close-result")).toHaveTextContent("closed and settled through Lucra");
+    expect(screen.getByTestId("close-result")).toHaveTextContent("Lucra settled the tournament (matchup matchup-1)");
     expect(screen.getByText(/Closed .* by Nadia Okafor/)).toBeInTheDocument();
   });
 

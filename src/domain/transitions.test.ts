@@ -11,7 +11,7 @@ describe("tournament transitions", () => {
     registration_open: { registration_closed: ["organizer"], cancelled: ["organizer"] },
     registration_closed: { live: ["organizer"], cancelled: ["organizer"] },
     live: { awaiting_settlement: ["organizer", "system"] },
-    awaiting_settlement: { settled: ["organizer", "system"] },
+    awaiting_settlement: { settled: ["organizer", "system"], live: ["organizer"] },
     settled: {},
     cancelled: {},
   };
@@ -27,7 +27,7 @@ describe("tournament transitions", () => {
         }
       }
     }
-    expect(TOURNAMENT_TRANSITIONS).toHaveLength(8);
+    expect(TOURNAMENT_TRANSITIONS).toHaveLength(9);
   });
 
   it("cancels only before live, and never reopens a cancelled or settled event", () => {
@@ -37,8 +37,12 @@ describe("tournament transitions", () => {
     expect(transitionTournament("settled", "live", actor("system")).ok).toBe(false);
   });
 
-  it("keeps settlement edges away from players", () => {
+  it("keeps settlement edges away from players, and the thaw away from everyone but the organizer", () => {
     expect(transitionTournament("live", "awaiting_settlement", actor("player")).ok).toBe(false);
+    expect(transitionTournament("awaiting_settlement", "settled", actor("lucra_webhook")).ok).toBe(false);
+    expect(transitionTournament("awaiting_settlement", "live", actor("organizer")).ok).toBe(true);
+    expect(transitionTournament("awaiting_settlement", "live", actor("system")).ok).toBe(false);
+    expect(transitionTournament("settled", "live", actor("organizer")).ok).toBe(false);
   });
 
   it("draws only in registration_closed", () => {

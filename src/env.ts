@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { parsePublicEnv, type PublicEnv } from "@/env.public";
 import { log } from "@/lib/log";
+import { MATCHER_INTERPRETATIONS } from "@/lucra/matcher";
 
 /**
  * Server environment, parsed once at boot. Importing this module from client
@@ -26,6 +27,12 @@ const serverSchema = z
     LUCRA_BASE_URL: z.url().optional(),
     LUCRA_BACKEND_API_KEY: z.string().min(1).optional(),
     LUCRA_WEBHOOK_SECRET: z.string().min(1).optional(),
+    /**
+     * Which reading of Lucra's documented metadata matcher the mock runs
+     * (`src/lucra/matcher.ts`): `literal` follows the prose, `doc-examples`
+     * the published worked examples where the two disagree. Reported by /health.
+     */
+    LUCRA_MATCHER_INTERPRETATION: z.enum(MATCHER_INTERPRETATIONS).default("literal"),
     FEATURE_REAL_MONEY: booleanFromEnv,
     DATABASE_PATH: z.string().trim().min(1).default("./data/sideout.db"),
     BUILD_SHA: z.string().trim().min(1).default("unknown"),
@@ -175,6 +182,7 @@ export const env: ServerEnv = parseServerEnv({
   LUCRA_BASE_URL: process.env.LUCRA_BASE_URL,
   LUCRA_BACKEND_API_KEY: process.env.LUCRA_BACKEND_API_KEY,
   LUCRA_WEBHOOK_SECRET: process.env.LUCRA_WEBHOOK_SECRET,
+  LUCRA_MATCHER_INTERPRETATION: process.env.LUCRA_MATCHER_INTERPRETATION,
   FEATURE_REAL_MONEY: process.env.FEATURE_REAL_MONEY,
   DATABASE_PATH: process.env.DATABASE_PATH,
   BUILD_SHA: process.env.BUILD_SHA,
@@ -192,6 +200,11 @@ if (env.sessionSecretSource === "ephemeral") {
 }
 if (env.NODE_ENV === "production" && env.devLoginEnabled) {
   log.warn("SIDEOUT_DEV_LOGIN is set: POST /api/dev/login is compiled into this production build; never do this on a public deployment");
+}
+if (!env.LUCRA_WEBHOOK_SECRET && (env.LUCRA_MODE !== "mock" || env.NODE_ENV === "production")) {
+  // OPEN: (§17.3) without a shared secret no delivery can be verified; the receiver refuses every event until one is configured.
+  // In mock mode outside production a per-process random secret stands in (`resolveWebhookSecret`); production never falls back.
+  log.warn("LUCRA_WEBHOOK_SECRET is not set: POST /api/webhooks/lucra cannot verify any signature and will answer 401 to every delivery until it is", { lucraMode: env.LUCRA_MODE, nodeEnv: env.NODE_ENV });
 }
 if (env.NODE_ENV === "production" && env.TRUSTED_PROXY_HOPS === 0) {
   log.warn("TRUSTED_PROXY_HOPS is 0: no client address is trusted, so sign-in is rate-limited per phone and process-wide only; set it to the number of proxies in front of this server (1 behind a single proxy)");

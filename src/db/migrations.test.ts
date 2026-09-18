@@ -57,6 +57,13 @@ describe("migrations on a populated phase-1 database", () => {
       expect(conn.sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
       expect(conn.sqlite.pragma("foreign_key_check")).toEqual([]);
 
+      // 0005: the §7.3.4 cache and the blocking alert on tournaments; one Lucra account per Sideout account.
+      const tournamentCols = (conn.sqlite.prepare("PRAGMA table_info(tournaments)").all() as Array<{ name: string }>).map((c) => c.name);
+      expect(tournamentCols).toEqual(expect.arrayContaining(["lucra_matchup_verified_at", "lucra_alert_json"]));
+      conn.sqlite.prepare("INSERT INTO lucra_links (id, user_id, external_id, verification_state, lucra_user_id) VALUES ('l1', 'u1', 'ext-1', 'unverified', 'lucra-1')").run();
+      expect(() => conn.sqlite.prepare("INSERT INTO lucra_links (id, user_id, external_id, verification_state, lucra_user_id) VALUES ('l2', 'u2', 'ext-2', 'unverified', 'lucra-1')").run()).toThrow(/UNIQUE constraint failed: lucra_links.lucra_user_id/);
+      conn.sqlite.prepare("INSERT INTO lucra_links (id, user_id, external_id, verification_state, lucra_user_id) VALUES ('l2', 'u2', 'ext-2', 'unverified', NULL)").run();
+
       const users = conn.sqlite.prepare("SELECT id, role FROM users ORDER BY id").all();
       expect(users).toEqual([
         { id: "u1", role: "player" },

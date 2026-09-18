@@ -141,11 +141,11 @@ export const getTournamentSummaryBySlug = cache((slug: string): TournamentSummar
  * the full row, and the standings and rewards they contain are served by their
  * own public reads. Organizer routes return the full row.
  */
-export type PublicTournament = Omit<Tournament, "lucraMatchupId" | "lucraExternalId" | "lucraGameId" | "lucraLocationId" | "drawConfigJson" | "closePreviewJson">;
+export type PublicTournament = Omit<Tournament, "lucraMatchupId" | "lucraMatchupVerifiedAt" | "lucraAlertJson" | "lucraExternalId" | "lucraGameId" | "lucraLocationId" | "drawConfigJson" | "closePreviewJson">;
 export type PublicTournamentSummary = Omit<TournamentSummary, "tournament"> & { tournament: PublicTournament };
 
 export function publicTournament(t: Tournament): PublicTournament {
-  const { lucraMatchupId: _matchup, lucraExternalId: _external, lucraGameId: _game, lucraLocationId: _location, drawConfigJson: _draw, closePreviewJson: _close, ...rest } = t;
+  const { lucraMatchupId: _matchup, lucraMatchupVerifiedAt: _verified, lucraAlertJson: _alert, lucraExternalId: _external, lucraGameId: _game, lucraLocationId: _location, drawConfigJson: _draw, closePreviewJson: _close, ...rest } = t;
   return rest;
 }
 

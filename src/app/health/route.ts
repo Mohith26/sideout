@@ -3,20 +3,23 @@ import { readMigrationState, type MigrationState } from "@/db/migrations";
 import { env } from "@/env";
 import { fail, ok } from "@/lib/api";
 import { errorMessage, log } from "@/lib/log";
-import { LUCRA_SDK_VERSION } from "@/lucra/version";
+import { LUCRA_SDK_PACKAGE, LUCRA_SDK_SOURCE, LUCRA_SDK_VERSION } from "@/lucra/version";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /health — build provenance, Lucra mode, pinned SDK version, and
- * migration state (spec §9). Never includes a secret: only the mode is
- * reported, never a key, URL, or path.
+ * GET /health — build provenance, Lucra mode, pinned SDK version, the active
+ * matcher interpretation, and migration state (spec §9). Never includes a
+ * secret: only the mode is reported, never a key, URL, or path.
  */
 export interface HealthData {
   buildSha: string;
   lucraMode: typeof env.LUCRA_MODE;
   lucraSdkVersion: string;
+  /** Package name and the documented install source of that pin. */
+  lucraSdk: { package: string; version: string; source: string };
+  lucraMatcherInterpretation: typeof env.LUCRA_MATCHER_INTERPRETATION;
   /** Where the session signing key came from; "ephemeral" means SESSION_SECRET is unset in production. */
   session: typeof env.sessionSecretSource;
   devLogin: boolean;
@@ -28,6 +31,8 @@ export async function GET() {
     buildSha: env.BUILD_SHA,
     lucraMode: env.LUCRA_MODE,
     lucraSdkVersion: LUCRA_SDK_VERSION,
+    lucraSdk: { package: LUCRA_SDK_PACKAGE, version: LUCRA_SDK_VERSION, source: LUCRA_SDK_SOURCE },
+    lucraMatcherInterpretation: env.LUCRA_MATCHER_INTERPRETATION,
     session: env.sessionSecretSource,
     devLogin: env.devLoginEnabled,
   };

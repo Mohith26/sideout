@@ -42,7 +42,8 @@ describe("seed writes to a migrated database", () => {
       expect(count("team_members")).toBe(dataset.teamMembers.length);
       expect(count("team_invites")).toBe(dataset.teamInvites.length);
       expect(count("auth_codes")).toBe(0);
-      expect(count("lucra_score_submissions")).toBe(0);
+      expect(count("lucra_score_submissions")).toBe(dataset.lucraScoreSubmissions.length);
+      expect(dataset.lucraScoreSubmissions.length).toBeGreaterThan(0);
       expect(count("webhook_events")).toBe(0);
 
       const second = writeSeed(conn, dataset);

@@ -110,8 +110,13 @@ export function forfeitMatch(matchId: string, forfeitingTeamId: string, actor: T
   const db = getDb();
   const match = db.select().from(matches).where(eq(matches.id, matchId)).get();
   if (!match) throw new ApiFailure("not_found", "No match with that id.");
-  const tournament = db.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, match.tournamentId)).get();
-  if (tournament?.status !== "live") throw new ApiFailure("conflict", `Matches can only be forfeited while the tournament is live; it is ${tournament?.status}.`);
+  const tournament = db.select({ status: tournaments.status, closePreviewJson: tournaments.closePreviewJson }).from(tournaments).where(eq(tournaments.id, match.tournamentId)).get();
+  // A tournament frozen by Lucra's rule 7.3.4 (`awaiting_settlement` with no
+  // frozen close preview) can still be ended by the organizer: forfeits are
+  // the one way to settle its remaining matches without Lucra's cooperation,
+  // after which the close flow runs from the frozen state.
+  const frozen = tournament?.status === "awaiting_settlement" && tournament.closePreviewJson === null;
+  if (tournament?.status !== "live" && !frozen) throw new ApiFailure("conflict", `Matches can only be forfeited while the tournament is live; it is ${tournament?.status}.`);
 
   const verdict = transitionMatch(match.status, "forfeited", actor);
   if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);

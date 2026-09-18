@@ -9,12 +9,17 @@ import type { ActorKind, MatchStatus, TournamentStatus } from "@/db/schema";
  *
  *   draft → registration_open → registration_closed → live → awaiting_settlement → settled
  *   draft | registration_open | registration_closed → cancelled
+ *   awaiting_settlement → live
  *
  * The draw is allowed only in `registration_closed`; a re-draw only while no
  * match has started. `live → awaiting_settlement` is the close flow
  * (`@/server/close`, an organizer confirming a frozen preview after its
- * blocking checks); `awaiting_settlement → settled` is the settlement outcome
- * (phase 4). The status PATCH route never takes those edges directly.
+ * blocking checks) or the system freezing a live event under spec rule 7.3.4;
+ * `awaiting_settlement → settled` is the settlement outcome (`@/server/lucra`,
+ * the organizer's close being the trigger). `awaiting_settlement → live` is
+ * the organizer thawing a 7.3.4 freeze once "Verify targeting" finds exactly
+ * one matchup again; a closed tournament (one with a frozen preview) never
+ * takes it. The status PATCH route never takes those edges directly.
  *
  * Match:
  *
@@ -51,6 +56,7 @@ export const TOURNAMENT_TRANSITIONS: readonly Edge<TournamentStatus>[] = [
   { from: "registration_closed", to: "live", actors: ORGANIZER },
   { from: "live", to: "awaiting_settlement", actors: SETTLEMENT },
   { from: "awaiting_settlement", to: "settled", actors: SETTLEMENT },
+  { from: "awaiting_settlement", to: "live", actors: ORGANIZER },
   { from: "draft", to: "cancelled", actors: ORGANIZER },
   { from: "registration_open", to: "cancelled", actors: ORGANIZER },
   { from: "registration_closed", to: "cancelled", actors: ORGANIZER },

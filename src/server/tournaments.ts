@@ -226,7 +226,12 @@ export function createTournament(input: CreateTournamentInput, actor: Transition
 // Update
 // ---------------------------------------------------------------------------
 
-/** Edges the PATCH route may take; closing is `@/server/close` (preview, hash, confirm) and `settled` is the settlement outcome (phase 4). */
+/**
+ * Edges the PATCH route may take. Closing is `@/server/close` (preview, hash,
+ * confirm), `settled` is the settlement outcome, and nothing leaves
+ * `awaiting_settlement` by edit: a rule 7.3.4 freeze is thawed by the
+ * organizer's Lucra verify, a closed tournament only settles.
+ */
 export type PatchableTarget = "registration_open" | "registration_closed" | "live" | "cancelled";
 const PATCHABLE_TARGETS: ReadonlySet<TournamentStatus> = new Set<PatchableTarget>(["registration_open", "registration_closed", "live", "cancelled"]);
 
@@ -275,6 +280,9 @@ export function updateTournament(id: string, input: UpdateTournamentInput, actor
 
   let transition: { from: TournamentStatus; to: TournamentStatus } | null = null;
   if (nextStatus !== undefined && nextStatus !== current.status) {
+    if (current.status === "awaiting_settlement") {
+      throw new ApiFailure("conflict", "A tournament awaiting settlement leaves that state through POST /api/admin/tournaments/:id/lucra/verify (a targeting freeze) or POST …/lucra/settle (a closed event), not a status edit.", { code: "awaiting_settlement_locked" });
+    }
     if (!isPatchableTarget(nextStatus)) {
       throw new ApiFailure(
         "conflict",

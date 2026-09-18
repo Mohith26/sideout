@@ -54,6 +54,12 @@ describe("parseServerEnv", () => {
     );
   });
 
+  it("reads the matcher interpretation, literal by default, and refuses anything else", () => {
+    expect(parseServerEnv({ LUCRA_MODE: "mock" }).LUCRA_MATCHER_INTERPRETATION).toBe("literal");
+    expect(parseServerEnv({ LUCRA_MODE: "mock", LUCRA_MATCHER_INTERPRETATION: "doc-examples" }).LUCRA_MATCHER_INTERPRETATION).toBe("doc-examples");
+    expect(() => parseServerEnv({ LUCRA_MODE: "mock", LUCRA_MATCHER_INTERPRETATION: "lenient" })).toThrow(/LUCRA_MATCHER_INTERPRETATION/);
+  });
+
   it("parses the real-money flag, default off", () => {
     expect(parseServerEnv({}).FEATURE_REAL_MONEY).toBe(false);
     expect(parseServerEnv({ FEATURE_REAL_MONEY: "false" }).FEATURE_REAL_MONEY).toBe(false);

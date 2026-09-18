@@ -18,6 +18,26 @@ const restrictedImports = {
   ],
 };
 
+/**
+ * Spec §5, §8: the adapter is the single module allowed to make outbound
+ * Lucra calls. Outside `src/lucra/`, the real client and the mock are not
+ * importable — `@/lucra` (the adapter and the types) is the whole surface —
+ * and nothing may name a Lucra host in a fetch. `src/lucra/import-boundary.test.ts`
+ * runs ESLint over fixtures to prove each rule fires.
+ */
+const lucraBoundary = {
+  ...restrictedImports,
+  patterns: [
+    ...restrictedImports.patterns,
+    {
+      group: ["**/lucra/client", "**/lucra/mock", "@/lucra/client", "@/lucra/mock"],
+      message: "Only src/lucra/adapter.ts may use the Lucra client or mock; import from @/lucra.",
+    },
+  ],
+};
+
+const LUCRA_HOST_PATTERN = "lucrasports\\.com";
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -49,6 +69,21 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // Everything outside src/lucra: no client, no mock, no fetch against a Lucra host.
+    files: ["src/**"],
+    ignores: ["src/lucra/**"],
+    rules: {
+      "no-restricted-imports": ["error", lucraBoundary],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: `CallExpression[callee.name='fetch'] > :matches(Literal, TemplateLiteral)[value=/${LUCRA_HOST_PATTERN}/], CallExpression[callee.name='fetch'] > TemplateLiteral > TemplateElement[value.raw=/${LUCRA_HOST_PATTERN}/]`,
+          message: "Only src/lucra/adapter.ts (through client.ts) may call a Lucra host; import from @/lucra.",
+        },
+      ],
+    },
+  },
+  {
     // Components may ship to the browser: the scoreline hash needs Node's
     // crypto and would drag its polyfill into the client bundle.
     files: ["src/components/**"],
@@ -56,9 +91,9 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          ...restrictedImports,
+          ...lucraBoundary,
           patterns: [
-            ...restrictedImports.patterns,
+            ...lucraBoundary.patterns,
             {
               group: ["**/scoreline-hash"],
               message: "The scoreline hash is server-side; components judge legality with @/domain/scoreline alone.",

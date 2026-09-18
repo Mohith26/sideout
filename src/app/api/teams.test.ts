@@ -240,7 +240,7 @@ describe("teams, invites and registration", () => {
     });
     expectFailure(notMember, 403, "forbidden");
 
-    const res = await app.call<Envelope<{ team: TeamData; donation: { id: string; status: string; provider: string; amountCents: number } | null; lucraEntry: { state: string } }>>(
+    const res = await app.call<Envelope<{ team: TeamData; donation: { id: string; status: string; provider: string; amountCents: number } | null; lucraEntry: { state: string; players: Array<Record<string, unknown>>; externalId: string | null } }>>(
       register,
       `/api/tournaments/${SLUGS.upcoming}/register`,
       { method: "POST", params: { slug: SLUGS.upcoming }, cookie: app.cookieFor(partner.id), body: { teamId: team.id } },
@@ -249,7 +249,15 @@ describe("teams, invites and registration", () => {
     const open = app.tournament(SLUGS.upcoming);
     expect(res.body.data.team.status).toBe("registered");
     expect(res.body.data.donation).toMatchObject({ status: "pending", provider: "stub", amountCents: open.entryDonationCents });
-    expect(res.body.data.lucraEntry.state).toBe("not_available");
+    expect(res.body.data.lucraEntry.state).toBe("awaiting_sdk_join");
+    // The registrant learns who on the roster is linked and their own opaque id; a teammate's id is never handed out.
+    const partnerLink = app.data.lucraLinks.find((l) => l.userId === partner.id);
+    expect(res.body.data.lucraEntry.externalId).toBe(partnerLink?.externalId ?? null);
+    expect(res.body.data.lucraEntry.players.map((p) => Object.keys(p).sort())).toEqual([
+      ["linked", "userId"],
+      ["linked", "userId"],
+    ]);
+    expect(JSON.stringify(res.body.data.lucraEntry.players)).not.toContain(app.data.lucraLinks.find((l) => l.userId === captain.id)?.externalId ?? "no-link");
     expect(app.audits(team.id, "team.registered")).toHaveLength(1);
     expect(app.audits(res.body.data.donation?.id ?? "", "donation.created")).toHaveLength(1);
 

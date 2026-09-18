@@ -20,6 +20,7 @@ type SubmitData = {
   perspective: "a" | "b";
   consensus: { state: string; live: Array<{ teamId: string | null; sets: SetScore[] }>; differences: Array<{ setNumber: number }>; disputedReason: string | null; resolvedBy: { userId: string } | null };
   match: { match: Match; sets: Array<{ setNumber: number; agreed: boolean }> };
+  lucra: { state: string; report?: { outcome: string; attempt: number; consensusState: string } } | null;
 };
 type PreviewData = { previewHash: string; blockers: Array<{ matchId: string; reason: string; status: string }>; standingsProvisional: boolean; standings: Array<{ placement: number; teamId: string }>; rewards: unknown[] };
 
@@ -111,14 +112,16 @@ describe("consensus routes (spec §9, §10)", () => {
       const second = await submit(m.id, captainOf(m.teamBId), typed(A_WINS, "b"));
       expect(second.status).toBe(201);
       expect(second.body.data).toMatchObject({ outcome: "agreed", perspective: "b" });
-      expect(second.body.data.consensus.state).toBe("agreed");
+      // Agreement writes to Lucra once the consensus has committed; the answer carries the outcome and the consensus already moved on.
+      expect(second.body.data.lucra).toMatchObject({ state: "written", report: { outcome: "accepted", attempt: 1, consensusState: "accepted" } });
+      expect(second.body.data.consensus.state).toBe("accepted");
       expect(second.body.data.match.match.status).toBe("final");
       expect(second.body.data.match.match.winnerTeamId).toBe(m.teamAId);
       expect(second.body.data.match.sets.map((s) => s.agreed)).toEqual([true, true]);
       expect(JSON.stringify(second.body)).not.toMatch(/idempotencyKey/);
 
       const again = await submit(m.id, captainOf(m.teamBId), typed(A_WINS, "b"));
-      expect(expectFailure(again, 409, "conflict").detail).toMatchObject({ code: "already_submitted_by_team", state: "agreed" });
+      expect(expectFailure(again, 409, "conflict").detail).toMatchObject({ code: "already_submitted_by_team", state: "accepted" });
     });
 
     it("answers a disagreement with both scorelines and the differing set", async () => {
@@ -191,14 +194,15 @@ describe("consensus routes (spec §9, §10)", () => {
 
       const resolved = await app.call<Envelope<SubmitData>>(resolveRoute, `/api/admin/matches/${m.id}/resolve`, { method: "POST", params: { id: m.id }, cookie: organizerCookie, body: { sets: A_WINS } });
       expect(resolved.status).toBe(200);
-      expect(resolved.body.data.consensus.state).toBe("agreed");
+      expect(resolved.body.data.lucra).toMatchObject({ state: "written", report: { outcome: "accepted" } });
+      expect(resolved.body.data.consensus.state).toBe("accepted");
       expect(resolved.body.data.consensus.resolvedBy).toMatchObject({ userId: app.organizer().id });
       expect(resolved.body.data.match.match.status).toBe("final");
       expect(resolved.body.data.match.match.winnerTeamId).toBe(m.teamAId);
       expect((await app.call<Envelope<Queue>>(listDisputesRoute, "/api/admin/disputes", { cookie: organizerCookie })).body.data.disputes).toEqual([]);
 
       const twice = await app.call(resolveRoute, `/api/admin/matches/${m.id}/resolve`, { method: "POST", params: { id: m.id }, cookie: organizerCookie, body: { sets: A_WINS } });
-      expect(expectFailure(twice, 409, "conflict").detail).toMatchObject({ code: "invalid_transition", state: "agreed" });
+      expect(expectFailure(twice, 409, "conflict").detail).toMatchObject({ code: "invalid_transition", state: "accepted" });
       expectFailure(await app.call(resolveRoute, "/api/admin/matches/nope/resolve", { method: "POST", params: { id: "nope" }, cookie: organizerCookie, body: { sets: A_WINS } }), 404, "not_found");
     });
   });
@@ -248,9 +252,10 @@ describe("consensus routes (spec §9, §10)", () => {
 
       const done = await close(live.id, clean.body.data.previewHash);
       expect(done.status).toBe(200);
-      expect(done.body.data.detail.tournament.status).toBe("awaiting_settlement");
+      // Closed, then settled through the (mock) Lucra in the same request.
+      expect(done.body.data.detail.tournament.status).toBe("settled");
       expect(done.body.data.frozen.previewHash).toBe(clean.body.data.previewHash);
-      expect(done.body.data.settlement).toEqual({ state: "not_available" });
+      expect(done.body.data.settlement).toMatchObject({ state: "settled", unassignedUserIds: [] });
       expect(JSON.stringify(done.body)).not.toMatch(/lucra_backend|LUCRA_BACKEND/i);
     });
   });

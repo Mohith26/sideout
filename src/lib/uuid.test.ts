@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createUuidV7Generator, isUuidV7, shortId, uuidv7 } from "@/lib/uuid";
+import { createUuidV7Generator, isUuidV7, shortId, uuidFromSeed, uuidv7 } from "@/lib/uuid";
 
 describe("uuidv7", () => {
   it("produces RFC 9562 v7 formatted ids", () => {
@@ -48,5 +48,15 @@ describe("uuidv7", () => {
     expect(isUuidV7("nope")).toBe(false);
     const id = uuidv7();
     expect(shortId(id)).toBe(id.slice(0, 8));
+  });
+});
+
+describe("uuidFromSeed", () => {
+  it("derives a stable, UUID-shaped, non-v7 id from a string", () => {
+    const id = uuidFromSeed("sideout-a");
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(uuidFromSeed("sideout-a")).toBe(id);
+    expect(uuidFromSeed("sideout-b")).not.toBe(id);
+    expect(isUuidV7(id)).toBe(false);
   });
 });
