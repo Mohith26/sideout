@@ -141,8 +141,9 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   the phase-5 draw animation; standings rows carry `data-team-id` for the FLIP.
 - The console (`src/app/organizer/**`, `layout.tsx` + `ConsoleNav`) links to
   `/organizer/disputes`, `/organizer/events/[id]/close` and `/m/[id]`, which the
-  consensus phase owns. `e2e/screens.spec.ts` screenshots every screen at
-  390/768/1280 into `test-results/screens/` and asserts no sideways scroll at 390.
+  consensus phase built; the two console pages render under this layout.
+  `e2e/screens.spec.ts` screenshots every screen at 390/768/1280 into
+  `test-results/screens/` and asserts no sideways scroll at 390.
 - Testing Library does not auto-cleanup here (no vitest globals): component tests add
   `afterEach(cleanup)`. In `next dev`, open `http://localhost:<port>` (not `127.0.0.1`)
   or client components never hydrate.

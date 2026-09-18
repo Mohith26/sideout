@@ -304,12 +304,22 @@ test.describe("bracket canvas", () => {
     await expect.poll(() => page.evaluate(() => window.scrollY), { message: "a vertical swipe on the canvas scrolls the page" }).toBeGreaterThan(startScroll);
     await expect(page).toHaveURL(/\/bracket$/);
 
+    // The swipe flings: let the inertial scroll settle before the tap, or the match node moves under it.
+    const scrollY = () => page.evaluate(() => window.scrollY);
+    await expect
+      .poll(
+        async () => {
+          const a = await scrollY();
+          await page.waitForTimeout(100);
+          return (await scrollY()) - a;
+        },
+        { message: "the fling has settled" },
+      )
+      .toBe(0);
     // The cancelled swipe must not swallow the next tap: tapping a match opens it.
     const node = svg.locator("a[data-node-id][data-status='in_progress']").first();
-    await node.scrollIntoViewIfNeeded();
-    const nodeBox = (await node.boundingBox())!;
     const nodeId = await node.getAttribute("data-node-id");
-    await page.touchscreen.tap(nodeBox.x + nodeBox.width / 2, nodeBox.y + nodeBox.height / 2);
+    await node.tap();
     await expect(page).toHaveURL(new RegExp(`/m/${nodeId}$`));
   });
 
