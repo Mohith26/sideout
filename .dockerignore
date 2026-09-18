@@ -1,0 +1,38 @@
+# Only what the Dockerfile's build stage needs reaches the image. Secrets and
+# local state never do: `src/docker.test.ts` asserts the entries marked below.
+
+# secrets and local configuration (asserted)
+.env
+.env.*
+!.env.example
+*.pem
+
+# local databases and build output (asserted)
+data
+.next
+out
+build
+node_modules
+
+# tests, tooling and documentation the runtime never reads
+e2e
+playwright-report
+test-results
+blob-report
+coverage
+docs
+scripts
+.github
+.claude
+.lavish
+.no-mistakes.yaml
+.nvmrc
+*.tsbuildinfo
+Dockerfile
+.dockerignore
+railway.json
+README.md
+.git
+.gitignore
+.DS_Store
+npm-debug.log*
