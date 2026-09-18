@@ -69,9 +69,9 @@ export function Select({ className, invalid, children, ...rest }: SelectProps) {
   );
 }
 
-export function Fieldset({ legend, children, className, description }: { legend: string; description?: ReactNode; children: ReactNode; className?: string }) {
+export function Fieldset({ legend, children, description }: { legend: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <fieldset className={cx("min-w-0", className)}>
+    <fieldset className="min-w-0">
       <legend className="type-subheading text-text-primary">{legend}</legend>
       {description ? <p className="mt-1 mb-4 text-text-secondary">{description}</p> : <div className="mb-4" />}
       {children}

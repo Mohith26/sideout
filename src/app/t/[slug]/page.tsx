@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Container } from "@/components/shell/Container";
+import { Button } from "@/components/ui/Button";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Icons } from "@/components/ui/icons";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";
 import { ImpactMeter } from "@/components/tournament/ImpactMeter";
 import { MatchCard } from "@/components/tournament/MatchCard";
@@ -11,7 +13,7 @@ import { DIVISION_LABEL, FORMAT_LABEL } from "@/components/tournament/labels";
 import { getTournamentOverview, listLiveMatches, type RoundView } from "@/db/queries/tournaments";
 import { MATCH_STATUSES, type MatchStatus } from "@/db/schema";
 import { formatCents, formatTime } from "@/lib/format";
-import { requireTournament } from "./_lib";
+import { requireTournament, viewerTeamId } from "./_lib";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +37,9 @@ function RoundStatus({ round }: { round: RoundView }) {
 export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
   const summary = await requireTournament(slug);
-  const { tournament: t, activeTeams, raisedCents, donorCount } = summary;
+  const { tournament: t, charity, activeTeams, raisedCents, donorCount } = summary;
   const overview = getTournamentOverview(t.id);
+  const viewerTeam = t.status === "registration_open" ? await viewerTeamId(t.id) : null;
   const live = t.status === "live" ? listLiveMatches(t.id) : [];
   const bracketRounds = overview.rounds.filter((r) => r.key.startsWith("bracket-")).length;
 
@@ -63,6 +66,30 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
 
   return (
     <Container className="space-y-10 py-6 md:py-8">
+      {t.status === "registration_open" ? (
+        <section aria-labelledby="register-heading" className="surface-raised flex flex-wrap items-center justify-between gap-4 rounded-md p-5 md:p-6">
+          <div className="min-w-0">
+            <h2 id="register-heading" className="type-label text-text-tertiary">
+              Registration
+            </h2>
+            <p className="mt-1 text-text-secondary">
+              <span className="tabular">{activeTeams}</span> of <span className="tabular">{t.maxTeams}</span> teams are in
+              {t.entryDonationCents > 0 ? (
+                <>
+                  {" "}
+                  · entry is a <span className="tabular font-medium text-ember">{formatCents(t.entryDonationCents, t.currency)}</span> donation to {charity.name}
+                </>
+              ) : (
+                " · no entry donation"
+              )}
+              .
+            </p>
+          </div>
+          <Button variant="primary" size="lg" href={viewerTeam ? `/t/${t.slug}/register` : `/teams/new?t=${t.slug}`} iconEnd={<Icons.arrowRight size={18} />}>
+            {viewerTeam ? "Register" : "Create a team"}
+          </Button>
+        </section>
+      ) : null}
       <section aria-label="Event facts">
         <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
           {facts.map((f) => (

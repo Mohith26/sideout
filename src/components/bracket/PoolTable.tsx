@@ -40,7 +40,6 @@ export interface PoolTableProps {
   standings?: readonly StandingRow[];
   timeZone: string;
   highlightTeamId?: string | null;
-  className?: string;
 }
 
 interface Cell {
@@ -89,7 +88,7 @@ function shortName(name: string): string {
   return first.length > 9 ? `${first.slice(0, 8)}…` : first;
 }
 
-export function PoolTable({ label, courtLabel, teams, matches, standings, timeZone, highlightTeamId, className }: PoolTableProps) {
+export function PoolTable({ label, courtLabel, teams, matches, standings, timeZone, highlightTeamId }: PoolTableProps) {
   const order = standings ? [...teams].sort((x, y) => (standings.findIndex((r) => r.teamId === x.id) ?? 0) - (standings.findIndex((r) => r.teamId === y.id) ?? 0)) : teams;
   const played = matches.filter((m) => m.status === "final" || m.status === "forfeited").length;
   const recordFor = (teamId: string): string => {
@@ -100,7 +99,7 @@ export function PoolTable({ label, courtLabel, teams, matches, standings, timeZo
     return `${wins}–${mine.length - wins}`;
   };
   return (
-    <section aria-label={label} className={cx("surface-raised min-w-0 overflow-hidden rounded-md", className)}>
+    <section aria-label={label} className="surface-raised min-w-0 overflow-hidden rounded-md">
       <div className="flex items-baseline justify-between gap-3 px-4 pt-3 pb-2">
         <h3 className="type-subheading">{label}</h3>
         <span className="tabular type-label text-text-tertiary">{`${courtLabel} · ${played} of ${matches.length} played`}</span>

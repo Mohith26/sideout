@@ -1,6 +1,5 @@
 import { PoolTable, type PoolMatchRef, type PoolTeamRef } from "@/components/bracket/PoolTable";
 import type { PoolDetail } from "@/db/queries/tournaments";
-import { cx } from "@/lib/cx";
 
 /**
  * Every pool of an event as a sheet, from the detail read model. Shared by the
@@ -24,9 +23,9 @@ export function poolTeamRefs(pool: Pick<PoolDetail, "teams">): PoolTeamRef[] {
   return pool.teams.map((t) => ({ id: t.id, name: t.name, seed: t.seed, members: t.members }));
 }
 
-export function PoolSheets({ pools, timeZone, highlightTeamId, className }: { pools: readonly PoolDetail[]; timeZone: string; highlightTeamId?: string | null; className?: string }) {
+export function PoolSheets({ pools, timeZone, highlightTeamId }: { pools: readonly PoolDetail[]; timeZone: string; highlightTeamId?: string | null }) {
   return (
-    <div className={cx("grid gap-4 xl:grid-cols-2", className)}>
+    <div className="grid gap-4 xl:grid-cols-2">
       {pools.map((pool) => (
         <PoolTable
           key={pool.id}

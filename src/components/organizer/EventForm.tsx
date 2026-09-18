@@ -13,7 +13,6 @@ import type { Division, PrizeKind, Sponsor, SponsorTier, Tournament, TournamentF
 import { api, fieldIssues } from "@/lib/api-client";
 import { centsToAmountString, parseAmountToCents } from "@/lib/format";
 import { formatWallClock, isValidTimeZone, parseWallClock, wallClockToEpoch } from "@/lib/timezone";
-import { cx } from "@/lib/cx";
 
 /**
  * The event builder's form (spec §11.6): every editable tournament column and
@@ -49,8 +48,8 @@ export interface EventFormLocks {
 }
 
 export type EventFormProps =
-  | { mode: "create"; options: EventFormOptions; className?: string }
-  | { mode: "edit"; options: EventFormOptions; tournament: Tournament; sponsors: Sponsor[]; locks: EventFormLocks; className?: string };
+  | { mode: "create"; options: EventFormOptions }
+  | { mode: "edit"; options: EventFormOptions; tournament: Tournament; sponsors: Sponsor[]; locks: EventFormLocks };
 
 interface SponsorDraft {
   key: string;
@@ -328,7 +327,7 @@ export function EventForm(props: EventFormProps) {
   });
 
   return (
-    <form onSubmit={submit} noValidate className={cx("space-y-8", props.className)}>
+    <form onSubmit={submit} noValidate className="space-y-8">
       {readOnly ? (
         <Notice tone="info" title="This event is read-only">
           A settled or cancelled event keeps its record as it was.

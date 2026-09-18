@@ -227,7 +227,12 @@ export function createTournament(input: CreateTournamentInput, actor: Transition
 // ---------------------------------------------------------------------------
 
 /** Edges the PATCH route may take; closing is `@/server/close` (preview, hash, confirm) and `settled` is the settlement outcome (phase 4). */
-export const PATCHABLE_TARGETS: ReadonlySet<TournamentStatus> = new Set(["registration_open", "registration_closed", "live", "cancelled"]);
+export type PatchableTarget = "registration_open" | "registration_closed" | "live" | "cancelled";
+const PATCHABLE_TARGETS: ReadonlySet<TournamentStatus> = new Set<PatchableTarget>(["registration_open", "registration_closed", "live", "cancelled"]);
+
+export function isPatchableTarget(status: TournamentStatus): status is PatchableTarget {
+  return PATCHABLE_TARGETS.has(status);
+}
 
 export function updateTournament(id: string, input: UpdateTournamentInput, actor: TransitionActor, clock: Clock = systemClock): TournamentDetail {
   const db = getDb();
@@ -270,7 +275,7 @@ export function updateTournament(id: string, input: UpdateTournamentInput, actor
 
   let transition: { from: TournamentStatus; to: TournamentStatus } | null = null;
   if (nextStatus !== undefined && nextStatus !== current.status) {
-    if (!PATCHABLE_TARGETS.has(nextStatus)) {
+    if (!isPatchableTarget(nextStatus)) {
       throw new ApiFailure(
         "conflict",
         nextStatus === "awaiting_settlement"

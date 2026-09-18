@@ -372,33 +372,25 @@ test.describe("console", () => {
     await expectTarget(backToEvents, "new-event back link");
 
     await page.goto("/organizer/events");
-    const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: /^Sandbar Classic/ }) });
-    await expectTarget(row.getByRole("link", { name: /^Sandbar Classic/ }), "events row link");
     if (isMobile) {
-      // The event cell truncates instead of widening the row, so the name, its status pill and the
-      // Teams column all stay on screen at 390px without the table scrolling sideways inside its box.
+      // Below md each event is a card: the name link is the 44px target and the card itself, a
+      // positioned article with a stretched link, is the tap area, so a tap on the card's figures,
+      // well outside the link's own box, opens the builder. The table is not rendered at all.
       const viewportWidth = page.viewportSize()!.width;
-      const table = page.getByRole("table", { name: /^Every event/ });
-      const scroll = await table.evaluate((t) => ({ scrollWidth: t.parentElement!.scrollWidth, clientWidth: t.parentElement!.clientWidth }));
-      expect(scroll.scrollWidth, "the events table fits its box").toBeLessThanOrEqual(scroll.clientWidth);
-      const teamsHeader = (await table.getByRole("columnheader", { name: "Teams", exact: true }).boundingBox())!;
-      expect(teamsHeader.x + teamsHeader.width, "Teams column in view").toBeLessThanOrEqual(viewportWidth);
-      const link = row.getByRole("link", { name: /^Sandbar Classic/ });
-      await expect(link.getByText("Live", { exact: true }), "status pill under the name").toBeVisible();
-      const name = link.getByText("Sandbar Classic", { exact: true });
-      expect(await name.evaluate((el) => el.scrollWidth <= el.clientWidth), "the name is legible, not truncated").toBe(true);
-      // The stretched link makes the row itself the target: a tap in the row's gutter, outside the
-      // link's own box, opens the builder; so does one on the Teams cell.
-      const rowBox = (await row.boundingBox())!;
-      const linkBox = (await row.getByRole("link", { name: /^Sandbar Classic/ }).boundingBox())!;
-      expect(rowBox.x).toBeLessThan(linkBox.x);
-      await page.touchscreen.tap(rowBox.x + (linkBox.x - rowBox.x) / 2, rowBox.y + rowBox.height / 2);
-      await expect(page).toHaveURL(new RegExp(`/organizer/events/${liveId}$`));
-      await page.goto("/organizer/events");
-      const box = (await row.getByRole("cell").last().boundingBox())!;
-      expect(box.x + box.width, "Teams cell in view").toBeLessThanOrEqual(viewportWidth);
-      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      await expect(page.getByRole("table", { name: /^Every event/ })).toBeHidden();
+      const card = page.getByRole("article").filter({ has: page.getByRole("heading", { level: 2, name: "Sandbar Classic" }) });
+      const link = card.getByRole("link", { name: "Sandbar Classic" });
+      await expectTarget(link, "events card link");
+      await expect(card.getByText("Live", { exact: true }), "status pill on the card").toBeVisible();
+      await card.scrollIntoViewIfNeeded();
+      const cardBox = (await card.boundingBox())!;
+      const linkBox = (await link.boundingBox())!;
+      expect(cardBox.x + cardBox.width, "card in view").toBeLessThanOrEqual(viewportWidth);
+      expect(cardBox.y + cardBox.height, "figures below the link").toBeGreaterThan(linkBox.y + linkBox.height + MIN_TARGET / 2);
+      await page.touchscreen.tap(cardBox.x + cardBox.width - 24, cardBox.y + cardBox.height - 16);
     } else {
+      const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: /^Sandbar Classic/ }) });
+      await expectTarget(row.getByRole("link", { name: /^Sandbar Classic/ }), "events row link");
       await row.getByRole("link", { name: "Open Sandbar Classic" }).click();
     }
     await expect(page).toHaveURL(new RegExp(`/organizer/events/${liveId}$`));

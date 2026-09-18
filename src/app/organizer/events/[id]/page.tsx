@@ -18,7 +18,7 @@ import { allowedTournamentTargets, TERMINAL_MATCH_STATUSES } from "@/domain/tran
 import { requestNow } from "@/lib/clock";
 import { formatCents, formatDateRange } from "@/lib/format";
 import { sweepDueDonations } from "@/server/donations/stub-provider";
-import { PATCHABLE_TARGETS } from "@/server/tournaments";
+import { isPatchableTarget } from "@/server/tournaments";
 import { requireOrganizerViewer } from "../../_lib";
 
 export const dynamic = "force-dynamic";
@@ -103,8 +103,7 @@ export default async function EventBuilderPage({ params }: PageProps<"/organizer
         <StatusActions
           tournamentId={t.id}
           status={t.status}
-          patchable={targets.filter((s) => PATCHABLE_TARGETS.has(s))}
-          viaCloseFlow={targets.filter((s) => !PATCHABLE_TARGETS.has(s))}
+          patchable={targets.filter(isPatchableTarget)}
           matchCount={allMatches.length}
         />
       </section>

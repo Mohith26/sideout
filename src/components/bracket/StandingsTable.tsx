@@ -28,7 +28,6 @@ export interface StandingsTableProps {
   total: number;
   /** Highlight this team's row (the viewer's own team). */
   highlightTeamId?: string | null;
-  className?: string;
 }
 
 export const TIEBREAK_LABEL: Record<TiebreakKey, string> = {
@@ -47,7 +46,7 @@ export function tiebreakFootnote(): string {
 
 type Row = StandingRow & { team: StandingsTeam | null };
 
-export function StandingsTable({ label, courtLabel, rows, teams, played, total, highlightTeamId, className }: StandingsTableProps) {
+export function StandingsTable({ label, courtLabel, rows, teams, played, total, highlightTeamId }: StandingsTableProps) {
   const teamsById = new Map(teams.map((t) => [t.id, t]));
   const data: Row[] = rows.map((r) => ({ ...r, team: teamsById.get(r.teamId) ?? null }));
   const columns: DataTableColumn<Row>[] = [
@@ -77,7 +76,7 @@ export function StandingsTable({ label, courtLabel, rows, teams, played, total, 
     { key: "pa", header: "PA", numeric: true, hideBelowMd: true, render: (r) => r.pointsAgainst },
   ];
   return (
-    <section aria-label={`${label} standings`} className={cx("min-w-0", className)}>
+    <section aria-label={`${label} standings`} className="min-w-0">
       <div className="mb-2 flex items-baseline justify-between gap-3">
         <h3 className="type-subheading">{label}</h3>
         <span className="tabular type-label text-text-tertiary">{`${courtLabel ? `${courtLabel} · ` : ""}${played} of ${total} played`}</span>

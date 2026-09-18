@@ -11,42 +11,39 @@ import { StatusPill, TOURNAMENT_STATUS_PILL } from "@/components/ui/StatusPill";
 import { useToast } from "@/components/ui/Toast";
 import type { TournamentStatus } from "@/db/schema";
 import { api } from "@/lib/api-client";
+import type { PatchableTarget } from "@/server/tournaments";
 
 /**
  * Status transitions as the validator allows them (`allowedTournamentTargets`,
  * filtered to what `PATCH /api/admin/tournaments/:id` will take). Closing
- * (`live → awaiting_settlement → settled`) is the close flow's job and is a
- * plain link to it; cancelling asks first.
+ * (`live → awaiting_settlement`) is the close flow's job and is a plain link
+ * to it; settlement (`→ settled`) is Lucra's outcome in phase 4 and has no
+ * control here; cancelling asks first.
  */
 export interface StatusActionsProps {
   tournamentId: string;
   status: TournamentStatus;
   /** Targets the PATCH route accepts from here. */
-  patchable: readonly TournamentStatus[];
-  /** Targets the machine allows but only the close flow takes. */
-  viaCloseFlow: readonly TournamentStatus[];
+  patchable: readonly PatchableTarget[];
   /** `live` needs a draw; explain instead of failing. */
   matchCount: number;
 }
 
-const ACTION: Record<TournamentStatus, { label: string; confirm: string | null; destructive: boolean }> = {
-  draft: { label: "Back to draft", confirm: null, destructive: false },
+const ACTION: Record<PatchableTarget, { label: string; confirm: string | null; destructive: boolean }> = {
   registration_open: { label: "Open registration", confirm: null, destructive: false },
   registration_closed: { label: "Close registration", confirm: "Close registration? No more teams can enter; you can then generate the draw.", destructive: false },
   live: { label: "Go live", confirm: "Go live? Scores can be submitted from the sand and the draw can no longer be replaced once a match starts.", destructive: false },
-  awaiting_settlement: { label: "Close tournament", confirm: null, destructive: false },
-  settled: { label: "Settle", confirm: null, destructive: false },
   cancelled: { label: "Cancel event", confirm: "Cancel this event? This cannot be undone. Teams keep their record; donations are not refunded automatically.", destructive: true },
 };
 
-export function StatusActions({ tournamentId, status, patchable, viaCloseFlow, matchCount }: StatusActionsProps) {
+export function StatusActions({ tournamentId, status, patchable, matchCount }: StatusActionsProps) {
   const router = useRouter();
   const { toast } = useToast();
-  const [pending, setPending] = useState<TournamentStatus | null>(null);
+  const [pending, setPending] = useState<PatchableTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function move(to: TournamentStatus) {
+  async function move(to: PatchableTarget) {
     setBusy(true);
     setError(null);
     const result = await api<{ tournament: { status: TournamentStatus } }>(`/api/admin/tournaments/${tournamentId}`, { method: "PATCH", body: { status: to } });
@@ -74,7 +71,7 @@ export function StatusActions({ tournamentId, status, patchable, viaCloseFlow, m
           {error}
         </Notice>
       ) : null}
-      {targets.length === 0 && viaCloseFlow.length === 0 ? <p className="text-text-tertiary">No further transitions from here.</p> : null}
+      {targets.length === 0 && status !== "live" && status !== "awaiting_settlement" ? <p className="text-text-tertiary">No further transitions from here.</p> : null}
       <div className="flex flex-wrap gap-2">
         {targets.map((to) => {
           const action = ACTION[to];
@@ -92,18 +89,15 @@ export function StatusActions({ tournamentId, status, patchable, viaCloseFlow, m
             </Button>
           );
         })}
-        {viaCloseFlow.map((to) => (
-          <Link
-            key={to}
-            href={`/organizer/events/${tournamentId}/close`}
-            className="target surface-raised inline-flex items-center gap-2 rounded-sm px-4 font-medium text-text-primary hover:border-border-strong"
-          >
+        {status === "live" ? (
+          <Link href={`/organizer/events/${tournamentId}/close`} className="target surface-raised inline-flex items-center gap-2 rounded-sm px-4 font-medium text-text-primary hover:border-border-strong">
             <Icons.flag size={16} />
-            {ACTION[to].label}
+            Close tournament
             <span className="type-label text-text-tertiary">via close flow</span>
           </Link>
-        ))}
+        ) : null}
       </div>
+      {status === "awaiting_settlement" ? <p className="text-text-tertiary">Closed. Settlement is Lucra&rsquo;s outcome and arrives with phase 4; there is nothing to do here.</p> : null}
       {status === "registration_closed" && matchCount === 0 ? <p className="type-label text-text-tertiary">Going live needs a draw; generate one below first.</p> : null}
       <ConfirmDialog
         open={pending !== null}

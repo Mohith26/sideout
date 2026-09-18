@@ -16,7 +16,7 @@ const form = z.object({
   partnerPhone: phoneSchema,
 });
 
-export function CreateTeamForm({ slug, tournamentName, className }: { slug: string; tournamentName: string; className?: string }) {
+export function CreateTeamForm({ slug, tournamentName }: { slug: string; tournamentName: string }) {
   const router = useRouter();
   const { toast } = useToast();
   const [name, setName] = useState("");
@@ -55,7 +55,7 @@ export function CreateTeamForm({ slug, tournamentName, className }: { slug: stri
   }
 
   return (
-    <form onSubmit={submit} noValidate className={className}>
+    <form onSubmit={submit} noValidate>
       <div className="surface-raised space-y-4 rounded-md p-4 md:p-5">
         {failure ? (
           <Notice tone="error" title="Could not create the team">
