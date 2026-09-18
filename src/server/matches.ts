@@ -10,11 +10,10 @@ import { systemClock, type Clock } from "@/lib/clock";
 import { writeAudit, type Tx } from "@/server/audit";
 
 /**
- * Match service. Phase 2 exposes one write: an organizer forfeit, which is
- * the one bracket-advancing action that exists before the consensus state
- * machine (phase 3) lands. `applyAdvancement` is the shared tail both paths
- * use: it writes the resolved match, moves the winner into the next slot, and
- * audits both, inside the caller's transaction.
+ * Match service. The one write here is an organizer forfeit; a played result
+ * reaches `final` only through `@/server/consensus`. `applyAdvancement` is the
+ * shared tail both paths use: it writes the resolved match, moves the winner
+ * into the next slot, and audits both, inside the caller's transaction.
  */
 
 export function requireMatch(matchId: string): MatchDetail {

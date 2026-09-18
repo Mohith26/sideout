@@ -5,7 +5,7 @@ import { z } from "zod";
 import { getDb } from "@/db/client";
 import { getPoolStandings } from "@/db/queries/standings";
 import { bracketRoundLabel, getBracketRoundCount, getTournamentDetail, type TournamentDetail } from "@/db/queries/tournaments";
-import { matchConsensus, matches, pools, rewards, teams, tournaments, type ConsensusState, type MatchStatus, type Reward, type Tournament } from "@/db/schema";
+import { matchConsensus, matches, pools, rewards, teams, tournaments, users, type ConsensusState, type MatchStatus, type Reward, type Tournament } from "@/db/schema";
 import { CLOSE_BLOCKING_CONSENSUS_STATES } from "@/domain/consensus";
 import { computePlacements, type PlacementBasis } from "@/domain/placement";
 import { TERMINAL_MATCH_STATUSES, transitionTournament, type TransitionActor } from "@/domain/transitions";
@@ -325,6 +325,11 @@ export function closeTournament(input: CloseTournamentInput, clock: Clock = syst
 export function readStoredClosePreview(t: Pick<Tournament, "closePreviewJson">): StoredClosePreview | null {
   if (!t.closePreviewJson) return null;
   return JSON.parse(t.closePreviewJson) as StoredClosePreview;
+}
+
+/** Display name of the organizer who closed, for the attribution line; null for an unknown id. */
+export function closedByName(stored: Pick<StoredClosePreview, "closedByUserId">): string | null {
+  return getDb().select({ name: users.displayName }).from(users).where(eq(users.id, stored.closedByUserId)).get()?.name ?? null;
 }
 
 // ---------------------------------------------------------------------------

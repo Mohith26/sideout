@@ -466,7 +466,9 @@ describe("organizer routes", () => {
       expect(res.body.data.match.finalizedAt).not.toBeNull();
       const finalMatch = app.conn.db.select().from(matches).where(eq(matches.id, semi.nextMatchId)).get();
       expect(semi.nextMatchSlot === "a" ? finalMatch?.teamAId : finalMatch?.teamBId).toBe(semi.teamBId);
+      // The seed recorded the match going on the sand; the forfeit is the next entry.
       expect(app.audits(semi.id, "match.status_changed").map((a) => JSON.parse(a.detailJson ?? "{}"))).toEqual([
+        { from: "scheduled", to: "in_progress" },
         { from: "in_progress", to: "forfeited", winnerTeamId: semi.teamBId, forfeitedTeamId: semi.teamAId },
       ]);
       expect(app.audits(semi.nextMatchId, "match.slot_filled")).toHaveLength(1);

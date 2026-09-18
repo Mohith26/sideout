@@ -24,7 +24,7 @@ describe("close flow (spec §10.7, §11.6)", () => {
   let app: TestApp;
   const clock = fixedClock(0);
   let live: { id: string };
-  let organizerId: string;
+  let organizerId = "";
 
   beforeEach(() => {
     app = createTestApp();
@@ -57,20 +57,20 @@ describe("close flow (spec §10.7, §11.6)", () => {
     submitScoreline({ matchId: m.id, userId: captainOf(m.teamAId), scoreline: { sets: typed(A_WINS, "a") } }, clock);
     submitScoreline({ matchId: m.id, userId: captainOf(m.teamBId), scoreline: { sets: typed(A_WINS, "b") } }, clock);
   };
-  const organizer = { kind: "organizer" as const, userId: organizerId };
+  const organizer = () => ({ kind: "organizer" as const, userId: organizerId });
 
   /** Bring the seeded live event to a closable state: resolve, agree, and forfeit what is left. */
   function settleEverything() {
-    resolveDispute({ matchId: at(11).id, organizerUserId: organizerId, sets: [...A_WINS, { setNumber: 3, teamAPoints: 15, teamBPoints: 9 }].slice(0, 2) }, clock);
+    resolveDispute({ matchId: at(11).id, organizerUserId: organizerId, sets: A_WINS }, clock);
     // QF 12: team A already submitted in the seed; team B agrees with what A typed.
     const twelve = at(12);
     const aRow = JSON.parse(app.data.scoreSubmissions.find((s) => s.matchId === twelve.id)?.payloadJson ?? "").sets as SubmittedSet[];
     submitScoreline({ matchId: twelve.id, userId: captainOf(twelve.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock);
     agree(at(13));
     const fourteen = at(14);
-    forfeitMatch(fourteen.id, fourteen.teamBId ?? "", organizer, clock);
+    forfeitMatch(fourteen.id, fourteen.teamBId ?? "", organizer(), clock);
     const fifteen = at(15);
-    forfeitMatch(fifteen.id, fifteen.teamBId ?? "", organizer, clock);
+    forfeitMatch(fifteen.id, fifteen.teamBId ?? "", organizer(), clock);
   }
 
   it("names every blocking match with a reason, and refuses to close over them", () => {

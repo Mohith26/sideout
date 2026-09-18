@@ -37,7 +37,7 @@ function submittedSets(sub: NewScoreSubmission): SetScore[] {
 }
 
 const audits = (subjectId: string, action: string) => data.auditLog.filter((a) => a.subjectId === subjectId && a.action === action);
-const detailOf = (a: { detailJson?: string | null } | undefined) => JSON.parse(a?.detailJson ?? "{}") as Record<string, unknown>;
+const detailOf = (a: { detailJson?: string | null | undefined } | undefined) => JSON.parse(a?.detailJson ?? "{}") as Record<string, unknown>;
 
 describe("seed dataset (spec §13)", () => {
   it("is deterministic and every id is a unique UUID v7", () => {

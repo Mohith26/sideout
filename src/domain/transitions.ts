@@ -11,9 +11,10 @@ import type { ActorKind, MatchStatus, TournamentStatus } from "@/db/schema";
  *   draft | registration_open | registration_closed → cancelled
  *
  * The draw is allowed only in `registration_closed`; a re-draw only while no
- * match has started. `live → awaiting_settlement → settled` belong to the
- * close flow (phase 4), which runs as `system` after its own blocking checks;
- * the status PATCH route never takes those edges directly.
+ * match has started. `live → awaiting_settlement` is the close flow
+ * (`@/server/close`, an organizer confirming a frozen preview after its
+ * blocking checks); `awaiting_settlement → settled` is the settlement outcome
+ * (phase 4). The status PATCH route never takes those edges directly.
  *
  * Match:
  *
@@ -21,8 +22,9 @@ import type { ActorKind, MatchStatus, TournamentStatus } from "@/db/schema";
  *   scheduled | in_progress | awaiting_scores | disputed → forfeited
  *   scheduled → bye
  *
- * `final` is set only by the consensus state machine (actor `system`), never
- * directly by a route. `forfeited` is an organizer action. `bye` is systemic.
+ * `final` is set only by the consensus state machine (`@/server/consensus`,
+ * actor `system`), never directly by a route. `forfeited` is an organizer
+ * action. `bye` is systemic.
  */
 
 export interface TransitionActor {

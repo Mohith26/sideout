@@ -70,6 +70,23 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 - `teams.seed` is the organizer's entry seed, written only from the draw request's
   `seeds` list; the pools stage stores its inputs as `tournaments.draw_config_json`
   and the bracket stage reads the advancement rule from there.
+- Score consensus (spec §10): `src/domain/consensus.ts` is the pure machine
+  (`CONSENSUS_TRANSITIONS`, canonicalization from the submitter's side via
+  `canonicalizeSubmission`, `judgeSubmission` on team ids) and
+  `src/server/consensus.ts` owns the transactions. A scoreline is judged by
+  `judgeMatch` and refused with `illegal_scoreline` before any row is written; a
+  team's resubmission supersedes its earlier row (`superseded_by_id`), never
+  updates it; `enterAgreed` is the only path to `agreed` and to `final` (actor
+  `system`), and it mints `idempotency_key` only when null. **Every Lucra write
+  must call `assertMayWriteToLucra` first** (exported from both modules): it
+  throws unless the state is `agreed`/`rejected`/`partial` with a minted key.
+  Audit vocabulary is `CONSENSUS_AUDIT`; the seed writes the same rows and
+  entries the service would. Closing (`src/server/close.ts`) is preview → hash →
+  confirm: `previewClose` names every blocker, `closeTournament` refuses
+  `close_blocked`/`preview_stale`, freezes the preview on
+  `tournaments.close_preview_json`, and ends at `lucraSettlementHook`, the phase-4
+  seam. A forfeit settles a disputed match (its consensus row stays `disputed`;
+  the queue and the close read the match status).
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
   production when unset — `/health` reports which). `users.role` gates `/api/admin/*`
@@ -89,15 +106,19 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 
 ## Phase status
 
-Phase 1 (Foundation) and phase 2a (Domain + application API) are complete: shell,
-primitives, schema, seed, `/health`, Home, `/t/[slug]` Overview and Impact, the draw
-engine, bracket advancement, standings tiebreaks, status machines, phone sign-in,
-and every §9 public, player and organizer route except score submission, the close
-and dispute routes, and the Lucra routes. Bracket and Standings tabs, registration,
-sign-in and the organizer console screens are the phase-2b task and consume the API
-here; the consensus state machine is the phase-3 task and calls `advanceWinner` /
-`seedBracketFromPools`. `double_elim` is in the enum but refused by `draw()`. No
-Lucra code exists yet (phase 4); `src/lucra/version.ts` is the only file there.
+Phase 1 (Foundation), phase 2a (Domain + application API) and phase 3 (Consensus)
+are complete: shell, primitives, schema, seed, `/health`, Home, `/t/[slug]` Overview
+and Impact, the draw engine, bracket advancement, standings tiebreaks, status
+machines, phone sign-in, every §9 public, player and organizer route except the
+Lucra ones, the score consensus machine with `/m/[id]` and its score sheet, the
+dispute queue (`/organizer/disputes`) and the two-step close
+(`/organizer/events/[id]/close`). The last pool match to agree seeds the bracket
+through `seedBracketFromPools`. Bracket and Standings tabs, registration, sign-in,
+profile and the organizer console shell (`src/app/organizer/layout.tsx` is a
+minimal role gate to be replaced) are the phase-2b task. `double_elim` is in the enum
+but refused by `draw()`. No Lucra code exists yet (phase 4); `src/lucra/version.ts`
+is the only file there, and `lucraSettlementHook` / `lucraEntryHook` report
+`not_available`.
 
 ## Maintaining this file
 

@@ -39,7 +39,9 @@ export function LiveMatchStrip({ tournamentName, slug, matches, bracketRounds }:
         <ul className="-mx-gutter mt-3 flex snap-x gap-3 overflow-x-auto px-gutter pb-1 [scrollbar-width:thin]">
           {matches.map((m) => (
             <li key={m.match.id} className="snap-start">
-              <MatchCard view={m} bracketRounds={bracketRounds} />
+              <Link href={`/m/${m.match.id}`} className="block rounded-md" aria-label={`Open match: ${m.teamA?.name ?? "TBD"} vs ${m.teamB?.name ?? "TBD"}`}>
+                <MatchCard view={m} bracketRounds={bracketRounds} />
+              </Link>
             </li>
           ))}
         </ul>

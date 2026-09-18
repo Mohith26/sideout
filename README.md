@@ -1,6 +1,6 @@
 # Sideout
 
-Charity beach volleyball tournaments: organizers run events, teams play on the sand, both teams confirm every score, and the competition layer (rewards, settlement, compliance) is handled by Lucra. Phases 1 (foundation) and 2 (domain logic and the application API) of 5 are built; the screens that consume the API, the score consensus machine, and the Lucra integration follow. The full build brief is [`docs/build-spec.md`](docs/build-spec.md); open questions with their fallbacks are in [`docs/open-questions.md`](docs/open-questions.md).
+Charity beach volleyball tournaments: organizers run events, teams play on the sand, both teams confirm every score, and the competition layer (rewards, settlement, compliance) is handled by Lucra. Phases 1 (foundation), 2 (domain logic and the application API) and 3 (score consensus: the trust boundary between a phone on the sand and anything that moves a prize) of 5 are built; the remaining screens and the Lucra integration follow. The full build brief is [`docs/build-spec.md`](docs/build-spec.md); open questions with their fallbacks are in [`docs/open-questions.md`](docs/open-questions.md).
 
 ## 60-second quickstart
 
@@ -51,6 +51,15 @@ Every route validates with zod and answers `{ ok: true, data }` or `{ ok: false,
 | `POST /api/admin/tournaments`, `PATCH /api/admin/tournaments/:id` | organizer | create; edit fields, sponsors, and status through the state machine |
 | `POST /api/admin/tournaments/:id/draw[?preview=1]` | organizer | pools + bracket in one transaction, configuration stored on the tournament; `{ stage: "bracket" }` seeds the bracket from finished pools with the stored advancement rule |
 | `POST /api/admin/matches/:id/forfeit` | organizer | forfeit one side; the other advances |
+| `POST /api/matches/:id/scores` | player | submit your team's scoreline (your points first); answers `awaiting_second`, `agreed` (the match is final) or `disputed` (both scorelines returned) |
+| `GET /api/admin/disputes[?tournamentId=]` | organizer | every disputed match with both scorelines and the sets that differ |
+| `POST /api/admin/matches/:id/resolve` | organizer | an authoritative scoreline for a disputed match, attributed to the organizer |
+| `GET /api/admin/tournaments/:id/close/preview` | organizer | final standings, projected rewards, blocking matches, and the hash the close requires |
+| `POST /api/admin/tournaments/:id/close` | organizer | `live → awaiting_settlement` with `{ previewHash }`; refused with `close_blocked` (naming every match) or `preview_stale` |
 | `POST /api/dev/login` | non-production only | sign in as a seeded user by id or phone |
+
+## How scores become prizes
+
+A score typed on a phone on the sand is never trusted on its own. Both teams submit the result from their own side; the server resolves which team each submitter plays for from the roster, refuses anything that is not a legal beach volleyball scoreline (sets to 21, a deciding third set to 15, win by two, best-of-1 or best-of-3) with a message naming the set, canonicalizes the rest to the match orientation and hashes it. The first submission moves the consensus to `awaiting_second`; the second, from the *other* team, either matches the hash (`agreed`: the sets are written, the match is `final`, the winner advances, and one idempotency key is minted for every later Lucra attempt) or does not (`disputed`: both readings are shown side by side, and only an organizer's attributed scoreline settles it). Two submissions from one team only replace each other. Closing a tournament is an explicit two-step confirm over a frozen preview of the final standings and projected rewards, blocked while any match is unresolved, and the Lucra write that phase 4 adds must pass `assertMayWriteToLucra` first — only `agreed` (or a retry after `rejected`/`partial`) with its key gets through. Every transition is in `audit_log`.
 
 Draw formats: `pool_to_bracket` (snake-seeded pools, round robin per pool, single-elimination bracket sized by "top N per pool plus best remaining"), `single_elim`, `round_robin`. `double_elim` is refused until it is built. `teams.seed` is the organizer's entry seed (set through the draw request's `seeds` list, kept across re-draws); the order a bracket is seeded in lives on its round-1 slots. Standings tiebreaks, in order: wins, head-to-head (two-way ties only), set ratio, point differential, points for, team id. Across pools (ranking pool winners against each other for bracket seeds, and picking the best remaining), where pools may differ in size by one, the order is per match played: win percentage, set ratio, point differential per match, points for per match, team id.

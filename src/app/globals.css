@@ -206,6 +206,46 @@
   border: 1px solid var(--border-subtle);
 }
 
+/*
+ * Named transitions 4 and 5 (§12.4), consumed by the consensus components:
+ * the sheet enters on translateY with --ease-out-expo; the consensus confirm
+ * is a single decisive beat in --surf. The reduced-motion block in tokens.css
+ * collapses both to a 1ms opacity change. Phase 5 tunes them.
+ */
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes confirm-check {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@utility sheet-enter {
+  animation: sheet-in var(--d-enter) var(--ease-out-expo) both;
+}
+
+@utility confirm-enter {
+  animation: confirm-check var(--d-base) var(--ease-out-expo) both;
+}
+
 /* Minimum touch target (§12.6). */
 @utility target {
   min-width: var(--target-min);

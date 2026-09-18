@@ -4,9 +4,10 @@ import type { BestOf } from "@/db/schema";
 
 /**
  * Beach volleyball scoreline rules and the canonical hash the consensus state
- * machine compares (spec §10.1, §10.4). Pure functions, no I/O. Phase 3 builds
- * the state machine on top of these; the seed uses them today so every seeded
- * result is a legal one and the disputed match's two submissions hash differently.
+ * machine compares (spec §10.1, §10.4). Pure functions, no I/O.
+ * `@/domain/consensus` builds the state machine on top of these; the seed uses
+ * them so every seeded result is a legal one and the disputed match's two
+ * submissions hash differently.
  */
 
 export const SET_TARGET = 21;
