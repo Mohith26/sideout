@@ -112,6 +112,7 @@ describe("phone sign-in", () => {
     const res = await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: "+15550200005" } });
     const error = expectFailure(res, 429, "rate_limited");
     expect(error.detail).toMatchObject({ retryAfterMs: expect.any(Number) });
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 
   it("rejects a tampered or foreign cookie", async () => {

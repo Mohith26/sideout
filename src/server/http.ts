@@ -32,12 +32,20 @@ const DRAW_ERROR_CODE: Record<DrawError["code"], ApiErrorCode> = {
   bracket_mismatch: "conflict",
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /** Run a handler body, turning known failures into envelopes and unknown ones into `internal`. */
 export async function handle(fn: () => Promise<Response> | Response): Promise<Response> {
   try {
     return await fn();
   } catch (err) {
-    if (err instanceof ApiFailure) return fail(err.code, err.message, err.detail, { headers: NO_STORE });
+    if (err instanceof ApiFailure) {
+      const retryAfterMs = err.code === "rate_limited" && isRecord(err.detail) && typeof err.detail.retryAfterMs === "number" ? err.detail.retryAfterMs : null;
+      const headers = retryAfterMs === null ? NO_STORE : { ...NO_STORE, "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) };
+      return fail(err.code, err.message, err.detail, { headers });
+    }
     if (err instanceof ZodError) {
       return fail(
         "bad_request",
