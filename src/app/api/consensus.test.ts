@@ -21,7 +21,7 @@ type SubmitData = {
   consensus: { state: string; live: Array<{ teamId: string | null; sets: SetScore[] }>; differences: Array<{ setNumber: number }>; disputedReason: string | null; resolvedBy: { userId: string } | null };
   match: { match: Match; sets: Array<{ setNumber: number; agreed: boolean }> };
 };
-type PreviewData = { previewHash: string; blockers: Array<{ matchId: string; reason: string; status: string }>; standings: Array<{ placement: number; teamId: string }>; rewards: unknown[] };
+type PreviewData = { previewHash: string; blockers: Array<{ matchId: string; reason: string; status: string }>; standingsProvisional: boolean; standings: Array<{ placement: number; teamId: string }>; rewards: unknown[] };
 
 const A_WINS: SetScore[] = [
   { setNumber: 1, teamAPoints: 21, teamBPoints: 18 },
@@ -205,6 +205,7 @@ describe("consensus routes (spec §9, §10)", () => {
       expect(first.status).toBe(200);
       expect(first.headers.get("cache-control")).toBe("no-store");
       expect(first.body.data.blockers).toHaveLength(5);
+      expect(first.body.data.standingsProvisional).toBe(true);
       const blocked = await close(live.id, first.body.data.previewHash);
       const err = expectFailure(blocked, 409, "conflict");
       expect(err.detail).toMatchObject({ code: "close_blocked" });
@@ -225,6 +226,7 @@ describe("consensus routes (spec §9, §10)", () => {
 
       const clean = await preview(live.id);
       expect(clean.body.data.blockers).toEqual([]);
+      expect(clean.body.data.standingsProvisional).toBe(false);
       expect(clean.body.data.standings[0]?.placement).toBe(1);
       expect(clean.body.data.previewHash).not.toBe(first.body.data.previewHash);
 

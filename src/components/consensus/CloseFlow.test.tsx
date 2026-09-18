@@ -19,6 +19,7 @@ const clean: ClosePreview = {
   ],
   rewards: [{ id: "r1", placement: 1, teamId: "ta", teamName: "Duarte / Reyes", kind: "lucra_reward", amountCents: 100000, currency: "USD", description: "Champions", }],
   blockers: [],
+  standingsProvisional: false,
   previewHash: hash,
   matchesFinal: 51,
   matchesTotal: 51,
@@ -29,6 +30,7 @@ describe("CloseFlow", () => {
     const blocked: ClosePreview = {
       ...clean,
       blockers: [{ matchId: "m11", roundLabel: "Quarterfinals", courtLabel: "Court 3", teamA: { id: "ta", name: "A" }, teamB: { id: "tb", name: "B" }, status: "disputed", consensusState: "disputed", reason: "The two scorelines differ. Resolve the dispute with an authoritative scoreline, or forfeit one side." }],
+      standingsProvisional: true,
       matchesFinal: 50,
     };
     render(<CloseFlow tournament={tournament} preview={blocked} stored={null} closedByName={null} />);

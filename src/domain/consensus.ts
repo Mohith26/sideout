@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ActorKind, BestOf, ConsensusState, MatchConsensus } from "@/db/schema";
-import { formatSets, judgeMatch, judgeSet, setTarget, type MatchVerdict, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
+import { judgeMatch, judgeSet, setTarget, type MatchVerdict, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
 import { hashScoreline } from "@/domain/scoreline-hash";
 import type { TransitionActor, TransitionVerdict } from "@/domain/transitions";
 
@@ -281,11 +281,6 @@ export function describeDifferences(differences: readonly SetDifference[]): stri
   if (differences.length === 0) return "The scorelines differ.";
   const fmt = (s: SetScore | null) => (s ? `${s.teamAPoints}–${s.teamBPoints}` : "not reported");
   return differences.map((d) => `Set ${d.setNumber} differs: ${fmt(d.a)} vs ${fmt(d.b)}`).join("; ");
-}
-
-/** "21–18, 19–21, 15–12" from team A's side, for audit detail and copy. */
-export function formatScoreline(sets: readonly SetScore[]): string {
-  return formatSets(sets);
 }
 
 // ---------------------------------------------------------------------------

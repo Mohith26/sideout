@@ -54,7 +54,7 @@ Every route validates with zod and answers `{ ok: true, data }` or `{ ok: false,
 | `POST /api/matches/:id/scores` | player | submit your team's scoreline (your points first); answers `awaiting_second`, `agreed` (the match is final) or `disputed` (both scorelines returned) |
 | `GET /api/admin/disputes[?tournamentId=]` | organizer | every disputed match with both scorelines and the sets that differ |
 | `POST /api/admin/matches/:id/resolve` | organizer | an authoritative scoreline for a disputed match, attributed to the organizer |
-| `GET /api/admin/tournaments/:id/close/preview` | organizer | final standings, projected rewards, blocking matches, and the hash the close requires |
+| `GET /api/admin/tournaments/:id/close/preview` | organizer | standings (`standingsProvisional` while any result is outstanding), projected rewards, blocking matches, and the hash the close requires |
 | `POST /api/admin/tournaments/:id/close` | organizer | `live → awaiting_settlement` with `{ previewHash }`; refused with `close_blocked` (naming every match) or `preview_stale` |
 | `POST /api/dev/login` | non-production only | sign in as a seeded user by id or phone |
 

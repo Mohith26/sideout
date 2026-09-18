@@ -15,7 +15,9 @@ import { compareAcrossPools, type StandingRow } from "@/domain/standings";
  * placement for a single pool, and the same pool-finish-then-cross-pool order
  * applies across several.
  *
- * Byes eliminate nobody. A forfeit places its loser like a played loss.
+ * Until the final is decided no elimination ranks anybody: every bracket team
+ * is `unplayed` and the standings are provisional. Byes eliminate nobody. A
+ * forfeit places its loser like a played loss.
  */
 
 export interface PlacementMatch {
@@ -106,19 +108,18 @@ export function computePlacements(input: PlacementInput): Placement[] {
       place(finalMatch.winnerTeamId, 1, "bracket", finalMatch.status === "forfeited" ? "Won the final by forfeit" : "Won the final");
       const runnerUp = loserOf(finalMatch);
       if (runnerUp) place(runnerUp, 2, "bracket", "Lost the final");
+      for (let round = rounds - 1; round >= 1; round -= 1) {
+        const losers = bracket
+          .filter((m) => m.round === round)
+          .map(loserOf)
+          .filter((id): id is string => id !== null)
+          .sort();
+        const placement = placed.size + 1;
+        for (const teamId of losers) place(teamId, placement, "bracket", `Lost in ${roundName(round, rounds)}`);
+      }
     }
-    for (let round = rounds - 1; round >= 1; round -= 1) {
-      const losers = bracket
-        .filter((m) => m.round === round)
-        .map(loserOf)
-        .filter((id): id is string => id !== null)
-        .sort();
-      const placement = placed.size + 1;
-      for (const teamId of losers) place(teamId, placement, "bracket", `Lost in ${roundName(round, rounds)}`);
-    }
-    // A bracket team with no decided match (a bye into an unplayed round) has no elimination to place by.
-    const unplaced = [...new Set(bracket.flatMap((m) => [m.teamAId, m.teamBId]))].filter((id): id is string => id !== null && !placed.has(id)).sort();
-    for (const teamId of unplaced) place(teamId, placed.size + 1, "unplayed", "Bracket match not played");
+    const undecided = [...new Set(bracket.flatMap((m) => [m.teamAId, m.teamBId]))].filter((id): id is string => id !== null && !placed.has(id)).sort();
+    for (const teamId of undecided) place(teamId, placed.size + 1, "unplayed", "Bracket not decided");
   }
 
   const fromPools = poolOrder(input.pools, placed);

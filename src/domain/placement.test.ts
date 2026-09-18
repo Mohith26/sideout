@@ -54,6 +54,34 @@ describe("computePlacements", () => {
     expect(out.every((p) => p.basis === "bracket")).toBe(true);
   });
 
+  it("places nobody by elimination until the final is decided: every bracket team is unplayed", () => {
+    // Quarterfinals done, one semifinal decided, the other on the sand, the final waiting on it.
+    const matches = [
+      bracketMatch("q1", 1, 1, "t1", "t2", "t1"),
+      bracketMatch("q2", 1, 2, "t3", "t4", "t4"),
+      bracketMatch("q3", 1, 3, "t5", "t6", "t5", "forfeited"),
+      bracketMatch("q4", 1, 4, "t7", "t8", "t8"),
+      bracketMatch("s1", 2, 5, "t1", "t4", "t1"),
+      bracketMatch("s2", 2, 6, "t5", "t8", null, "in_progress"),
+      bracketMatch("f", 3, 7, "t1", null, null, "scheduled"),
+    ];
+    const pool: PlacementPool = {
+      poolId: "p",
+      label: "Pool A",
+      rows: computeStandings(
+        ["t1", "t9"],
+        [{ teamAId: "t1", teamBId: "t9", winnerTeamId: "t1", sets: [set(21, 15)] }],
+      ),
+    };
+    const out = computePlacements({ teamIds: ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"], matches, pools: [pool] });
+    const bracketTeams = out.filter((p) => p.teamId !== "t9");
+    expect(bracketTeams.every((p) => p.basis === "unplayed" && p.detail === "Bracket not decided")).toBe(true);
+    expect(out.some((p) => p.basis === "bracket")).toBe(false);
+    // No quarterfinal or semifinal loser is ranked above the teams still playing.
+    expect(bracketTeams.map((p) => [p.placement, p.teamId])).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, `t${n}`]));
+    expect(out.find((p) => p.teamId === "t9")).toMatchObject({ placement: 9, basis: "pool", detail: "2nd in Pool A" });
+  });
+
   it("follows the bracket with pool non-advancers by pool finish, then cross-pool order", () => {
     // Two pools of three; the winners meet in a one-match bracket.
     const poolA: PlacementPool = {

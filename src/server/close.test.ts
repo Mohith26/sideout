@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { matches, rewards, teamMembers, tournaments, type Match } from "@/db/schema";
 import type { SubmittedSet } from "@/domain/consensus";
@@ -88,6 +88,21 @@ describe("close flow (spec §10.7, §11.6)", () => {
     expect(preview.blockers.map((b) => b.matchId).sort()).toEqual([11, 12, 13, 14, 15].map((p) => at(p).id).sort());
     expect(preview.blockers.find((b) => b.status === "disputed")).toMatchObject({ roundLabel: "Quarterfinals", teamA: { name: expect.any(String) }, teamB: { name: expect.any(String) } });
 
+    // The final is not decided, so the standings are provisional: no bracket team is placed by elimination yet.
+    expect(preview.standingsProvisional).toBe(true);
+    expect(preview.standings.some((r) => r.basis === "bracket")).toBe(false);
+    const bracketTeamIds = new Set(
+      db()
+        .select({ a: matches.teamAId, b: matches.teamBId })
+        .from(matches)
+        .where(and(eq(matches.tournamentId, live.id), isNotNull(matches.bracketPosition)))
+        .all()
+        .flatMap((m) => [m.a, m.b])
+        .filter((id): id is string => id !== null),
+    );
+    expect(preview.standings.filter((r) => bracketTeamIds.has(r.teamId)).every((r) => r.basis === "unplayed" && r.detail === "Bracket not decided")).toBe(true);
+    expect(preview.standings.filter((r) => r.basis === "unplayed")).toHaveLength(bracketTeamIds.size);
+
     try {
       closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
       throw new Error("expected close_blocked");
@@ -125,6 +140,7 @@ describe("close flow (spec §10.7, §11.6)", () => {
     const clean = previewClose(live.id);
     expect(clean.blockers).toEqual([]);
     expect(clean.matchesFinal).toBe(clean.matchesTotal);
+    expect(clean.standingsProvisional).toBe(false);
     expect(clean.rewards).toEqual([]);
 
     // Placements follow the bracket: the final's winner first, its loser second, the semifinal losers third.

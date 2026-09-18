@@ -74,6 +74,12 @@ export interface FrozenPreview {
 export interface ClosePreview extends FrozenPreview {
   tournamentStatus: Tournament["status"];
   blockers: CloseBlocker[];
+  /**
+   * True while a result is still outstanding: `standings` then rank only what
+   * is decided (every bracket team is `unplayed` until the final is) and are
+   * not the final standings.
+   */
+  standingsProvisional: boolean;
   /** sha256 hex over `canonicalPreview(frozen)`. */
   previewHash: string;
   /** Matches counted / matches in the event. */
@@ -243,12 +249,14 @@ export function previewClose(tournamentId: string): ClosePreview {
     }));
 
   const frozen: FrozenPreview = { tournamentId, standings, rewards: projected };
+  const matchesFinal = matchRows.filter(({ match }) => TERMINAL_MATCH_STATUSES.has(match.status)).length;
   return {
     ...frozen,
     tournamentStatus: t.status,
     blockers,
+    standingsProvisional: matchesFinal < matchRows.length,
     previewHash: hashPreview(frozen),
-    matchesFinal: matchRows.filter(({ match }) => TERMINAL_MATCH_STATUSES.has(match.status)).length,
+    matchesFinal,
     matchesTotal: matchRows.length,
   };
 }
