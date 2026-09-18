@@ -6,6 +6,7 @@ import {
   getTournamentDetail,
   getTournamentSummaryById,
   getTournamentSummaryBySlug,
+  isPublished,
   listTournamentSummaries,
   publicSummary,
   type PublicTournamentDetail,
@@ -136,7 +137,7 @@ export type UpdateTournamentInput = z.infer<typeof updateTournamentSchema>;
 /** A draft is unpublished: slug lookups, which serve the public and player routes, do not see it. */
 export function requireTournamentBySlug(slug: string): TournamentSummary {
   const summary = getTournamentSummaryBySlug(slug);
-  if (!summary || summary.tournament.status === "draft") throw new ApiFailure("not_found", "No tournament with that slug.");
+  if (!summary || !isPublished(summary.tournament.status)) throw new ApiFailure("not_found", "No tournament with that slug.");
   return summary;
 }
 
@@ -147,7 +148,7 @@ export function requireTournamentById(id: string): TournamentSummary {
 }
 
 export function listPublicTournaments(statuses?: readonly TournamentStatus[]): PublicTournamentSummary[] {
-  const wanted = (statuses ?? TOURNAMENT_STATUSES).filter((s) => s !== "draft");
+  const wanted = (statuses ?? TOURNAMENT_STATUSES).filter(isPublished);
   if (wanted.length === 0) return [];
   return listTournamentSummaries(wanted).map(publicSummary);
 }

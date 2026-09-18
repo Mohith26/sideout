@@ -34,6 +34,12 @@ import { getPoolStandings, type PoolStandings } from "@/db/queries/standings";
  * a count of non-withdrawn teams, and so on. Nothing is stored pre-aggregated.
  */
 
+/** A draft is unpublished: nothing public lists it, links to it, or counts its goal. */
+export const UNPUBLISHED_STATUS: TournamentStatus = "draft";
+export function isPublished(status: TournamentStatus): boolean {
+  return status !== UNPUBLISHED_STATUS;
+}
+
 export interface TournamentSummary {
   tournament: Tournament;
   charity: Charity;

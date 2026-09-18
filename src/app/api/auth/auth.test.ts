@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as logout } from "@/app/api/auth/logout/route";
 import { POST as requestCode } from "@/app/api/auth/request-code/route";
 import { POST as verify } from "@/app/api/auth/verify/route";
@@ -20,7 +20,16 @@ describe("phone sign-in", () => {
   beforeEach(() => {
     app = createTestApp();
   });
-  afterEach(() => app.close());
+  afterEach(() => {
+    vi.useRealTimers();
+    app.close();
+  });
+
+  /** The limiters refill on the wall clock; a budget drained to its last token must not refill mid-test. */
+  const freezeClock = () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now());
+  };
 
   async function issue(phone: string): Promise<string> {
     const res = await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone } });
@@ -118,6 +127,7 @@ describe("phone sign-in", () => {
   });
 
   it("caps issuance process-wide, so a spoofed x-forwarded-for and a fresh phone per request buy nothing", async () => {
+    freezeClock();
     // No proxy is declared in the test environment, so the header is not evidence of an address
     // and never opens a per-address bucket; the global bucket is what stops the flood.
     const spoofed = (i: number) => ({ "x-forwarded-for": `198.51.100.${i % 250}, 10.0.0.1` });
@@ -135,6 +145,7 @@ describe("phone sign-in", () => {
   });
 
   it("charges the process-wide budget only for a code it actually issues", async () => {
+    freezeClock();
     // A phone the narrower limit already refuses must not spend the shared budget on its retries.
     const throttled = "+15550400001";
     for (let i = 0; i < 3; i += 1) REQUEST_CODE_LIMITS.perPhone.take(throttled);

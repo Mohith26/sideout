@@ -1,7 +1,7 @@
 import "server-only";
 import { notFound } from "next/navigation";
 import { DatabaseNotReadyError } from "@/db/connection";
-import { getTournamentSummaryBySlug, type TournamentSummary } from "@/db/queries/tournaments";
+import { getTournamentSummaryBySlug, isPublished, type TournamentSummary } from "@/db/queries/tournaments";
 import type { User } from "@/db/schema";
 import { viewer } from "@/server/auth/viewer";
 
@@ -11,7 +11,7 @@ import { viewer } from "@/server/auth/viewer";
  */
 export function visibleTo(summary: TournamentSummary | null, user: User | null): TournamentSummary | null {
   if (!summary) return null;
-  if (summary.tournament.status === "draft" && user?.role !== "organizer") return null;
+  if (!isPublished(summary.tournament.status) && user?.role !== "organizer") return null;
   return summary;
 }
 
@@ -19,7 +19,7 @@ export function visibleTo(summary: TournamentSummary | null, user: User | null):
 export async function findVisibleTournament(slug: string): Promise<TournamentSummary | null> {
   const summary = getTournamentSummaryBySlug(slug);
   if (!summary) return null;
-  return visibleTo(summary, summary.tournament.status === "draft" ? await viewer() : null);
+  return visibleTo(summary, isPublished(summary.tournament.status) ? null : await viewer());
 }
 
 /** Resolve the tournament for a tab page; the layout already rendered the not-ready state. */
