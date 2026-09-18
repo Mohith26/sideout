@@ -28,6 +28,8 @@ export function RegisterButton({ slug, teamId, label }: { slug: string; teamId: 
       <Button
         variant="primary"
         size="lg"
+        // The label carries the team name, which a phone width cannot always hold on one line: wrap rather than widen the page.
+        wrap
         className="w-full"
         disabled={busy}
         aria-busy={busy}

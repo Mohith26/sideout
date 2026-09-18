@@ -90,7 +90,7 @@ test.describe("player flow", () => {
       [21, 17],
       [21, 19],
     ]);
-    await expect(captain.getByTestId("match-verdict")).toHaveText("Legal result: Your team win 2–0 in sets.");
+    await expect(captain.getByTestId("match-verdict")).toHaveText("Valid result: Your team win 2–0 in sets.");
     await sheet.getByRole("button", { name: "Submit scoreline" }).click();
     await expect(sheet.getByRole("heading", { name: `Waiting on ${opponent.name}` })).toBeVisible();
     await expect(sheet).toContainText("both teams have to agree before a result counts");

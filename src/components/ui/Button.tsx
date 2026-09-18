@@ -21,8 +21,14 @@ const SIZE: Record<ButtonSize, string> = {
   lg: "h-12 px-5 text-subheading",
 };
 
+/** A wrapping button grows in height instead of widening the page (a label that carries a team name). */
+const SIZE_WRAP: Record<ButtonSize, string> = {
+  md: "min-h-11 px-4 py-2 text-body",
+  lg: "min-h-12 px-5 py-2.5 text-subheading",
+};
+
 const BASE =
-  "inline-flex items-center justify-center gap-2 rounded-sm font-medium whitespace-nowrap select-none " +
+  "inline-flex items-center justify-center gap-2 rounded-sm font-medium select-none " +
   "transition-[background-color,border-color,color,opacity] duration-(--d-micro) ease-(--ease-out-expo) " +
   "disabled:opacity-50 disabled:pointer-events-none target";
 
@@ -32,6 +38,8 @@ interface CommonProps {
   iconStart?: ReactNode;
   iconEnd?: ReactNode;
   className?: string;
+  /** Let a long label wrap onto more lines rather than overflow; the button grows in height. */
+  wrap?: boolean;
   children: ReactNode;
 }
 
@@ -41,8 +49,8 @@ export type ButtonProps = CommonProps &
 export type LinkButtonProps = CommonProps & { href: string; prefetch?: boolean; "aria-label"?: string };
 
 export function Button(props: ButtonProps | LinkButtonProps) {
-  const { variant = "secondary", size = "md", iconStart, iconEnd, className, children } = props;
-  const classes = cx(BASE, VARIANT[variant], SIZE[size], className);
+  const { variant = "secondary", size = "md", iconStart, iconEnd, className, wrap = false, children } = props;
+  const classes = cx(BASE, wrap ? "text-center whitespace-normal" : "whitespace-nowrap", VARIANT[variant], wrap ? SIZE_WRAP[size] : SIZE[size], className);
   const content = (
     <>
       {iconStart}
@@ -58,7 +66,7 @@ export function Button(props: ButtonProps | LinkButtonProps) {
       </Link>
     );
   }
-  const { variant: _v, size: _s, iconStart: _is, iconEnd: _ie, className: _c, children: _ch, href: _h, ...rest } = props;
+  const { variant: _v, size: _s, iconStart: _is, iconEnd: _ie, className: _c, wrap: _w, children: _ch, href: _h, ...rest } = props;
   return (
     <button type="button" className={classes} {...rest}>
       {content}

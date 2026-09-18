@@ -86,7 +86,7 @@ describe("ScoreSubmitSheet", () => {
     expect(screen.getByTestId("match-verdict")).toHaveTextContent("Nobody has won 2 set(s) yet");
     expect(submitButton).toBeDisabled();
     enterSet(2, 15, 9);
-    expect(screen.getByTestId("match-verdict")).toHaveTextContent("Legal result: Your team win 2–1 in sets.");
+    expect(screen.getByTestId("match-verdict")).toHaveTextContent("Valid result: Your team win 2–1 in sets.");
     expect(submitButton).toBeEnabled();
     expect(submit).not.toHaveBeenCalled();
   });

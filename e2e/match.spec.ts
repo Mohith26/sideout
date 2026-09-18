@@ -105,7 +105,7 @@ test.describe("Match page", () => {
     await sheet.getByRole("textbox", { name: `${m.teamA?.name}, set 1 points` }).fill("18");
     await sheet.getByRole("textbox", { name: "Your team, set 2 points" }).fill("21");
     await sheet.getByRole("textbox", { name: `${m.teamA?.name}, set 2 points` }).fill("16");
-    await expect(page.getByTestId("match-verdict")).toHaveText("Legal result: Your team win 2–0 in sets.");
+    await expect(page.getByTestId("match-verdict")).toHaveText("Valid result: Your team win 2–0 in sets.");
     await expect(submit).toBeEnabled();
     // Read-only smoke: close without sending.
     await sheet.getByRole("button", { name: "Cancel" }).click();

@@ -56,7 +56,7 @@ test.describe("offline score submission", () => {
     await sheet.getByRole("textbox", { name: `${match.teamB.name}, set 1 points` }).fill("14");
     await sheet.getByRole("textbox", { name: "Your team, set 2 points" }).fill("21");
     await sheet.getByRole("textbox", { name: `${match.teamB.name}, set 2 points` }).fill("18");
-    await expect(page.getByTestId("match-verdict")).toHaveText("Legal result: Your team win 2–0 in sets.");
+    await expect(page.getByTestId("match-verdict")).toHaveText("Valid result: Your team win 2–0 in sets.");
     await sheet.getByRole("button", { name: "Submit scoreline" }).click();
     await expect(sheet.getByRole("heading", { name: "Saved on this phone" })).toBeVisible();
     await expect(sheet.getByTestId("queued-notice")).toContainText("will be sent, with the same checks, as soon as you are back online");
