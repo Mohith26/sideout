@@ -7,7 +7,7 @@ import { ImpactMeter } from "@/components/tournament/ImpactMeter";
 import { MatchCard } from "@/components/tournament/MatchCard";
 import { SponsorRow } from "@/components/tournament/SponsorRow";
 import { TeamName } from "@/components/tournament/TeamName";
-import { DIVISION_LABEL, FORMAT_LABEL } from "@/components/tournament/TournamentCard";
+import { DIVISION_LABEL, FORMAT_LABEL } from "@/components/tournament/labels";
 import { getTournamentOverview, listLiveMatches, type RoundView } from "@/db/queries/tournaments";
 import { MATCH_STATUSES, type MatchStatus } from "@/db/schema";
 import { formatCents, formatTime } from "@/lib/format";

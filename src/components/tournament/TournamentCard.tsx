@@ -14,8 +14,6 @@ export interface TournamentCardProps {
   className?: string;
 }
 
-export { DIVISION_LABEL, FORMAT_LABEL };
-
 /** One event. Featured on Home for the live or next event; compact in lists. */
 export function TournamentCard({ summary, variant = "compact", nowMs, className }: TournamentCardProps) {
   const { tournament: t, charity, activeTeams, raisedCents, donorCount, liveMatchCount } = summary;

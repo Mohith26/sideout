@@ -1,5 +1,5 @@
 import type { Sponsor } from "@/db/schema";
-import { SPONSOR_TIER_LABEL as TIER_LABEL } from "@/components/tournament/labels";
+import { SPONSOR_TIER_LABEL } from "@/components/tournament/labels";
 import { formatCents } from "@/lib/format";
 import { cx } from "@/lib/cx";
 
@@ -19,7 +19,7 @@ export function SponsorRow({ sponsors, showContribution = false, className }: Sp
       {sponsors.map((s) => (
         <li key={s.id} className="surface-raised flex min-h-11 items-center gap-3 rounded-sm px-3 py-2">
           <span className="font-medium text-text-primary">{s.name}</span>
-          <span className="type-label text-text-tertiary">{TIER_LABEL[s.tier]}</span>
+          <span className="type-label text-text-tertiary">{SPONSOR_TIER_LABEL[s.tier]}</span>
           {showContribution && s.prizeContributionCents > 0 ? (
             <span className="tabular type-label text-text-secondary">{formatCents(s.prizeContributionCents, s.currency)}</span>
           ) : null}
@@ -29,4 +29,3 @@ export function SponsorRow({ sponsors, showContribution = false, className }: Sp
   );
 }
 
-export { TIER_LABEL as SPONSOR_TIER_LABEL };

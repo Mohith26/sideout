@@ -1,9 +1,10 @@
 import { Container } from "@/components/shell/Container";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Stat } from "@/components/ui/Stat";
 import { Icons } from "@/components/ui/icons";
 import { ImpactMeter } from "@/components/tournament/ImpactMeter";
-import { SPONSOR_TIER_LABEL } from "@/components/tournament/SponsorRow";
+import { SPONSOR_TIER_LABEL } from "@/components/tournament/labels";
 import { getTournamentImpact, type DonorWallEntry, type TournamentImpact } from "@/db/queries/impact";
 import { SPONSOR_TIER_ORDER } from "@/db/queries/tournaments";
 import type { RewardStatus } from "@/db/schema";
@@ -132,15 +133,5 @@ export default async function ImpactTab({ params }: PageProps<"/t/[slug]">) {
         </section>
       ) : null}
     </Container>
-  );
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="surface-raised rounded-md p-4">
-      <dt className="type-label text-text-tertiary">{label}</dt>
-      <dd className="tabular mt-1 font-medium text-text-primary">{value}</dd>
-      {hint ? <dd className="tabular type-label mt-0.5 text-text-tertiary">{hint}</dd> : null}
-    </div>
   );
 }

@@ -55,9 +55,9 @@ function Sets({ view, side }: { view: MatchView; side: "a" | "b" }) {
 
 function CourtColumn({ group, bracketRounds, timeZone, live }: { group: CourtBoardGroup; bracketRounds: number; timeZone: string; live: boolean }) {
   return (
-    <section aria-labelledby={`court-${group.courtLabel}`} className="surface-raised flex min-w-0 flex-col rounded-md">
+    <section aria-label={group.courtLabel} className="surface-raised flex min-w-0 flex-col rounded-md">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-3 py-2.5">
-        <h2 id={`court-${group.courtLabel}`} className="type-subheading">
+        <h2 className="type-subheading">
           {group.courtLabel}
         </h2>
         <StatusCounts byStatus={group.byStatus} />

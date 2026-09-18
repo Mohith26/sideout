@@ -52,11 +52,8 @@ export interface BracketProps {
   nodes: readonly BracketNode[];
   /** The venue zone for scheduled times. */
   timeZone: string;
-  /** Match to pin; defaults to `pickCurrentMatch`. */
-  currentId?: string | null;
   /** Accessible name for the canvas. */
   label?: string;
-  className?: string;
 }
 
 interface Transform {
@@ -142,9 +139,9 @@ const STROKE_FOR_STATUS: Partial<Record<MatchStatus, string>> = {
   disputed: "stroke-fault",
 };
 
-export function Bracket({ nodes, timeZone, currentId, label = "Bracket", className }: BracketProps) {
+export function Bracket({ nodes, timeZone, label = "Bracket" }: BracketProps) {
   const layout = useMemo(() => layoutBracket(nodes), [nodes]);
-  const current = useMemo(() => (currentId === undefined ? pickCurrentMatch(nodes) : (nodes.find((n) => n.id === currentId) ?? null)), [nodes, currentId]);
+  const current = useMemo(() => pickCurrentMatch(nodes), [nodes]);
   const headingId = useId();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -358,7 +355,7 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
   const currentPlaced = current ? layout.byId.get(current.id) : undefined;
 
   return (
-    <section aria-labelledby={headingId} className={cx("surface-raised overflow-hidden rounded-md", className)}>
+    <section aria-labelledby={headingId} className="surface-raised overflow-hidden rounded-md">
       <h3 id={headingId} className="sr-only">
         {label}
       </h3>

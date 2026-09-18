@@ -6,7 +6,7 @@ import { cx } from "@/lib/cx";
  * Every pool of an event as a sheet, from the detail read model. Shared by the
  * public bracket tab and the organizer builder so both show the same thing.
  */
-export function poolMatchRefs(pool: Pick<PoolDetail, "matches">, withLinks = true): PoolMatchRef[] {
+export function poolMatchRefs(pool: Pick<PoolDetail, "matches">): PoolMatchRef[] {
   return pool.matches.map((m) => ({
     id: m.match.id,
     teamAId: m.match.teamAId,
@@ -16,7 +16,7 @@ export function poolMatchRefs(pool: Pick<PoolDetail, "matches">, withLinks = tru
     sets: m.match.status === "disputed" ? [] : m.sets.map((s) => ({ a: s.teamAPoints, b: s.teamBPoints })),
     round: m.match.round,
     scheduledAt: m.match.scheduledAt,
-    href: withLinks ? `/m/${m.match.id}` : null,
+    href: `/m/${m.match.id}`,
   }));
 }
 
