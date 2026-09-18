@@ -92,7 +92,11 @@ export function transitionMatch(from: MatchStatus, to: MatchStatus, actor: Trans
   return judge(MATCH_TRANSITIONS, "match", from, to, actor);
 }
 
-/** Every status `actor` may move a tournament to from `from`, in machine order. The console renders exactly these. */
+/**
+ * Every status `actor` may move a tournament to from `from`, in machine order. The
+ * console renders these filtered to what `PATCH` takes (`isPatchableTarget` in
+ * `@/server/tournaments`); closing is a link to the close flow, settling is phase 4.
+ */
 export function allowedTournamentTargets(from: TournamentStatus, actor: Pick<TransitionActor, "kind">): TournamentStatus[] {
   return TOURNAMENT_TRANSITIONS.filter((e) => e.from === from && e.actors.includes(actor.kind)).map((e) => e.to);
 }

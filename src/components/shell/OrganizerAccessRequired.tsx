@@ -3,7 +3,12 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { User } from "@/db/schema";
 
-/** What anyone who is not an organizer sees in place of a console page: a plain explanation, no console data. */
+/**
+ * The dispute queue's and close flow's own answer to a viewer who is not an
+ * organizer: a plain explanation, no console data. Under `/organizer` the
+ * layout 404s such a viewer first (`src/app/organizer/_lib.ts`), so this is
+ * the page's own gate ahead of its data reads, not what a player sees.
+ */
 export function OrganizerAccessRequired({ user }: { user: User | null }) {
   return (
     <Container className="py-8">
