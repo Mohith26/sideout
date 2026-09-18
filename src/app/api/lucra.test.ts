@@ -8,11 +8,12 @@ import { POST as verifyRoute } from "@/app/api/admin/tournaments/[id]/lucra/veri
 import { POST as linkRoute } from "@/app/api/me/lucra/link/route";
 import { GET as mockStateRoute } from "@/app/api/rest/%5Fmock/state/route.mock";
 import { POST as webhookRoute } from "@/app/api/webhooks/lucra/route";
-import { lucraLinks, lucraScoreSubmissions, matchConsensus, matches, tournaments } from "@/db/schema";
+import { lucraLinks, lucraScoreSubmissions, matchConsensus, matches, tournaments, webhookEvents } from "@/db/schema";
 import type { ApiEnvelope } from "@/lib/api";
 import { LUCRA_SIGNATURE_HEADER, mockWebhookSecret, signWebhookBody } from "@/lucra";
 import { SLUGS } from "@/seed/build";
 import { getLucra } from "@/server/lucra";
+import { WEBHOOK_BODY_LIMIT_BYTES } from "@/server/lucra-webhooks";
 import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
 
 type Envelope<T> = ApiEnvelope<T>;
@@ -64,7 +65,7 @@ describe("Lucra routes (spec §9)", () => {
   });
 
   describe("POST /api/me/lucra/link", () => {
-    it("mints once, is idempotent, and records the Lucra id the SDK reports", async () => {
+    it("mints once, is idempotent, and takes no Lucra user id from the caller", async () => {
       expectFailure(await app.call(linkRoute, "/api/me/lucra/link", { method: "POST", body: {} }), 401, "unauthorized");
       const organizer = app.organizer();
       const cookie = app.cookieFor(organizer.id); // organizers hold no link in the seed
@@ -77,13 +78,14 @@ describe("Lucra routes (spec §9)", () => {
       expect(second.status).toBe(200);
       if (!second.body.ok) throw new Error("expected ok");
       expect(second.body.data).toMatchObject({ minted: false, externalId: first.body.data.externalId });
-      const linked = await app.call<Envelope<{ lucraUserId: string | null }>>(linkRoute, "/api/me/lucra/link", { method: "POST", body: { lucraUserId: "lucra-sdk-user-1" }, cookie });
-      if (!linked.body.ok) throw new Error("expected ok");
-      expect(linked.body.data.lucraUserId).toBe("lucra-sdk-user-1");
-      expect(expectFailure(await app.call(linkRoute, "/api/me/lucra/link", { method: "POST", body: { lucraUserId: "lucra-sdk-user-2" }, cookie }), 409, "conflict").detail).toEqual({ code: "lucra_user_id_conflict" });
-      expectFailure(await app.call(linkRoute, "/api/me/lucra/link", { method: "POST", body: { lucraUserId: "" }, cookie }), 400, "bad_request");
+      // A caller cannot name the Lucra account a payout goes to: the field is refused, and the row keeps no id until Lucra reports one.
+      const victim = app.conn.db.select().from(lucraLinks).all().find((l) => l.lucraUserId !== null)!;
+      expectFailure(await app.call(linkRoute, "/api/me/lucra/link", { method: "POST", body: { lucraUserId: victim.lucraUserId }, cookie }), 400, "bad_request");
       expectFailure(await app.call(linkRoute, "/api/me/lucra/link", { method: "POST", body: { phone: "+1" }, cookie }), 400, "bad_request");
-      expect(app.conn.db.select().from(lucraLinks).where(eq(lucraLinks.userId, organizer.id)).all()).toHaveLength(1);
+      const rows = app.conn.db.select().from(lucraLinks).where(eq(lucraLinks.userId, organizer.id)).all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ lucraUserId: null, externalId: first.body.data.externalId });
+      expect(app.conn.db.select().from(lucraLinks).where(eq(lucraLinks.id, victim.id)).get()?.lucraUserId).toBe(victim.lucraUserId);
     });
   });
 
@@ -104,6 +106,21 @@ describe("Lucra routes (spec §9)", () => {
       expectFailure(await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body }), 401, "unauthorized");
       const garbage = "{{{";
       expectFailure(await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: garbage, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(garbage, mockWebhookSecret()) } }), 400, "bad_request");
+      expect(app.conn.db.select().from(webhookEvents).all()).toHaveLength(1);
+    });
+
+    it("caps the body before reading it: an oversized delivery is 413 whether or not it declares its length, signed or not", async () => {
+      const oversized = JSON.stringify({ event: "UserKYCVerified", userId: "lucra-nobody", padding: "x".repeat(WEBHOOK_BODY_LIMIT_BYTES) });
+      const declared = await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: oversized, headers: { "content-length": String(oversized.length), [LUCRA_SIGNATURE_HEADER]: signWebhookBody(oversized, mockWebhookSecret()) } });
+      expect(expectFailure(declared, 413, "payload_too_large").detail).toEqual({ limitBytes: WEBHOOK_BODY_LIMIT_BYTES });
+      const streamed = await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: oversized });
+      expectFailure(streamed, 413, "payload_too_large");
+      expect(JSON.stringify(streamed.body)).not.toContain("xxxx");
+      expect(app.conn.db.select().from(webhookEvents).all()).toEqual([]);
+      // Just under the cap goes through to verification as usual.
+      const fitting = JSON.stringify({ event: "UserKYCVerified", userId: "lucra-nobody", padding: "x".repeat(WEBHOOK_BODY_LIMIT_BYTES - 200) });
+      const accepted = await app.call<Envelope<{ processingState: string }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: fitting, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(fitting, mockWebhookSecret()) } });
+      expect(accepted.status).toBe(200);
     });
   });
 

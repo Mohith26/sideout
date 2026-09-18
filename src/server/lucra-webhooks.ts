@@ -1,35 +1,42 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { lucraLinks, rewards, tournaments, users, webhookEvents, type WebhookEvent, type WebhookProcessingState } from "@/db/schema";
-import { transitionTournament, type TransitionActor } from "@/domain/transitions";
+import { lucraLinks, tournaments, users, webhookEvents, type WebhookEvent, type WebhookProcessingState } from "@/db/schema";
+import type { TransitionActor } from "@/domain/transitions";
 import { env } from "@/env";
 import { systemClock, type Clock } from "@/lib/clock";
 import { errorMessage, log } from "@/lib/log";
 import { uuidv7 } from "@/lib/uuid";
 import { knownWebhookEventSchema, LUCRA_WEBHOOK_EVENTS, mockWebhookSecret, verifyWebhookSignature, webhookEnvelopeSchema, type KnownWebhookEvent } from "@/lucra";
 import { writeAudit, type Tx } from "@/server/audit";
-import { getLucra, LUCRA_AUDIT, readLucraAlert, type LucraAlert } from "@/server/lucra";
+import { getLucra, LUCRA_AUDIT, type LucraAlert } from "@/server/lucra";
 
 /**
  * `POST /api/webhooks/lucra` (spec §7.6), as a service the route and the mock
  * both call with the raw body:
  *
- *   1. the signature is verified over the exact bytes received;
+ *   1. the signature is verified over the exact bytes received (the route
+ *      caps the body at `WEBHOOK_BODY_LIMIT_BYTES` before reading it); an
+ *      unverified delivery is logged and refused with 401 — nothing an
+ *      anonymous caller sends reaches durable storage;
  *   2. the body is parsed only after that;
  *   3. the event is deduplicated on `external_event_id` — a repeat answers
- *      200 without reprocessing;
+ *      200 without reprocessing; a row whose processing failed, or never ran
+ *      because the process died after persisting it, is processed on redelivery;
  *   4. the row is persisted to `webhook_events` before anything acts on it;
  *   5. processing runs in one transaction with its audit rows, and a
  *      well-formed event Sideout chooses to ignore still gets a 2xx.
+ *
+ * Nothing here settles a tournament or touches `rewards`: the organizer's
+ * close is the only settlement trigger (§7.4). `TournamentCompleted` confirms
+ * a settled tournament and raises an alert on any other.
  *
  * OPEN: (§17.3, "Webhook event id") no published Lucra payload carries an
  * event id, and the docs' own idempotency example keys on matchup id plus
  * event type. `deriveEventId` builds that key for the known types (plus the
  * joining user for `TournamentUserJoined`, the user for the user events) and a
- * sha256 of the body for anything else. An invalid signature is persisted for
- * evidence under an `unverified:` key so it can never shadow the real delivery.
+ * sha256 of the body for anything else.
  */
 
 export const WEBHOOK_ACTOR: TransitionActor = { kind: "lucra_webhook", userId: null };
@@ -43,6 +50,9 @@ export const WEBHOOK_AUDIT = {
   kycVerified: "lucra.webhook.kyc_verified",
   ignored: "lucra.webhook.ignored",
 } as const;
+
+/** The most a delivery may weigh; Lucra's payloads are a few kilobytes. */
+export const WEBHOOK_BODY_LIMIT_BYTES = 256 * 1024;
 
 export interface WebhookReceipt {
   /** The HTTP status the route answers with. */
@@ -68,8 +78,6 @@ export function bodyFingerprint(rawBody: string): string {
 
 /** A stable dedupe key per delivery, mirroring the documented idempotency guidance. */
 export function deriveEventId(payload: { event: string } & Record<string, unknown>, rawBody: string): string {
-  const explicit = payload.eventId ?? payload.event_id ?? payload.deliveryId;
-  if (typeof explicit === "string" && explicit.length > 0) return `event:${explicit}`;
   const matchup = payload.matchup;
   const matchupId = typeof matchup === "object" && matchup !== null && typeof (matchup as { id?: unknown }).id === "string" ? (matchup as { id: string }).id : null;
   switch (payload.event) {
@@ -116,23 +124,9 @@ export async function receiveLucraWebhook(input: WebhookInput, clock: Clock = sy
   const envelope = webhookEnvelopeSchema.safeParse(parsed);
 
   if (!verdict.valid) {
-    // Evidence, under a key that can never collide with the genuine delivery; the same forged body twice is one row.
     const eventType = envelope.success ? envelope.data.event : "malformed";
-    const evidenceKey = `unverified:${bodyFingerprint(input.rawBody)}`;
-    if (!db.select({ id: webhookEvents.id }).from(webhookEvents).where(eq(webhookEvents.externalEventId, evidenceKey)).get()) {
-      persist(db, {
-        externalEventId: evidenceKey,
-        eventType,
-        signatureValid: false,
-        rawBody: input.rawBody,
-        parsedJson: envelope.success ? JSON.stringify(envelope.data) : null,
-        processingState: "ignored",
-        receivedAt: now,
-        processedAt: now,
-      });
-    }
-    log.warn("lucra webhook: signature rejected", { reason: verdict.reason, eventType });
-    return { status: 401, eventId: null, eventType, signatureValid: false, duplicate: false, processingState: "ignored", message: `Signature rejected (${verdict.reason}).` };
+    log.warn("lucra webhook: signature rejected", { reason: verdict.reason, eventType, bytes: input.rawBody.length, bodySha256: bodyFingerprint(input.rawBody) });
+    return { status: 401, eventId: null, eventType, signatureValid: false, duplicate: false, processingState: null, message: `Signature rejected (${verdict.reason}).` };
   }
 
   if (!envelope.success) {
@@ -141,9 +135,9 @@ export async function receiveLucraWebhook(input: WebhookInput, clock: Clock = sy
   const payload = envelope.data;
   const eventId = deriveEventId(payload, input.rawBody);
 
-  // Dedupe: a repeat answers 200 without reprocessing; a delivery whose earlier processing failed is tried again.
+  // Dedupe: a repeat answers 200 without reprocessing; a row left `failed`, or `received` by a process that died, is tried again.
   const existing = db.select().from(webhookEvents).where(eq(webhookEvents.externalEventId, eventId)).get();
-  if (existing && existing.processingState !== "failed") {
+  if (existing && existing.processingState !== "failed" && existing.processingState !== "received") {
     log.info("lucra webhook: duplicate delivery ignored", { eventId, eventType: payload.event, state: existing.processingState });
     return { status: 200, eventId, eventType: payload.event, signatureValid: true, duplicate: true, processingState: existing.processingState, message: "Already received." };
   }
@@ -240,9 +234,10 @@ function tournamentForMatchup(tx: Tx, matchup: { id: string; metadata?: Record<s
 
 /**
  * Lucra says the tournament is closed. If the organizer's close already
- * settled it this is a confirmation; if Lucra was closed from its console
- * first, the tournament moves `awaiting_settlement → settled` here (actor
- * `lucra_webhook`) and the projected rewards are awarded.
+ * settled it this is a confirmation. Anything else — closed from Lucra's
+ * console while Sideout has it live or awaiting settlement — is recorded and
+ * raised as a blocking alert; the status, the rewards and the frozen preview
+ * are the organizer's close to change, never a webhook's.
  */
 function onTournamentCompleted(tx: Tx, event: Extract<KnownWebhookEvent, { event: "TournamentCompleted" }>, eventId: string, now: number): HandlerOutcome {
   const t = tournamentForMatchup(tx, event.matchup);
@@ -255,20 +250,7 @@ function onTournamentCompleted(tx: Tx, event: Extract<KnownWebhookEvent, { event
     writeAudit(tx, { actor: WEBHOOK_ACTOR, action: WEBHOOK_AUDIT.tournamentCompleted, subjectType: "tournament", subjectId: t.id, detail: { eventId, matchupId: event.matchup.id, mode: event.mode ?? null, alreadySettled: true, winners }, at: now });
     return { state: "processed", message: "TournamentCompleted confirmed an already settled tournament." };
   }
-  if (t.status === "awaiting_settlement" && transitionTournament(t.status, "settled", WEBHOOK_ACTOR).ok) {
-    tx.update(tournaments).set({ status: "settled", lucraMatchupId: event.matchup.id }).where(eq(tournaments.id, t.id)).run();
-    tx.update(rewards)
-      .set({ status: "awarded", lucraRewardRef: event.matchup.id })
-      .where(and(eq(rewards.tournamentId, t.id), eq(rewards.status, "projected")))
-      .run();
-    writeAudit(tx, { actor: WEBHOOK_ACTOR, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "settled", eventId, matchupId: event.matchup.id, mode: event.mode ?? null }, at: now });
-    writeAudit(tx, { actor: WEBHOOK_ACTOR, action: WEBHOOK_AUDIT.tournamentCompleted, subjectType: "tournament", subjectId: t.id, detail: { eventId, matchupId: event.matchup.id, mode: event.mode ?? null, winners }, at: now });
-    const alert = readLucraAlert(t);
-    if (alert?.blocking) tx.update(tournaments).set({ lucraAlertJson: null }).where(eq(tournaments.id, t.id)).run();
-    return { state: "processed", message: "Tournament settled from Lucra's TournamentCompleted." };
-  }
-  // Closed in Lucra while Sideout still thinks it is live: record it; the organizer's close will find the matchup CLOSED.
-  const alert: LucraAlert = { code: "settlement_refused", blocking: true, at: now, message: `Lucra reports this tournament as completed (mode ${event.mode ?? "unknown"}) while Sideout has it ${t.status}. Reconcile in the console before closing.`, detail: { eventId, matchupId: event.matchup.id } };
+  const alert: LucraAlert = { code: "settlement_refused", blocking: true, at: now, message: `Lucra reports this tournament as completed (mode ${event.mode ?? "unknown"}) while Sideout has it ${t.status}. Reconcile in the console; only the organizer's close settles it here.`, detail: { eventId, matchupId: event.matchup.id, winners } };
   tx.update(tournaments).set({ lucraAlertJson: JSON.stringify(alert) }).where(eq(tournaments.id, t.id)).run();
   writeAudit(tx, { actor: WEBHOOK_ACTOR, action: LUCRA_AUDIT.alertRaised, subjectType: "tournament", subjectId: t.id, detail: { code: alert.code, message: alert.message, eventId }, at: now });
   writeAudit(tx, { actor: WEBHOOK_ACTOR, action: WEBHOOK_AUDIT.tournamentCompleted, subjectType: "tournament", subjectId: t.id, detail: { eventId, matchupId: event.matchup.id, mode: event.mode ?? null, tournamentStatus: t.status, winners }, at: now });

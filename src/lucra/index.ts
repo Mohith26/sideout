@@ -20,7 +20,7 @@ export {
   type WriteOutcome,
 } from "@/lucra/adapter";
 export { LUCRA_API_KEY_HEADER, LUCRA_API_VERSION, LUCRA_ERROR_BODIES, LUCRA_PATHS, LUCRA_WEBHOOK_EVENTS, REDACTED } from "@/lucra/endpoints";
-export { isLucraError, LucraError, type LucraErrorCode } from "@/lucra/errors";
+export { isLucraError, LUCRA_ERROR_MESSAGE, LucraError, type LucraErrorCode } from "@/lucra/errors";
 export { MATCHER_INTERPRETATIONS, type MatcherInterpretation } from "@/lucra/matcher";
 export type { MockSeed, MockSeedMatchup, MockSeedUser, MockStateSnapshot, MockWebhookDelivery } from "@/lucra/mock";
 export * from "@/lucra/types";

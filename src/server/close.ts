@@ -285,11 +285,22 @@ export interface CloseResult {
   settlement: SettlementHookResult;
 }
 
+/**
+ * A tournament rule 7.3.4 froze (`@/server/lucra`'s `ensureMatchupTarget`):
+ * `awaiting_settlement` without the frozen preview only a close writes. It
+ * may be closed from there — the status edge was already taken — or thawed
+ * back to `live` by the organizer's "Verify targeting".
+ */
+export function isFrozenByLucra(t: Pick<Tournament, "status" | "closePreviewJson">): boolean {
+  return t.status === "awaiting_settlement" && t.closePreviewJson === null;
+}
+
 export async function closeTournament(input: CloseTournamentInput, clock: Clock = systemClock): Promise<CloseResult> {
   const db = getDb();
   const actor: TransitionActor = { kind: "organizer", userId: input.organizerUserId };
   const t = requireTournamentById(input.tournamentId).tournament;
-  if (t.status !== "live") {
+  const frozenByLucra = isFrozenByLucra(t);
+  if (t.status !== "live" && !frozenByLucra) {
     throw new ApiFailure("conflict", `Only a live tournament can be closed; this one is ${t.status}.`, { code: "not_live", status: t.status });
   }
 
@@ -307,8 +318,10 @@ export async function closeTournament(input: CloseTournamentInput, clock: Clock 
     });
   }
 
-  const verdict = transitionTournament(t.status, "awaiting_settlement", actor);
-  if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);
+  if (!frozenByLucra) {
+    const verdict = transitionTournament(t.status, "awaiting_settlement", actor);
+    if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);
+  }
 
   const now = clock.now();
   const frozen: StoredClosePreview = {
@@ -321,7 +334,7 @@ export async function closeTournament(input: CloseTournamentInput, clock: Clock 
   };
   db.transaction((tx) => {
     tx.update(tournaments).set({ status: "awaiting_settlement", closePreviewJson: JSON.stringify(frozen) }).where(eq(tournaments.id, t.id)).run();
-    writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "awaiting_settlement" }, at: now });
+    if (!frozenByLucra) writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "awaiting_settlement" }, at: now });
     writeAudit(tx, {
       actor,
       action: "tournament.closed",

@@ -114,16 +114,24 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   `fetch` naming a Lucra host outside `src/lucra/`** (`import-boundary.test.ts` proves it).
   `src/domain/lucra-score.ts` is the pure match → request mapping shared by the service
   and the seed. `src/server/lucra.ts` owns the write path: `submitConsensusScores`
-  (gate → `ensureMatchupTarget` (§7.3.4, cached on `tournaments.lucra_matchup_id`,
-  otherwise a blocking `LucraAlert` in `lucra_alert_json` and a live event moved to
-  `awaiting_settlement`) → pending row + `submitting` → adapter → row updated →
-  `accepted | partial | rejected`), `retryConsensusScores`, `settleTournament` (the
-  close's `lucraSettlementHook`; sweeps unwritten agreed matches, reads participants back
-  to learn Lucra ids, sends the documented complete call, `awaiting_settlement → settled`),
-  `reconcileParticipants`, `linkLucraAccount`. The score and resolve routes call
-  `writeAgreedConsensus` after the consensus commits (inline; it never throws).
-  `src/server/lucra-webhooks.ts` is the receiver (raw body → signature → derived event id
-  → dedupe → persist → transaction) and `deliverPendingMockWebhooks` hands the mock's
+  (gate → `ensureMatchupTarget` (§7.3.4, cached on `tournaments.lucra_matchup_id`; a
+  count other than one is a blocking `LucraAlert` in `lucra_alert_json` and a live event
+  moved to `awaiting_settlement` with no close preview — the organizer's forced verify
+  takes the `awaiting_settlement → live` edge back, and `closeTournament` also runs from
+  that frozen state; a query that did not answer only raises a non-blocking alert) →
+  pending row + `submitting` → adapter → row updated → `accepted | partial | rejected`),
+  `retryConsensusScores`, `sweepStaleSubmissions` (a `pending` row older than
+  `STALE_SUBMISSION_MS` with its consensus `submitting` becomes `transport_error`/`rejected`;
+  runs on the layer's first use per process and before settlement), `settleTournament`
+  (the close's `lucraSettlementHook`; sweeps unwritten agreed matches, reads participants
+  back to learn Lucra ids, sends the documented complete call,
+  `awaiting_settlement → settled`), `reconcileParticipants`, `linkLucraAccount` (mints
+  `external_id` only; Lucra user ids come from the read-back and webhooks, never the
+  client). The score and resolve routes call `writeAgreedConsensus` after the consensus
+  commits (inline; it never throws; player-facing messages come from `LUCRA_ERROR_MESSAGE`).
+  `src/server/lucra-webhooks.ts` is the receiver (capped raw body → signature → derived
+  event id → dedupe → persist → transaction; an unverified delivery is never persisted,
+  and no webhook changes a tournament status or a reward) and `deliverPendingMockWebhooks` hands the mock's
   signed emissions to it in process. `getLucra()` seeds the mock from the database once
   per process (`buildMockSeedFromDb`: one matchup per tournament plus the overlapping and
   recreational ones, accepted rows replayed); tests get a fresh one per `createTestApp()`.

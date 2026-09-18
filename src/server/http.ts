@@ -9,7 +9,7 @@ import { DrawError } from "@/domain/draw";
 import { ApiFailure, fail, type ApiErrorCode } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
 import { errorMessage, log } from "@/lib/log";
-import { isLucraError, type LucraErrorCode } from "@/lucra";
+import { isLucraError, LUCRA_ERROR_MESSAGE, type LucraErrorCode } from "@/lucra";
 import { SESSION_COOKIE } from "@/server/auth/session";
 import { userForSessionToken } from "@/server/auth/viewer";
 
@@ -43,8 +43,9 @@ const CONSENSUS_ERROR_CODE: Record<ConsensusError["code"], ApiErrorCode> = {
 
 /**
  * A Lucra failure surfaces as a Sideout envelope: the sealed code in
- * `detail.code`, a plain message, and nothing Lucra said verbatim (§9: never
- * leak Lucra internals). An unreachable or misconfigured Lucra is `unavailable`.
+ * `detail.code`, the plain message from `LUCRA_ERROR_MESSAGE`, and nothing
+ * Lucra said verbatim (§9: never leak Lucra internals). An unreachable or
+ * misconfigured Lucra is `unavailable`.
  */
 const LUCRA_ERROR_CODE: Record<LucraErrorCode, ApiErrorCode> = {
   invalid_api_key: "unavailable",
@@ -60,22 +61,6 @@ const LUCRA_ERROR_CODE: Record<LucraErrorCode, ApiErrorCode> = {
   strict_targeting: "conflict",
   ambiguous_matchup: "conflict",
   unlinked_user: "conflict",
-};
-
-const LUCRA_ERROR_MESSAGE: Record<LucraErrorCode, string> = {
-  invalid_api_key: "Lucra refused this deployment's API key; check LUCRA_BACKEND_API_KEY.",
-  no_matchup_identifiers: "The Lucra request named no matchup.",
-  matchup_not_found: "Lucra has no matchup for this tournament's externalId.",
-  user_not_found: "Lucra does not know one of the players.",
-  validation: "Lucra refused the request.",
-  http: "Lucra answered with an unexpected status.",
-  server: "Lucra is unavailable right now; the attempt can be retried.",
-  transport: "Lucra could not be reached; the attempt can be retried.",
-  shape: "Lucra answered with an unexpected shape; the attempt can be retried.",
-  not_participant: "Lucra accepted the request but the player is not a participant of the matchup.",
-  strict_targeting: "The Lucra write was not strictly targeted and was refused before it was sent.",
-  ambiguous_matchup: "Lucra returned more than one matchup for this tournament; verify targeting from the console.",
-  unlinked_user: "A player has no Lucra link yet.",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -124,6 +109,32 @@ export async function parseBody<T extends z.ZodType>(request: Request, schema: T
     throw new ApiFailure("bad_request", "Request body must be JSON.");
   }
   return schema.parse(raw);
+}
+
+/**
+ * Read a raw body without letting an anonymous caller choose its size: a
+ * declared `Content-Length` over the limit is refused before a byte is read,
+ * and a stream is abandoned the moment it passes the limit.
+ */
+export async function readRawBody(request: Request, limitBytes: number): Promise<string> {
+  const declared = request.headers.get("content-length");
+  const tooLarge = () => new ApiFailure("payload_too_large", `The request body may not exceed ${limitBytes} bytes.`, { limitBytes });
+  if (declared !== null && Number(declared) > limitBytes) throw tooLarge();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limitBytes) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 export function parseQuery<T extends z.ZodType>(request: NextRequest, schema: T): z.output<T> {

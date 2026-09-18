@@ -9,7 +9,7 @@ import { createLucraAdapter, installLucraAdapter, LucraError } from "@/lucra";
 import { SLUGS } from "@/seed/build";
 import { closeTournament, previewClose } from "@/server/close";
 import { resolveDispute, submitScoreline } from "@/server/consensus";
-import { buildPaymentStructure, ensureMatchupTarget, getLucra, linkLucraAccount, readLucraAlert, reconcileParticipants, resetLucraForTests, retryConsensusScores, settleTournament, submitConsensusScores, writeAgreedConsensus } from "@/server/lucra";
+import { buildPaymentStructure, ensureMatchupTarget, getLucra, linkLucraAccount, LUCRA_WRITE_FAILED_MESSAGE, readLucraAlert, reconcileParticipants, resetLucraForTests, retryConsensusScores, settleTournament, STALE_SUBMISSION_MS, submitConsensusScores, sweepStaleSubmissions, syncLucraUserIds, writeAgreedConsensus } from "@/server/lucra";
 import { forfeitMatch } from "@/server/matches";
 import { createTestApp, type TestApp } from "@/test/routes";
 
@@ -137,6 +137,33 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     await expect(writeAgreedConsensus(m.id, clock)).resolves.toEqual({ state: "refused", code: "not_agreed", message: expect.stringContaining("only an agreed scoreline") });
   });
 
+  it("tells a player only the plain sentence for a Lucra code: the wrapper never repeats Lucra's text or a stack-level message", async () => {
+    const m = agreeThirteen();
+    // A 200 whose body is not the documented shape: the client's message names the zod path; the player must not see it.
+    const fetchSpy = vi.fn(async () => ({ status: 200, text: async () => JSON.stringify({ status: "success", data: { affectedMatchupIds: "nope" } }) }));
+    installLucraAdapter(createLucraAdapter({ mode: "sandbox", interpretation: "literal", baseUrl: "https://api.sandbox.lucrasports.com", apiKey: "sandbox-key", client: { fetch: fetchSpy, sleep: () => Promise.resolve(), random: () => 0 } }));
+    resetLucraForTests();
+    const written = await writeAgreedConsensus(m.id, clock);
+    if (written.state !== "written") throw new Error(`expected written, got ${written.state}`);
+    expect(written.report.error).toEqual({ code: "shape", message: "Lucra answered with an unexpected shape; the attempt can be retried." });
+    expect(JSON.stringify(written)).not.toMatch(/unexpected shape:|data\.affectedMatchupIds|Invalid input/);
+    // The attempt row keeps the verbatim detail for the organizer.
+    expect(JSON.parse(rowsFor(m.id)[0]?.responseJson ?? "{}")).toMatchObject({ error: { code: "shape", message: expect.stringContaining("affectedMatchupIds") } });
+
+    // A pre-write query that does not answer: refused with the sentence for the code, never the client's message.
+    const other = at(12);
+    const aRow = JSON.parse(app.data.scoreSubmissions.find((s) => s.matchId === other.id)?.payloadJson ?? "").sets as SubmittedSet[];
+    submitScoreline({ matchId: other.id, userId: captainOf(other.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock);
+    db().update(tournaments).set({ lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, live.id)).run();
+    fetchSpy.mockImplementation(async () => ({ status: 503, text: async () => "upstream unavailable" }));
+    const refused = await writeAgreedConsensus(other.id, clock);
+    expect(refused).toEqual({ state: "refused", code: "server", message: "Lucra is unavailable right now; the attempt can be retried." });
+
+    // Anything else thrown is a fixed sentence.
+    const failed = await writeAgreedConsensus("no-such-match", clock);
+    expect(failed).toEqual({ state: "failed", message: LUCRA_WRITE_FAILED_MESSAGE });
+  });
+
   it("acceptance 10: a partial outcome is surfaced and retried under the same key as the next attempt", async () => {
     const m = agreeThirteen();
     const matchup = mockMatchupFor(live.lucraExternalId);
@@ -236,19 +263,146 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     expect(row.status).toBe("awaiting_settlement");
     expect(app.audits(live.id, "lucra.matchup_assertion_failed")).toHaveLength(2);
 
-    // The organizer removes the duplicate in Lucra and verifies again.
+    // Frozen: no score can be recorded, nothing was written, and the retry gate has nothing to admit.
+    const twelve = at(12);
+    const aRow = JSON.parse(app.data.scoreSubmissions.find((s) => s.matchId === twelve.id)?.payloadJson ?? "").sets as SubmittedSet[];
+    expect(() => submitScoreline({ matchId: twelve.id, userId: captainOf(twelve.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock)).toThrow(/awaiting_settlement/);
+    await expect(retryConsensusScores(m.id, organizerId, clock)).rejects.toMatchObject({ code: "not_retryable" });
+    // The system's own re-verify (a participant read, a settlement) never thaws; only the organizer's forced verify does.
     dup.metadata.externalId = "somewhere-else";
+    expect((await ensureMatchupTarget(live.id, system, clock, { force: true })).count).toBe(1);
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("awaiting_settlement");
+
+    // The organizer removes the duplicate in Lucra and verifies again: alert cleared, event live, edge audited.
     const verified = await ensureMatchupTarget(live.id, { kind: "organizer", userId: organizerId }, clock, { force: true });
     expect(verified).toMatchObject({ count: 1, queried: true, matchupId: mockMatchupFor(live.lucraExternalId).id });
     row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
     expect(readLucraAlert(row)).toBeNull();
     expect(row.lucraMatchupVerifiedAt).toBe(clock.now());
+    expect(row.status).toBe("live");
+    expect(app.audits(live.id, "tournament.status_changed").slice(-2).map((a) => [a.actorKind, JSON.parse(a.detailJson ?? "{}").to])).toEqual([
+      ["system", "awaiting_settlement"],
+      ["organizer", "live"],
+    ]);
+    // Play resumes: the queued consensus writes, and a new score is recorded.
+    expect(await submitConsensusScores(m.id, system, clock)).toMatchObject({ outcome: "accepted" });
+    submitScoreline({ matchId: twelve.id, userId: captainOf(twelve.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock);
+    expect(consensusOf(twelve.id)?.state).toBe("agreed");
     // The cached result is reused without another query.
     expect((await ensureMatchupTarget(live.id, system, clock)).queried).toBe(false);
     // A missing matchup is the other refusal.
     db().update(tournaments).set({ lucraExternalId: "sideout-nowhere" }).where(eq(tournaments.id, live.id)).run();
     await expect(ensureMatchupTarget(live.id, system, clock, { force: true })).rejects.toMatchObject({ code: "matchup_not_found" });
     expect(readLucraAlert(db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!)).toMatchObject({ code: "matchup_missing" });
+  });
+
+  it("rule 7.3.4: a frozen tournament may also be closed from where it is, and settlement then writes what was queued", async () => {
+    resolveDispute({ matchId: at(11).id, organizerUserId: organizerId, sets: A_WINS }, clock);
+    const twelve = at(12);
+    const aRow = JSON.parse(app.data.scoreSubmissions.find((s) => s.matchId === twelve.id)?.payloadJson ?? "").sets as SubmittedSet[];
+    submitScoreline({ matchId: twelve.id, userId: captainOf(twelve.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock);
+    const thirteen = agreeThirteen();
+    for (const p of [14, 15]) {
+      const m = at(p);
+      forfeitMatch(m.id, m.teamBId ?? "", { kind: "organizer", userId: organizerId }, clock);
+    }
+    // The last result's write finds the externalId on two matchups: frozen with three agreed consensus rows and nothing written.
+    const mock = getLucra().mock!;
+    const dup = mock.addMatchup({ id: "dup-matchup", kind: "pool_tournament", title: "duplicate", metadata: { externalId: live.lucraExternalId }, participants: [] });
+    db().update(tournaments).set({ lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, live.id)).run();
+    expect(await writeAgreedConsensus(thirteen.id, clock)).toMatchObject({ state: "refused", code: "ambiguous_matchup" });
+    let row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
+    expect(row.status).toBe("awaiting_settlement");
+    expect(row.closePreviewJson).toBeNull();
+    // Settlement cannot run without a frozen preview; the close can, from the frozen state, without a second status edge.
+    await expect(settleTournament(live.id, { kind: "organizer", userId: organizerId }, clock)).rejects.toMatchObject({ detail: { code: "no_close_preview" } });
+    const preview = previewClose(live.id);
+    expect(preview.blockers).toEqual([]);
+    dup.metadata.externalId = "somewhere-else";
+    const closed = await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+    expect(closed.settlement).toMatchObject({ state: "settled", writes: 3 });
+    row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
+    expect(row.status).toBe("settled");
+    expect(readLucraAlert(row)).toBeNull();
+    expect(app.audits(live.id, "tournament.status_changed").map((a) => JSON.parse(a.detailJson ?? "{}").to)).toEqual(["registration_open", "registration_closed", "live", "awaiting_settlement", "settled"]);
+    expect(app.audits(live.id, "tournament.closed")).toHaveLength(1);
+    for (const p of [11, 12, 13]) expect(consensusOf(at(p).id)?.state).toBe("accepted");
+  });
+
+  it("rule 7.3.4 needs a count: a query that never answers leaves the event live and the consensus agreed under a non-blocking alert", async () => {
+    const m = agreeThirteen();
+    db().update(tournaments).set({ lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, live.id)).run();
+    const fetchSpy = vi.fn(async () => ({ status: 503, text: async () => "upstream unavailable" }));
+    installLucraAdapter(createLucraAdapter({ mode: "sandbox", interpretation: "literal", baseUrl: "https://api.sandbox.lucrasports.com", apiKey: "sandbox-key", client: { fetch: fetchSpy, sleep: () => Promise.resolve(), random: () => 0 } }));
+    resetLucraForTests();
+    await expect(submitConsensusScores(m.id, system, clock)).rejects.toMatchObject({ code: "server" });
+    expect(fetchSpy).toHaveBeenCalledTimes(4); // the query alone: 1 try + 3 retries, no score call
+    const row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
+    expect(row.status).toBe("live");
+    expect(row.lucraMatchupVerifiedAt).toBeNull();
+    expect(readLucraAlert(row)).toMatchObject({ code: "matchup_query_failed", blocking: false, detail: { lucraCode: "server", count: null } });
+    expect(consensusOf(m.id)?.state).toBe("agreed");
+    expect(rowsFor(m.id)).toEqual([]);
+    // Lucra is back: the settlement sweep (here, the write it would make) lands and clears the alert.
+    installLucraAdapter(undefined);
+    resetLucraForTests();
+    expect(await submitConsensusScores(m.id, system, clock)).toMatchObject({ outcome: "accepted" });
+    expect(readLucraAlert(db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!)).toBeNull();
+  });
+
+  it("recovers an attempt the process never finished: a stale pending row becomes transport_error, the consensus rejected, and the organizer retries", async () => {
+    const m = agreeThirteen();
+    const consensus = consensusOf(m.id)!;
+    // The prepared transaction landed — pending row, consensus submitting — and the process died before Lucra answered.
+    const pendingId = uuidv7();
+    db().insert(lucraScoreSubmissions).values({ id: pendingId, matchId: m.id, tournamentId: live.id, idempotencyKey: consensus.idempotencyKey ?? "", requestJson: JSON.stringify({ endpoint: "pool_tournament", target: { matchupMetadata: { externalId: live.lucraExternalId } }, userScores: [] }), responseJson: null, httpStatus: null, affectedMatchupIdsJson: "[]", failedMatchupIdsJson: "[]", outcome: "pending", attempt: 1, createdAt: clock.now() }).run();
+    db().update(matchConsensus).set({ state: "submitting" }).where(eq(matchConsensus.id, consensus.id)).run();
+    // Inside the window the call may still be in flight: nothing moves, and nothing can be retried.
+    clock.set(clock.now() + STALE_SUBMISSION_MS - 1);
+    expect(sweepStaleSubmissions(clock)).toEqual([]);
+    expect(consensusOf(m.id)?.state).toBe("submitting");
+    await expect(retryConsensusScores(m.id, organizerId, clock)).rejects.toMatchObject({ code: "not_retryable" });
+    // Past it, the sweep closes the attempt out.
+    clock.set(clock.now() + 1);
+    expect(sweepStaleSubmissions(clock)).toEqual([m.id]);
+    expect(rowsFor(m.id)).toHaveLength(1);
+    expect(rowsFor(m.id)[0]).toMatchObject({ id: pendingId, outcome: "transport_error", httpStatus: null });
+    expect(JSON.parse(rowsFor(m.id)[0]?.responseJson ?? "{}")).toMatchObject({ outcome: "transport_error", error: { code: "transport" } });
+    expect(consensusOf(m.id)?.state).toBe("rejected");
+    expect(app.audits(m.id, "lucra.stale_attempt_swept")).toHaveLength(1);
+    expect(app.audits(consensus.id, "consensus.state_changed").at(-1)).toMatchObject({ actorKind: "system" });
+    expect(JSON.parse(app.audits(consensus.id, "consensus.state_changed").at(-1)?.detailJson ?? "{}")).toMatchObject({ from: "submitting", to: "rejected", event: "lucra_rejected", reason: "stale_pending", submissionId: pendingId });
+    expect(sweepStaleSubmissions(clock)).toEqual([]);
+    // The organizer's retry is admitted under the same key as attempt 2.
+    const retry = await retryConsensusScores(m.id, organizerId, clock);
+    expect(retry).toMatchObject({ attempt: 2, outcome: "accepted", consensusState: "accepted" });
+    expect(new Set(rowsFor(m.id).map((r) => r.idempotencyKey)).size).toBe(1);
+  });
+
+  it("sweeps stale attempts at boot and before settlement, so a close is never blocked by a dead write", async () => {
+    const m = agreeThirteen();
+    const consensus = consensusOf(m.id)!;
+    const stale = { matchId: m.id, tournamentId: live.id, idempotencyKey: consensus.idempotencyKey ?? "", requestJson: "{}", responseJson: null, httpStatus: null, affectedMatchupIdsJson: "[]", failedMatchupIdsJson: "[]", outcome: "pending" as const, attempt: 1, createdAt: 0 };
+    db().insert(lucraScoreSubmissions).values({ id: uuidv7(), ...stale }).run();
+    db().update(matchConsensus).set({ state: "submitting" }).where(eq(matchConsensus.id, consensus.id)).run();
+    // Boot: the first touch of the Lucra layer in a process sweeps, once.
+    resetLucraForTests();
+    getLucra();
+    expect(consensusOf(m.id)?.state).toBe("rejected");
+    expect(rowsFor(m.id)[0]?.outcome).toBe("transport_error");
+
+    // Settlement: a second dead attempt on the same key, swept by the settlement's own pass; the close then reports it as retryable, not stuck.
+    db().insert(lucraScoreSubmissions).values({ id: uuidv7(), ...stale, attempt: 2 }).run();
+    db().update(matchConsensus).set({ state: "submitting" }).where(eq(matchConsensus.id, consensus.id)).run();
+    db().update(tournaments).set({ status: "awaiting_settlement", closePreviewJson: JSON.stringify({ tournamentId: live.id, standings: [], rewards: [], previewHash: "x", closedAt: 1, closedByUserId: organizerId }) }).where(eq(tournaments.id, live.id)).run();
+    const report = await settleTournament(live.id, { kind: "organizer", userId: organizerId }, clock);
+    if (report.state !== "refused") throw new Error("expected refused");
+    expect(report.alert).toMatchObject({ code: "settlement_blocked", detail: { matches: [{ matchId: m.id, state: "rejected" }] } });
+    expect(rowsFor(m.id).map((r) => [r.attempt, r.outcome])).toEqual([
+      [1, "transport_error"],
+      [2, "transport_error"],
+    ]);
+    expect(await retryConsensusScores(m.id, organizerId, clock)).toMatchObject({ attempt: 3, outcome: "accepted" });
   });
 
   it("acceptance 7: nothing settles on attemptFinished; the organizer's close settles through the documented complete call and the webhook confirms it", async () => {
@@ -396,24 +550,28 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     expect(clean.matched).toHaveLength(32);
   });
 
-  it("mints one opaque external id per user, records the Lucra id once, and refuses a second claimant", () => {
+  it("mints one opaque external id per user and reports the Lucra id only once Lucra itself has named it", async () => {
     const user = { id: uuidv7() };
     db().insert(app.conn.db._.fullSchema.users).values({ id: user.id, displayName: "New Player", phoneE164: "+15550009999", email: null, avatarUrl: null, role: "player", createdAt: clock.now() }).run();
-    const first = linkLucraAccount(user, {}, clock);
+    const first = linkLucraAccount(user, clock);
     expect(first.minted).toBe(true);
     expect(first.externalId).toMatch(/^[0-9a-f-]{36}$/);
     expect(first.externalId).not.toContain("5550009999");
     expect(first.lucraUserId).toBeNull();
-    const again = linkLucraAccount(user, {}, clock);
-    expect(again).toMatchObject({ minted: false, externalId: first.externalId });
-    const linked = linkLucraAccount(user, { lucraUserId: "lucra-abc" }, clock);
-    expect(linked).toMatchObject({ lucraUserId: "lucra-abc", linkedAt: clock.now(), externalId: first.externalId });
-    expect(linkLucraAccount(user, { lucraUserId: "lucra-abc" }, clock).lucraUserId).toBe("lucra-abc");
-    expect(() => linkLucraAccount(user, { lucraUserId: "lucra-other" }, clock)).toThrow(/already linked to a different Lucra account/);
-    const other = { id: app.player().id };
-    const otherLink = db().select().from(lucraLinks).where(eq(lucraLinks.userId, other.id)).get()!;
-    db().update(lucraLinks).set({ lucraUserId: null }).where(eq(lucraLinks.id, otherLink.id)).run();
-    expect(() => linkLucraAccount(other, { lucraUserId: "lucra-abc" }, clock)).toThrow(/already linked to another Sideout account/);
+    const again = linkLucraAccount(user, clock);
+    expect(again).toMatchObject({ minted: false, externalId: first.externalId, lucraUserId: null });
+    expect(app.audits(user.id).map((a) => a.action)).toEqual(["lucra.link_minted"]);
+    // The id arrives from Lucra's participant list, keyed on the external id we minted — never from the player.
+    const upcoming = app.tournament(SLUGS.upcoming);
+    const matchup = mockMatchupFor(upcoming.lucraExternalId);
+    const mock = getLucra().mock!;
+    mock.addUser({ id: "lucra-user-from-lucra", username: "new.player", phoneNumber: null, metadata: { externalId: first.externalId } });
+    mock.join(matchup.id, "lucra-user-from-lucra");
+    const recon = await reconcileParticipants(upcoming.id, system, clock);
+    expect(recon.extra.map((e) => e.externalId)).toContain(first.externalId);
+    expect(linkLucraAccount(user, clock)).toMatchObject({ minted: false, lucraUserId: null });
+    expect(await syncLucraUserIds(upcoming.id, matchup.id, system, clock)).toBeGreaterThanOrEqual(1);
+    expect(linkLucraAccount(user, clock)).toMatchObject({ minted: false, lucraUserId: "lucra-user-from-lucra", linkedAt: clock.now() });
     expect(app.audits(user.id).map((a) => a.action)).toEqual(["lucra.link_minted", "lucra.link_updated"]);
   });
 });

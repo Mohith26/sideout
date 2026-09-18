@@ -13,7 +13,6 @@ import {
   poolTournamentQueryRequestSchema,
   poolTournamentUserScoreRequestSchema,
   queryResponseSchema,
-  recreationalUserScoreRequestSchema,
   userScoreResponseSchema,
   type CompleteTournamentRequest,
   type CompleteTournamentResponse,
@@ -22,7 +21,6 @@ import {
   type PoolTournamentQueryRequest,
   type PoolTournamentUserScoreRequest,
   type QueryResponse,
-  type RecreationalUserScoreRequest,
   type UserScoreResponse,
   type CallRecord,
 } from "@/lucra/types";
@@ -118,10 +116,6 @@ export class LucraClient {
 
   async submitGenericScores(request: GenericUserScoreRequest): Promise<CallResult<UserScoreResponse>> {
     return this.call("POST", LUCRA_PATHS.genericUserScore, genericUserScoreRequestSchema.parse(request), userScoreResponseSchema);
-  }
-
-  async submitRecreationalScores(request: RecreationalUserScoreRequest): Promise<CallResult<UserScoreResponse>> {
-    return this.call("POST", LUCRA_PATHS.recreationalUserScore, recreationalUserScoreRequestSchema.parse(request), userScoreResponseSchema);
   }
 
   async queryPoolTournaments(request: PoolTournamentQueryRequest): Promise<CallResult<QueryResponse>> {

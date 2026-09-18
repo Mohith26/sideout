@@ -36,20 +36,22 @@ describe("Lucra webhook receiver (spec §7.6; acceptance 11)", () => {
     return { t, matchup };
   };
 
-  it("rejects a bad or missing signature with 401, keeps the evidence under a key that cannot shadow the real delivery", async () => {
+  it("rejects a bad or missing signature with 401 and stores nothing an unverified caller sent", async () => {
     const body = { event: "TournamentCompleted", matchup: { id: "m-1", status: "CLOSED", users: [] } };
     const bad = await deliver(body, { signature: "sha256=" + "0".repeat(64) });
-    expect(bad).toMatchObject({ status: 401, signatureValid: false, eventId: null, processingState: "ignored" });
+    expect(bad).toMatchObject({ status: 401, signatureValid: false, eventId: null, processingState: null });
     expect(bad.message).not.toMatch(/[0-9a-f]{64}/);
     const missing = await deliver(body, { signature: null });
     expect(missing.status).toBe(401);
-    const rows = events();
-    expect(rows).toHaveLength(1); // the same forged body twice is one evidence row
-    expect(rows[0]).toMatchObject({ externalEventId: `unverified:${bodyFingerprint(JSON.stringify(body))}`, signatureValid: false, processingState: "ignored", eventType: "TournamentCompleted" });
-    // The genuine delivery is still processed afterwards: the forged one occupied no real key.
+    // Ten distinct forged bodies: no rows, no audit, nothing for an anonymous caller to grow.
+    for (let i = 0; i < 10; i += 1) expect((await deliver({ ...body, nonce: i }, { signature: null })).status).toBe(401);
+    expect(events()).toEqual([]);
+    expect(app.audits("m-1")).toEqual([]);
+    // The genuine delivery is processed as the first of its key.
     const real = await deliver(body);
     expect(real).toMatchObject({ status: 200, duplicate: false, eventId: "TournamentCompleted:m-1", processingState: "ignored" });
-    expect(events()).toHaveLength(2);
+    expect(events()).toHaveLength(1);
+    expect(events()[0]).toMatchObject({ signatureValid: true });
   });
 
   it("answers 400 to a signed body that is not an event, without persisting it", async () => {
@@ -58,13 +60,11 @@ describe("Lucra webhook receiver (spec §7.6; acceptance 11)", () => {
     expect(events()).toEqual([]);
   });
 
-  it("acceptance 11: a replayed event id answers 200 and is not processed twice", async () => {
+  it("acceptance 11: a replayed event id answers 200 and is not processed twice; a row the process never got to process is", async () => {
     const { t, matchup } = matchupFor(SLUGS.live);
-    app.conn.db.update(tournaments).set({ status: "awaiting_settlement", closePreviewJson: JSON.stringify({ tournamentId: t.id, standings: [], rewards: [], previewHash: "x", closedAt: 1, closedByUserId: "o" }) }).where(eq(tournaments.id, t.id)).run();
     const body = { event: "TournamentCompleted", tenantId: "sideout-mock-tenant", mode: "admin", matchup: { id: matchup.id, status: "CLOSED", metadata: { externalId: t.lucraExternalId }, users: [{ userId: "u-1", position: 1, positionOverride: null, score: 10 }] } };
     const first = await deliver(body);
     expect(first).toMatchObject({ status: 200, duplicate: false, processingState: "processed", eventId: `TournamentCompleted:${matchup.id}` });
-    expect(app.conn.db.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, t.id)).get()?.status).toBe("settled");
     const auditsAfterFirst = app.audits(t.id, "lucra.webhook.tournament_completed").length;
     expect(auditsAfterFirst).toBe(1);
 
@@ -75,6 +75,14 @@ describe("Lucra webhook receiver (spec §7.6; acceptance 11)", () => {
     expect(reserialized.duplicate).toBe(true);
     expect(app.audits(t.id, "lucra.webhook.tournament_completed")).toHaveLength(auditsAfterFirst);
     expect(events().filter((e) => e.externalEventId === `TournamentCompleted:${matchup.id}`)).toHaveLength(1);
+
+    // Persisted, then the process died before the processing transaction: the redelivery processes that same row.
+    app.conn.db.update(webhookEvents).set({ processingState: "received", processedAt: null }).where(eq(webhookEvents.externalEventId, `TournamentCompleted:${matchup.id}`)).run();
+    const resumed = await deliver(body);
+    expect(resumed).toMatchObject({ status: 200, duplicate: false, processingState: "processed" });
+    expect(events().filter((e) => e.externalEventId === `TournamentCompleted:${matchup.id}`)).toHaveLength(1);
+    expect(events().find((e) => e.externalEventId === `TournamentCompleted:${matchup.id}`)).toMatchObject({ processingState: "processed", processedAt: clock.now() });
+    expect(app.audits(t.id, "lucra.webhook.tournament_completed")).toHaveLength(auditsAfterFirst + 1);
   });
 
   it("ignores a well-formed unknown type with 2xx and records it as ignored", async () => {
@@ -86,33 +94,40 @@ describe("Lucra webhook receiver (spec §7.6; acceptance 11)", () => {
     expect((await deliver({ event: "FundsDeposited", userId: "u-1", tenantId: "t", properties: { amount: 5 } })).processingState).toBe("ignored");
   });
 
-  it("TournamentCompleted settles a tournament awaiting settlement, confirms a settled one, and alerts on a live one", async () => {
+  it("TournamentCompleted never settles or awards: it confirms a settled tournament and alerts on any other", async () => {
     const { t, matchup } = matchupFor(SLUGS.live);
-    const body = { event: "TournamentCompleted", mode: "auto", matchup: { id: matchup.id, status: "CLOSED", metadata: { externalId: t.lucraExternalId }, users: [] } };
+    const body = { event: "TournamentCompleted", mode: "auto", matchup: { id: matchup.id, status: "CLOSED", metadata: { externalId: t.lucraExternalId }, users: [{ userId: "u-1", position: 1, positionOverride: null, score: 10 }] } };
     // Live: Sideout has not closed; Lucra says it is done. Recorded, alert raised, nothing settled.
     const live = await deliver(body);
     expect(live).toMatchObject({ status: 200, processingState: "processed" });
     const row = app.conn.db.select().from(tournaments).where(eq(tournaments.id, t.id)).get()!;
     expect(row.status).toBe("live");
-    expect(JSON.parse(row.lucraAlertJson ?? "{}")).toMatchObject({ code: "settlement_refused", blocking: true });
+    expect(JSON.parse(row.lucraAlertJson ?? "{}")).toMatchObject({ code: "settlement_refused", blocking: true, detail: { winners: [{ userId: "u-1", position: 1 }] } });
 
-    // Awaiting settlement with a projected reward: the webhook settles and awards.
+    // Awaiting settlement with a projected reward and no frozen preview: still only the alert; the reward and the status are untouched.
     const rewardId = uuidv7();
     app.conn.db.insert(rewards).values({ id: rewardId, tournamentId: t.id, teamId: app.data.teams.find((x) => x.tournamentId === t.id)!.id, placement: 1, kind: "lucra_reward", amountCents: 100, currency: "USD", description: "x", lucraRewardRef: null, status: "projected" }).run();
-    app.conn.db.update(tournaments).set({ status: "awaiting_settlement" }).where(eq(tournaments.id, t.id)).run();
+    app.conn.db.update(tournaments).set({ status: "awaiting_settlement", lucraAlertJson: null }).where(eq(tournaments.id, t.id)).run();
     const again = await deliver({ ...body, mode: "manual" }, { raw: JSON.stringify({ ...body, mode: "manual", nonce: 2 }) });
     expect(again.duplicate).toBe(true); // same matchup + type: the dedupe key does not see the mode change
-    // A failed row is retried; simulate by marking the stored row failed.
     app.conn.db.update(webhookEvents).set({ processingState: "failed" }).where(eq(webhookEvents.externalEventId, `TournamentCompleted:${matchup.id}`)).run();
     const retried = await deliver(body);
     expect(retried).toMatchObject({ status: 200, duplicate: false, processingState: "processed" });
-    const settled = app.conn.db.select().from(tournaments).where(eq(tournaments.id, t.id)).get()!;
-    expect(settled.status).toBe("settled");
-    expect(settled.lucraAlertJson).toBeNull();
-    expect(app.conn.db.select().from(rewards).where(eq(rewards.id, rewardId)).get()).toMatchObject({ status: "awarded", lucraRewardRef: matchup.id });
-    expect(app.audits(t.id, "tournament.status_changed").at(-1)).toMatchObject({ actorKind: "lucra_webhook" });
+    const after = app.conn.db.select().from(tournaments).where(eq(tournaments.id, t.id)).get()!;
+    expect(after.status).toBe("awaiting_settlement");
+    expect(JSON.parse(after.lucraAlertJson ?? "{}")).toMatchObject({ code: "settlement_refused", blocking: true, message: expect.stringContaining("awaiting_settlement") });
+    expect(app.conn.db.select().from(rewards).where(eq(rewards.id, rewardId)).get()).toMatchObject({ status: "projected", lucraRewardRef: null });
+    expect(app.audits(t.id, "tournament.status_changed").filter((a) => a.actorKind === "lucra_webhook")).toEqual([]);
+    expect(app.audits(t.id, "lucra.webhook.tournament_completed")).toHaveLength(2);
     // A matchup Sideout does not know is ignored.
     expect((await deliver({ event: "TournamentCompleted", matchup: { id: "ghost", status: "CLOSED", users: [] } })).processingState).toBe("ignored");
+
+    // Settled by the organizer's close: the mock's own TournamentCompleted, delivered in process, is the confirmation.
+    const settledT = app.tournament(SLUGS.settled);
+    const settledMatchup = getLucra().mock!.listMatchups().find((m) => m.metadata.externalId === settledT.lucraExternalId)!;
+    const confirm = await deliver({ event: "TournamentCompleted", mode: "manual", matchup: { id: settledMatchup.id, status: "CLOSED", metadata: { externalId: settledT.lucraExternalId }, users: [] } });
+    expect(confirm).toMatchObject({ status: 200, processingState: "processed", message: expect.stringContaining("confirmed") });
+    expect(app.conn.db.select().from(tournaments).where(eq(tournaments.id, settledT.id)).get()?.status).toBe("settled");
   });
 
   it("TournamentUserJoined records the Lucra id on the link it names; UserKYCVerified updates only the state enum; UserSignedUp links by phone", async () => {
@@ -146,8 +161,9 @@ describe("Lucra webhook receiver (spec §7.6; acceptance 11)", () => {
     expect((await deliver({ event: "UserSignedUp", userId: "lucra-user-999", phoneNumber: "+10000000000" })).processingState).toBe("ignored");
   });
 
-  it("derives stable event ids: explicit ids win, known types key on matchup and user, the rest on the body", () => {
-    expect(deriveEventId({ event: "X", eventId: "abc" }, "{}")).toBe("event:abc");
+  it("derives stable event ids: known types key on matchup and user, the rest on the body; no field of the payload is taken as an id", () => {
+    expect(deriveEventId({ event: "TournamentCompleted", matchup: { id: "m" }, eventId: "abc", deliveryId: "d-1" }, "{}")).toBe("TournamentCompleted:m");
+    expect(deriveEventId({ event: "X", eventId: "abc" }, '{"event":"X","eventId":"abc"}')).toBe(`X:body:${bodyFingerprint('{"event":"X","eventId":"abc"}')}`);
     expect(deriveEventId({ event: "TournamentCompleted", matchup: { id: "m" } }, "{}")).toBe("TournamentCompleted:m");
     expect(deriveEventId({ event: "TournamentUserJoined", matchup: { id: "m" }, newUserId: "u" }, "{}")).toBe("TournamentUserJoined:m:u");
     expect(deriveEventId({ event: "UserKYCVerified", userId: "u" }, "{}")).toBe("UserKYCVerified:u");

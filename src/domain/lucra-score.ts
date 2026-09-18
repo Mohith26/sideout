@@ -23,6 +23,7 @@ export const LUCRA_AUDIT = {
   alertRaised: "lucra.alert_raised",
   alertCleared: "lucra.alert_cleared",
   scoreWritten: "lucra.score_written",
+  staleAttemptSwept: "lucra.stale_attempt_swept",
   settlementCompleted: "lucra.settlement_completed",
   settlementRefused: "lucra.settlement_refused",
   linkMinted: "lucra.link_minted",

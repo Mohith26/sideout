@@ -23,14 +23,14 @@ import {
   type User,
 } from "@/db/schema";
 import { assertMayRetryLucraWrite, assertMayWriteToLucra, LucraWriteRefused } from "@/domain/consensus";
-import { buildLucraScoreWrite, callsForStorage, LUCRA_AUDIT, OUTCOME_EVENT, OUTCOME_TO_STATE, storedRequestFor, storedResponseFor, type StoredLucraRequest } from "@/domain/lucra-score";
+import { buildLucraScoreWrite, callsForStorage, LUCRA_AUDIT, OUTCOME_EVENT, OUTCOME_TO_STATE, storedRequestFor, storedResponseFor, type StoredLucraRequest, type StoredLucraResponse } from "@/domain/lucra-score";
 import type { SetScore } from "@/domain/scoreline";
 import { transitionTournament, type TransitionActor } from "@/domain/transitions";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
 import { errorMessage, log } from "@/lib/log";
 import { uuidFromSeed, uuidv7 } from "@/lib/uuid";
-import { getLucraAdapter, isLucraError, LucraError, metadataSchema, type LucraAdapter, type MockSeed, type MockSeedMatchup, type MockSeedUser, type PaymentStructureEntry, type ScoreWriteInput, type ScoreWriteResult, type TournamentMatchup, type WriteOutcome } from "@/lucra";
+import { getLucraAdapter, isLucraError, LUCRA_ERROR_MESSAGE, LucraError, metadataSchema, type LucraAdapter, type LucraErrorCode, type MockSeed, type MockSeedMatchup, type MockSeedUser, type PaymentStructureEntry, type ScoreWriteInput, type ScoreWriteResult, type TournamentMatchup, type WriteOutcome } from "@/lucra";
 import { SYSTEM_ACTOR, writeAudit, type Tx } from "@/server/audit";
 import type { StoredClosePreview } from "@/server/close";
 import { moveConsensus } from "@/server/consensus";
@@ -47,9 +47,18 @@ import { moveConsensus } from "@/server/consensus";
  *
  * Before the first write to a tournament, `ensureMatchupTarget` runs the
  * §7.3.4 assertion — the pre-write query must return exactly one matchup — and
- * caches the result on `tournaments.lucra_matchup_id`. Anything else marks the
- * tournament with a blocking `LucraAlert` (and, while it is live, moves it to
- * `awaiting_settlement`, as the rule requires) and refuses the write.
+ * caches the result on `tournaments.lucra_matchup_id`. A count other than one
+ * marks the tournament with a blocking `LucraAlert` (and, while it is live,
+ * moves it to `awaiting_settlement`, as the rule requires) and refuses the
+ * write; the organizer's "Verify targeting" thaws it back to `live` once the
+ * count is one again, and the close may also run straight from the frozen
+ * state. A query that never answered has no count: the consensus stays
+ * `agreed` for the settlement sweep under a non-blocking alert.
+ *
+ * A process that dies between the pending row and Lucra's answer leaves the
+ * consensus `submitting`; `sweepStaleSubmissions` (at boot and before every
+ * settlement) turns such an attempt into `transport_error`/`rejected` after
+ * `STALE_SUBMISSION_MS`, which puts the organizer's retry back in reach.
  *
  * `attemptFinished: true` goes out exactly once per team per match: at the
  * consensus write. A retry after `rejected`/`partial` re-sends the same
@@ -104,6 +113,7 @@ export { LUCRA_AUDIT };
 
 declare global {
   var __sideoutLucraMockSeeded: boolean | undefined;
+  var __sideoutLucraSwept: boolean | undefined;
 }
 
 /** Metadata the mock attaches to a tournament's matchup: the strict key plus the loose fields a careless query would match on. */
@@ -219,9 +229,17 @@ function replayLandedSubmissions(adapter: LucraAdapter): void {
   }
 }
 
-/** The adapter, with the mock seeded from the database exactly once per process (and again after a test installs a fresh one). */
+/**
+ * The adapter, with two once-per-process steps on first use (and again after a
+ * test installs a fresh database): the stale-attempt sweep, and in mock mode
+ * the mock seeded from the database.
+ */
 export function getLucra(): LucraAdapter {
   const adapter = getLucraAdapter();
+  if (!globalThis.__sideoutLucraSwept) {
+    globalThis.__sideoutLucraSwept = true;
+    sweepStaleSubmissions();
+  }
   if (adapter.mock && !globalThis.__sideoutLucraMockSeeded) {
     globalThis.__sideoutLucraMockSeeded = true;
     adapter.mock.reset();
@@ -235,6 +253,7 @@ export function getLucra(): LucraAdapter {
 /** Forget the seeded state so the next `getLucra()` rebuilds it (tests install a new database per case). */
 export function resetLucraForTests(): void {
   globalThis.__sideoutLucraMockSeeded = false;
+  globalThis.__sideoutLucraSwept = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,13 +268,22 @@ export interface MatchupTargetResult {
   queried: boolean;
 }
 
+/** The codes rule 7.3.4 keys on: the query answered with a count other than one. */
+const MATCHUP_COUNT_CODES: ReadonlySet<LucraErrorCode> = new Set(["ambiguous_matchup", "matchup_not_found"]);
+
 /**
  * The matchup this tournament writes to, verified by the pre-write query. The
  * result is cached on the row; `force` re-runs the query (the organizer's
- * "verify targeting" action). On anything but exactly one match the alert is
+ * "verify targeting" action). On a count other than one the blocking alert is
  * raised, a `LucraError` (`ambiguous_matchup` or `matchup_not_found`) is
  * thrown, and — on the write path only (`freezeOnFailure`), as rule 7.3.4
- * says — a live tournament is moved to `awaiting_settlement`. A verify or a
+ * says — a live tournament is moved to `awaiting_settlement`. A query that
+ * failed to answer (transport, 5xx, shape) raises a non-blocking alert and
+ * throws without freezing anything: there is no count to judge.
+ *
+ * The organizer's forced verify is the only thaw: when it finds exactly one
+ * matchup for a tournament the rule froze (`awaiting_settlement` with no
+ * frozen close preview), the tournament goes back to `live`, audited. A
  * participant read never changes a tournament's status.
  */
 export async function ensureMatchupTarget(tournamentId: string, actor: TransitionActor, clock: Clock = systemClock, options: { force?: boolean; freezeOnFailure?: boolean } = {}): Promise<MatchupTargetResult> {
@@ -274,30 +302,35 @@ export async function ensureMatchupTarget(tournamentId: string, actor: Transitio
       writeAudit(tx, { actor, action: LUCRA_AUDIT.matchupVerified, subjectType: "tournament", subjectId: t.id, detail: { externalId: t.lucraExternalId, matchupId, count }, at: now });
       const existing = readLucraAlert(t);
       if (existing && (existing.code === "matchup_ambiguous" || existing.code === "matchup_missing" || existing.code === "matchup_query_failed")) setAlert(tx, t.id, null, actor, now);
+      if (options.force && t.status === "awaiting_settlement" && t.closePreviewJson === null && transitionTournament(t.status, "live", actor).ok) {
+        tx.update(tournaments).set({ status: "live" }).where(eq(tournaments.id, t.id)).run();
+        writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "live", reason: "matchup_verified", matchupId, count }, at: now });
+      }
     });
     return { matchupId, count, verifiedAt: now, queried: true };
   } catch (err) {
     if (!isLucraError(err)) throw err;
     const count = typeof err.detail.body === "object" && err.detail.body !== null && "count" in err.detail.body ? Number((err.detail.body as { count: number }).count) : null;
+    const counted = MATCHUP_COUNT_CODES.has(err.code);
     const code: LucraAlertCode = err.code === "ambiguous_matchup" ? "matchup_ambiguous" : err.code === "matchup_not_found" ? "matchup_missing" : "matchup_query_failed";
     const alert: LucraAlert = {
       code,
-      blocking: true,
+      blocking: counted,
       at: now,
       message:
         code === "matchup_ambiguous"
           ? `Lucra returned ${count} matchups for externalId ${t.lucraExternalId}; scores are not written until exactly one matches. Fix the matchups in Lucra, then verify targeting again.`
           : code === "matchup_missing"
             ? `Lucra returned no matchup for externalId ${t.lucraExternalId}. Create the tournament in Lucra with that externalId, then verify targeting again.`
-            : `The pre-write query failed (${err.code}): ${err.message}`,
+            : `The pre-write query did not answer (${err.code}); agreed scores stay queued and are written at settlement, or verify targeting once Lucra is reachable.`,
       detail: { externalId: t.lucraExternalId, count, lucraCode: err.code },
     };
     log.error("lucra: pre-write matchup assertion failed", { tournamentId: t.id, externalId: t.lucraExternalId, count, code: err.code });
     db.transaction((tx) => {
       writeAudit(tx, { actor, action: LUCRA_AUDIT.matchupAssertionFailed, subjectType: "tournament", subjectId: t.id, detail: { externalId: t.lucraExternalId, count, lucraCode: err.code }, at: now });
       setAlert(tx, t.id, alert, actor, now);
-      // Rule 7.3.4: refuse to proceed and mark the tournament awaiting_settlement.
-      if (options.freezeOnFailure && t.status === "live" && transitionTournament(t.status, "awaiting_settlement", SYSTEM_ACTOR).ok) {
+      // Rule 7.3.4: a count other than one refuses the write and marks the tournament awaiting_settlement.
+      if (counted && options.freezeOnFailure && t.status === "live" && transitionTournament(t.status, "awaiting_settlement", SYSTEM_ACTOR).ok) {
         tx.update(tournaments).set({ status: "awaiting_settlement" }).where(eq(tournaments.id, t.id)).run();
         writeAudit(tx, { actor: SYSTEM_ACTOR, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "awaiting_settlement", reason: code }, at: now });
       }
@@ -499,27 +532,83 @@ export function retryConsensusScores(matchId: string, organizerUserId: string, c
 
 export type AfterAgreedResult = { state: "written"; report: LucraWriteReport } | { state: "refused"; code: string; message: string } | { state: "failed"; message: string };
 
+export const LUCRA_WRITE_FAILED_MESSAGE = "The result is recorded, but the Lucra write could not run; the organizer can retry it from the console.";
+
 /**
  * What the score and resolve routes call once a consensus has reached
  * `agreed` and its transaction has committed: the write, with every failure
  * turned into a reported state rather than an error, so a Lucra problem never
- * unwinds a recorded result. The consensus and its attempt row say what happened.
+ * unwinds a recorded result. The consensus and its attempt row say what
+ * happened; the message a player sees is the plain sentence for the code,
+ * never Lucra's own text (§9). The attempt row keeps the verbatim detail.
  */
 export async function writeAgreedConsensus(matchId: string, clock: Clock = systemClock): Promise<AfterAgreedResult> {
   try {
     const report = await submitConsensusScores(matchId, SYSTEM_ACTOR, clock, "first");
-    return { state: "written", report };
+    return { state: "written", report: { ...report, error: report.error ? { code: report.error.code, message: LUCRA_ERROR_MESSAGE[report.error.code] } : null } };
   } catch (err) {
     if (err instanceof LucraWriteRefused) return { state: "refused", code: err.code, message: err.message };
-    if (isLucraError(err)) return { state: "refused", code: err.code, message: err.message };
+    if (isLucraError(err)) return { state: "refused", code: err.code, message: LUCRA_ERROR_MESSAGE[err.code] };
     log.error("lucra: write after consensus failed", { matchId, message: errorMessage(err) }, err);
-    return { state: "failed", message: errorMessage(err) };
+    return { state: "failed", message: LUCRA_WRITE_FAILED_MESSAGE };
   }
 }
 
 /** The consensus view after a Lucra write, for route responses. */
 export function consensusAfterWrite(matchId: string): ConsensusView | null {
   return getConsensusView(matchId);
+}
+
+// ---------------------------------------------------------------------------
+// Recovery: attempts the process never got to finish
+// ---------------------------------------------------------------------------
+
+/**
+ * How long a `pending` attempt may stay pending before it is presumed dead.
+ * One write is at most four tries of 10s each plus backoff per player, the
+ * players in parallel, so no live call is older than about 45s; two minutes
+ * leaves room for a slow host without holding a tournament's close hostage.
+ */
+export const STALE_SUBMISSION_MS = 2 * 60_000;
+
+/**
+ * A consensus left `submitting` with its latest attempt row still `pending`
+ * past `STALE_SUBMISSION_MS` belongs to a process that died mid-call. The
+ * row becomes `transport_error` and the consensus `rejected` (actor `system`,
+ * event `lucra_rejected`), so `assertMayRetryLucraWrite` admits the
+ * organizer's retry under the same key; a young pending row is left alone
+ * because its call may still be in flight. Runs once at boot (`getLucra`) and
+ * before every settlement sweep. Returns the match ids swept.
+ */
+export function sweepStaleSubmissions(clock: Clock = systemClock, tournamentId?: string): string[] {
+  const db = getDb();
+  const now = clock.now();
+  const candidates = db
+    .select({ consensus: matchConsensus })
+    .from(matchConsensus)
+    .innerJoin(matches, eq(matches.id, matchConsensus.matchId))
+    .where(and(eq(matchConsensus.state, "submitting"), tournamentId ? eq(matches.tournamentId, tournamentId) : undefined))
+    .all();
+  const swept: string[] = [];
+  for (const { consensus } of candidates) {
+    if (!consensus.idempotencyKey) continue;
+    db.transaction((tx) => {
+      const latest = listAttemptsForKey(tx, consensus.idempotencyKey ?? "").at(-1);
+      if (!latest || latest.outcome !== "pending" || now - latest.createdAt < STALE_SUBMISSION_MS) return;
+      const current = tx.select().from(matchConsensus).where(eq(matchConsensus.id, consensus.id)).get();
+      if (!current || current.state !== "submitting") return;
+      const error = { code: "transport" as const, message: `No answer was recorded within ${STALE_SUBMISSION_MS / 1000}s of the attempt; the process did not finish the call.` };
+      tx.update(lucraScoreSubmissions)
+        .set({ outcome: "transport_error", responseJson: JSON.stringify({ outcome: "transport_error", httpStatus: null, error, calls: [] } satisfies StoredLucraResponse) })
+        .where(eq(lucraScoreSubmissions.id, latest.id))
+        .run();
+      moveConsensus(tx, current, "rejected", SYSTEM_ACTOR, now, {}, { event: OUTCOME_EVENT.transport_error, outcome: "transport_error", attempt: latest.attempt, submissionId: latest.id, httpStatus: null, error, reason: "stale_pending" });
+      writeAudit(tx, { actor: SYSTEM_ACTOR, action: LUCRA_AUDIT.staleAttemptSwept, subjectType: "match", subjectId: consensus.matchId, detail: { submissionId: latest.id, attempt: latest.attempt, pendingForMs: now - latest.createdAt }, at: now });
+      swept.push(consensus.matchId);
+    });
+  }
+  if (swept.length > 0) log.warn("lucra: stale pending attempts swept to transport_error; the organizer may retry them", { matches: swept.join(","), count: swept.length });
+  return swept;
 }
 
 // ---------------------------------------------------------------------------
@@ -597,12 +686,16 @@ export async function settleTournament(tournamentId: string, actor: TransitionAc
     ({ matchupId } = await ensureMatchupTarget(t.id, actor, clock));
   } catch (err) {
     if (!isLucraError(err)) throw err;
+    if (!MATCHUP_COUNT_CODES.has(err.code)) {
+      return refuse({ code: "settlement_refused", message: `Lucra did not answer the pre-write query (${err.code}); settle again once it is reachable.`, detail: { lucraCode: err.code } });
+    }
     const current = db.select({ lucraAlertJson: tournaments.lucraAlertJson }).from(tournaments).where(eq(tournaments.id, t.id)).get();
     const alert = current ? readLucraAlert(current) : null;
-    return { state: "refused", alert: alert ?? { code: "matchup_query_failed", message: err.message, at: now(), blocking: true }, writes };
+    return { state: "refused", alert: alert ?? { code: "matchup_query_failed", message: LUCRA_ERROR_MESSAGE[err.code], at: now(), blocking: true }, writes };
   }
 
-  // Sweep: every agreed consensus that never reached Lucra is written now.
+  // Sweep: an attempt a dead process never finished is closed out, then every agreed consensus that never reached Lucra is written now.
+  sweepStaleSubmissions(clock, t.id);
   const agreed = db
     .select({ matchId: matchConsensus.matchId })
     .from(matchConsensus)
@@ -795,7 +888,7 @@ export async function reconcileParticipants(tournamentId: string, actor: Transit
 // Links
 // ---------------------------------------------------------------------------
 
-export const linkRequestSchema = z.object({ lucraUserId: z.string().trim().min(1).max(128).optional() }).strict();
+export const linkRequestSchema = z.object({}).strict();
 
 export interface LinkResult {
   externalId: string;
@@ -808,35 +901,23 @@ export interface LinkResult {
 
 /**
  * `POST /api/me/lucra/link`: mint the stable opaque `external_id` once per
- * user (a UUID v7, never the phone or email), and record the Lucra user id
- * the SDK sign-in reports (phase 4b). The Lucra id is set once; a different
- * one later is a conflict, not a merge — the verification state that arrives
- * by webhook keys on it.
+ * user (a UUID v7, never the phone or email) and report the link as it
+ * stands. The Lucra user id is never taken from the caller: it is the payout
+ * destination and the key the verification webhook matches on, so it is
+ * learned only from Lucra itself — the participant read-back
+ * (`syncLucraUserIds`) and the `TournamentUserJoined` / `UserSignedUp`
+ * webhooks, each keyed on the `externalId` Lucra echoes back.
  */
-export function linkLucraAccount(user: Pick<User, "id">, input: z.infer<typeof linkRequestSchema>, clock: Clock = systemClock): LinkResult {
+export function linkLucraAccount(user: Pick<User, "id">, clock: Clock = systemClock): LinkResult {
   const db = getDb();
   const now = clock.now();
   return db.transaction((tx) => {
-    let link = tx.select().from(lucraLinks).where(eq(lucraLinks.userId, user.id)).get() ?? null;
-    let minted = false;
-    if (!link) {
-      const row: LucraLink = { id: uuidv7(), userId: user.id, lucraUserId: null, externalId: uuidv7(), verificationState: "unverified", linkedAt: null, lastSyncedAt: null };
-      tx.insert(lucraLinks).values(row).run();
-      writeAudit(tx, { actor: { kind: "player", userId: user.id }, action: LUCRA_AUDIT.linkMinted, subjectType: "user", subjectId: user.id, detail: { externalId: row.externalId }, at: now });
-      link = row;
-      minted = true;
-    }
-    if (input.lucraUserId !== undefined && input.lucraUserId !== link.lucraUserId) {
-      if (link.lucraUserId !== null) {
-        throw new ApiFailure("conflict", "This account is already linked to a different Lucra account.", { code: "lucra_user_id_conflict" });
-      }
-      const taken = tx.select({ userId: lucraLinks.userId }).from(lucraLinks).where(eq(lucraLinks.lucraUserId, input.lucraUserId)).get();
-      if (taken) throw new ApiFailure("conflict", "That Lucra account is already linked to another Sideout account.", { code: "lucra_user_id_taken" });
-      tx.update(lucraLinks).set({ lucraUserId: input.lucraUserId, linkedAt: now, lastSyncedAt: now }).where(eq(lucraLinks.id, link.id)).run();
-      writeAudit(tx, { actor: { kind: "player", userId: user.id }, action: LUCRA_AUDIT.linkUpdated, subjectType: "user", subjectId: user.id, detail: { externalId: link.externalId, lucraUserId: input.lucraUserId }, at: now });
-      link = { ...link, lucraUserId: input.lucraUserId, linkedAt: now, lastSyncedAt: now };
-    }
-    return { externalId: link.externalId, lucraUserId: link.lucraUserId, verificationState: link.verificationState, linkedAt: link.linkedAt, minted };
+    const existing = tx.select().from(lucraLinks).where(eq(lucraLinks.userId, user.id)).get();
+    if (existing) return { externalId: existing.externalId, lucraUserId: existing.lucraUserId, verificationState: existing.verificationState, linkedAt: existing.linkedAt, minted: false };
+    const row: LucraLink = { id: uuidv7(), userId: user.id, lucraUserId: null, externalId: uuidv7(), verificationState: "unverified", linkedAt: null, lastSyncedAt: null };
+    tx.insert(lucraLinks).values(row).run();
+    writeAudit(tx, { actor: { kind: "player", userId: user.id }, action: LUCRA_AUDIT.linkMinted, subjectType: "user", subjectId: user.id, detail: { externalId: row.externalId }, at: now });
+    return { externalId: row.externalId, lucraUserId: null, verificationState: row.verificationState, linkedAt: null, minted: true };
   });
 }
 

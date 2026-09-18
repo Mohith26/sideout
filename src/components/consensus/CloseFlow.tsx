@@ -121,7 +121,7 @@ export function CloseFlow({ tournament, preview, stored, closedByName, close }: 
     );
   }
 
-  if (tournament.status !== "live") {
+  if (tournament.status !== "live" && !(tournament.status === "awaiting_settlement" && !stored)) {
     return <EmptyState icon="info" title={`This event is ${tournament.status.replace(/_/g, " ")}`} body="Only a live event can be closed. Nothing here has changed." />;
   }
 

@@ -34,6 +34,26 @@ export const LUCRA_ERROR_CODES = [
 ] as const;
 export type LucraErrorCode = (typeof LUCRA_ERROR_CODES)[number];
 
+/**
+ * What a player or organizer is told for each code: the sealed code plus a
+ * plain sentence, never Lucra's own text (§9: never leak Lucra internals).
+ */
+export const LUCRA_ERROR_MESSAGE: Record<LucraErrorCode, string> = {
+  invalid_api_key: "Lucra refused this deployment's API key; check LUCRA_BACKEND_API_KEY.",
+  no_matchup_identifiers: "The Lucra request named no matchup.",
+  matchup_not_found: "Lucra has no matchup for this tournament's externalId.",
+  user_not_found: "Lucra does not know one of the players.",
+  validation: "Lucra refused the request.",
+  http: "Lucra answered with an unexpected status.",
+  server: "Lucra is unavailable right now; the attempt can be retried.",
+  transport: "Lucra could not be reached; the attempt can be retried.",
+  shape: "Lucra answered with an unexpected shape; the attempt can be retried.",
+  not_participant: "Lucra accepted the request but the player is not a participant of the matchup.",
+  strict_targeting: "The Lucra write was not strictly targeted and was refused before it was sent.",
+  ambiguous_matchup: "Lucra returned more than one matchup for this tournament; verify targeting from the console.",
+  unlinked_user: "A player has no Lucra link yet.",
+};
+
 /** Failures that may be retried by an organizer (`rejected`/`partial → submitting`) with the same key. */
 export const RETRYABLE_LUCRA_ERROR_CODES: ReadonlySet<LucraErrorCode> = new Set(["matchup_not_found", "user_not_found", "not_participant", "server", "transport", "shape", "http"]);
 
