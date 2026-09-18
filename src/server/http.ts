@@ -4,6 +4,7 @@ import { ZodError, type z } from "zod";
 import { DatabaseNotReadyError } from "@/db/connection";
 import type { User } from "@/db/schema";
 import { BracketError } from "@/domain/bracket";
+import { ConsensusError } from "@/domain/consensus";
 import { DrawError } from "@/domain/draw";
 import { ApiFailure, fail, type ApiErrorCode } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
@@ -31,6 +32,14 @@ const DRAW_ERROR_CODE: Record<DrawError["code"], ApiErrorCode> = {
   bracket_mismatch: "conflict",
 };
 
+const CONSENSUS_ERROR_CODE: Record<ConsensusError["code"], ApiErrorCode> = {
+  illegal_scoreline: "bad_request",
+  not_on_team: "forbidden",
+  already_submitted_by_team: "conflict",
+  match_not_open: "conflict",
+  invalid_transition: "conflict",
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -55,6 +64,7 @@ export async function handle(fn: () => Promise<Response> | Response): Promise<Re
     }
     if (err instanceof DrawError) return fail(DRAW_ERROR_CODE[err.code], err.message, { code: err.code }, { headers: NO_STORE });
     if (err instanceof BracketError) return fail("conflict", err.message, { code: err.code }, { headers: NO_STORE });
+    if (err instanceof ConsensusError) return fail(CONSENSUS_ERROR_CODE[err.code], err.message, { ...err.detail, code: err.code }, { headers: NO_STORE });
     if (err instanceof DatabaseNotReadyError) return fail("unavailable", "Database is not ready; run `npm run seed`.", undefined, { headers: NO_STORE });
     log.error("route: unhandled error", { message: errorMessage(err) }, err);
     return fail("internal", "Something went wrong on our side.", undefined, { headers: NO_STORE });
