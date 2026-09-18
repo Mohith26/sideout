@@ -9,9 +9,12 @@ set -eu
 
 DATA_DIR="$(dirname "${DATABASE_PATH:-/data/sideout.db}")"
 
+echo "entrypoint: uid=$(id -u) data_dir=$DATA_DIR ($(ls -ld "$DATA_DIR" 2>&1))"
+
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$DATA_DIR"
   chown node:node "$DATA_DIR"
+  echo "entrypoint: $DATA_DIR now $(ls -ld "$DATA_DIR"); running as node"
   exec setpriv --reuid=node --regid=node --init-groups -- "$@"
 fi
 
