@@ -356,7 +356,8 @@ describe("seed dataset (spec §13)", () => {
         expect(subs.every((s) => s.supersededById === null)).toBe(true);
         expect(new Set(subs.map((s) => s.payloadHash)).size).toBe(1);
         const consensus = data.matchConsensus.find((c) => c.matchId === m.id);
-        expect(consensus?.state).toBe("agreed");
+        // Agreed, then written to Lucra and accepted (the Lucra rows are checked below).
+        expect(consensus?.state).toBe("accepted");
         expect(consensus?.agreedPayloadHash).toBe(subs[0]?.payloadHash);
         expect(consensus?.resolvedByUserId).toBeNull();
         expect(isUuidV7(consensus?.idempotencyKey ?? "")).toBe(true);
@@ -382,11 +383,20 @@ describe("seed dataset (spec §13)", () => {
       for (const m of finals) {
         const consensus = data.matchConsensus.find((c) => c.matchId === m.id);
         const transitions = audits(consensus?.id ?? "", "consensus.state_changed");
-        expect(transitions.map((a) => [detailOf(a).from, detailOf(a).to, a.actorKind])).toEqual([
+        expect(transitions.slice(0, 2).map((a) => [detailOf(a).from, detailOf(a).to, a.actorKind])).toEqual([
           ["awaiting_first", "awaiting_second", "player"],
           ["awaiting_second", "agreed", "player"],
         ]);
         expect(detailOf(transitions[1])).toMatchObject({ event: "matching_submission", hash: consensus?.agreedPayloadHash, idempotencyKey: consensus?.idempotencyKey, mintedKey: true, winnerTeamId: m.winnerTeamId });
+        // Then the Lucra write: agreed → submitting → an outcome, repeated for an organizer retry, always ending accepted.
+        const lucra = transitions.slice(2).map((a) => [detailOf(a).from, detailOf(a).to, a.actorKind]);
+        expect(lucra.length % 2).toBe(0);
+        expect(lucra[0]).toEqual(["agreed", "submitting", "system"]);
+        expect(lucra.at(-1)).toEqual(["submitting", "accepted", "system"]);
+        for (const [i, step] of lucra.entries()) {
+          if (i % 2 === 0) expect(step[1]).toBe("submitting");
+          if (i > 0 && i % 2 === 0) expect(step[2]).toBe("organizer");
+        }
         const statuses = audits(m.id, "match.status_changed");
         expect(statuses.map((a) => [detailOf(a).to, a.actorKind])).toEqual([
           ["in_progress", "organizer"],
@@ -395,6 +405,53 @@ describe("seed dataset (spec §13)", () => {
         ]);
         expect(detailOf(statuses[2])).toMatchObject({ winnerTeamId: m.winnerTeamId, consensusId: consensus?.id });
         expect(audits(m.id, "score.submitted")).toHaveLength(2);
+      }
+    });
+
+    it("has a Lucra attempt row per write, strictly targeted, redacted, and ending accepted for every match", () => {
+      const rows = data.lucraScoreSubmissions;
+      const finalIds = new Set(finals.map((m) => m.id));
+      expect(new Set(rows.map((r) => r.matchId))).toEqual(finalIds);
+      for (const m of finals) {
+        const attempts = rows.filter((r) => r.matchId === m.id).sort((x, y) => x.attempt - y.attempt);
+        expect(attempts.map((r) => r.attempt)).toEqual(attempts.map((_, i) => i + 1));
+        expect(attempts.at(-1)?.outcome).toBe("accepted");
+        const consensus = data.matchConsensus.find((c) => c.matchId === m.id);
+        expect(new Set(attempts.map((r) => r.idempotencyKey))).toEqual(new Set([consensus?.idempotencyKey]));
+        const t = data.tournaments.find((x) => x.id === m.tournamentId);
+        for (const r of attempts) {
+          const request = JSON.parse(r.requestJson) as { endpoint: string; target: unknown; userScores: Array<{ userMetadata: { externalId: string }; score: number; attemptFinished: boolean; metadata: { match_id: string; idempotency_key: string } }>; calls: Array<{ path: string; request: { headers: Record<string, string> } }> };
+          expect(request.endpoint).toBe("pool_tournament");
+          expect(request.target).toEqual({ matchupMetadata: { externalId: t?.lucraExternalId } });
+          expect(request.userScores).toHaveLength(4);
+          expect(request.userScores.every((u) => u.attemptFinished && u.metadata.match_id === m.id && u.metadata.idempotency_key === r.idempotencyKey)).toBe(true);
+          expect(request.calls).toHaveLength(4);
+          expect(request.calls.every((c) => c.path === "/api/rest/pool-tournament/user-score" && c.request.headers["X-Lucra-Api-Key"] === "[redacted]")).toBe(true);
+          expect(r.requestJson + r.responseJson).not.toMatch(/sideout-mock-backend-key|LUCRA_BACKEND/);
+          expect(JSON.parse(r.affectedMatchupIdsJson).length > 0 || JSON.parse(r.failedMatchupIdsJson).length > 0 || r.outcome === "rejected" || r.outcome === "transport_error").toBe(true);
+        }
+        expect(audits(m.id, "lucra.score_written")).toHaveLength(attempts.length);
+      }
+      // Every outcome but pending is on show on first run, and each failure was retried under the same key.
+      const outcomes = new Set(rows.map((r) => r.outcome));
+      expect([...outcomes].sort()).toEqual(["accepted", "partial", "rejected", "transport_error"]);
+      const rejected = rows.find((r) => r.outcome === "rejected");
+      const rejectedResponse = JSON.parse(rejected?.responseJson ?? "{}") as { httpStatus: number; calls: Array<{ response: { status: number; body: unknown } }> };
+      expect(rejectedResponse.httpStatus).toBe(404);
+      expect(rejectedResponse.calls).toHaveLength(4);
+      expect(rejectedResponse.calls[0]?.response).toEqual({ status: 404, body: { status: "failure", error: "Matchup not found" } });
+      const partial = rows.find((r) => r.outcome === "partial");
+      expect(JSON.parse(partial?.failedMatchupIdsJson ?? "[]")).toHaveLength(1);
+      expect(partial?.httpStatus).toBe(200);
+      for (const failed of rows.filter((r) => r.outcome !== "accepted")) {
+        expect(rows.some((r) => r.idempotencyKey === failed.idempotencyKey && r.attempt === failed.attempt + 1 && r.outcome === "accepted")).toBe(true);
+      }
+      // Both written tournaments carry the verified matchup; the upcoming one does not.
+      for (const t of data.tournaments) {
+        const written = rows.some((r) => r.tournamentId === t.id);
+        expect(t.lucraMatchupId !== null && t.lucraMatchupId !== undefined).toBe(written);
+        expect((t.lucraMatchupVerifiedAt ?? null) !== null).toBe(written);
+        if (written) expect(audits(t.id, "lucra.matchup_verified")).toHaveLength(1);
       }
     });
   });

@@ -73,7 +73,7 @@ describe("close flow (spec §10.7, §11.6)", () => {
     forfeitMatch(fifteen.id, fifteen.teamBId ?? "", organizer(), clock);
   }
 
-  it("names every blocking match with a reason, and refuses to close over them", () => {
+  it("names every blocking match with a reason, and refuses to close over them", async () => {
     const preview = previewClose(live.id);
     expect(preview.tournamentStatus).toBe("live");
     expect(preview.previewHash).toMatch(/^[0-9a-f]{64}$/);
@@ -104,7 +104,7 @@ describe("close flow (spec §10.7, §11.6)", () => {
     expect(preview.standings.filter((r) => r.basis === "unplayed")).toHaveLength(bracketTeamIds.size);
 
     try {
-      closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+      await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
       throw new Error("expected close_blocked");
     } catch (err) {
       expect(err).toBeInstanceOf(ApiFailure);
@@ -135,7 +135,7 @@ describe("close flow (spec §10.7, §11.6)", () => {
     expect(hashPreview({ ...frozen, rewards: [] })).not.toBe(hashPreview(frozen));
   });
 
-  it("closes only through a matching preview hash, freezing the standings and projected rewards", () => {
+  it("closes only through a matching preview hash, freezing the standings and projected rewards", async () => {
     settleEverything();
     const clean = previewClose(live.id);
     expect(clean.blockers).toEqual([]);
@@ -171,7 +171,7 @@ describe("close flow (spec §10.7, §11.6)", () => {
 
     // The stale hash from before the rewards existed is refused.
     try {
-      closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: clean.previewHash }, clock);
+      await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: clean.previewHash }, clock);
       throw new Error("expected preview_stale");
     } catch (err) {
       const e = err as ApiFailure;
@@ -180,43 +180,59 @@ describe("close flow (spec §10.7, §11.6)", () => {
     }
     expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("live");
 
-    const result = closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: withRewards.previewHash }, clock);
-    expect(result.detail.tournament.status).toBe("awaiting_settlement");
-    expect(result.settlement).toEqual({ state: "not_available" });
+    const result = await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: withRewards.previewHash }, clock);
+    // The close committed, then Lucra settlement ran against the mock: every agreed score was written and the matchup closed.
+    expect(result.settlement).toMatchObject({ state: "settled", unassignedUserIds: [] });
+    expect(result.settlement.state === "settled" && result.settlement.writes).toBeGreaterThan(0);
+    expect(result.detail.tournament.status).toBe("settled");
     expect(result.frozen).toMatchObject({ previewHash: withRewards.previewHash, closedAt: clock.now(), closedByUserId: organizerId });
     expect(result.frozen.standings).toEqual(withRewards.standings);
     expect(result.frozen.rewards).toEqual(withRewards.rewards);
 
     const row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get();
-    expect(row?.status).toBe("awaiting_settlement");
+    expect(row?.status).toBe("settled");
+    expect(row?.lucraMatchupId).toBeTruthy();
+    expect(row?.lucraAlertJson).toBeNull();
     expect(readStoredClosePreview(row ?? { closePreviewJson: null })).toEqual(result.frozen);
     const auditRows = app.audits(live.id).filter((a) => a.createdAt === clock.now());
-    expect(auditRows.map((a) => [a.action, a.actorKind, a.actorUserId])).toEqual([
+    expect(auditRows.slice(0, 2).map((a) => [a.action, a.actorKind, a.actorUserId])).toEqual([
       ["tournament.status_changed", "organizer", organizerId],
       ["tournament.closed", "organizer", organizerId],
     ]);
     expect(JSON.parse(auditRows[1]?.detailJson ?? "{}")).toMatchObject({ previewHash: withRewards.previewHash, standings: 24, rewards: 2 });
+    // The seed already verified the live tournament's matchup; the settlement, its audit row, and the mock's TournamentCompleted webhook all landed.
+    expect(auditRows.map((a) => a.action)).toEqual(expect.arrayContaining(["lucra.settlement_completed", "lucra.webhook.tournament_completed"]));
+    expect(auditRows.some((a) => a.action === "lucra.matchup_verified")).toBe(false);
+    expect(auditRows.filter((a) => a.action === "tournament.status_changed").map((a) => JSON.parse(a.detailJson ?? "{}").to)).toEqual(["awaiting_settlement", "settled"]);
+    // The projected rewards were awarded, the Lucra one carrying the matchup reference.
+    const awarded = db().select().from(rewards).where(and(eq(rewards.tournamentId, live.id), eq(rewards.status, "awarded"))).all();
+    expect(awarded.map((r) => [r.kind, r.lucraRewardRef !== null]).sort()).toEqual([
+      ["credit", false],
+      ["lucra_reward", true],
+      ["sponsor_item", false],
+    ]);
 
     // Closed is closed.
     try {
-      closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: withRewards.previewHash }, clock);
-      throw new Error("expected not_live");
-    } catch (err) {
-      expect((err as ApiFailure).detail).toMatchObject({ code: "not_live", status: "awaiting_settlement" });
-    }
-    expect(previewClose(live.id).tournamentStatus).toBe("awaiting_settlement");
-  });
-
-  it("refuses to close anything that is not live, and the settlement hook triggers nothing yet", () => {
-    const settled = app.tournament(SLUGS.settled);
-    const preview = previewClose(settled.id);
-    expect(preview.blockers).toEqual([]);
-    try {
-      closeTournament({ tournamentId: settled.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+      await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: withRewards.previewHash }, clock);
       throw new Error("expected not_live");
     } catch (err) {
       expect((err as ApiFailure).detail).toMatchObject({ code: "not_live", status: "settled" });
     }
-    expect(lucraSettlementHook({ tournamentId: settled.id, standings: [], rewards: [], previewHash: preview.previewHash, closedAt: 0, closedByUserId: organizerId })).toEqual({ state: "not_available" });
+    expect(previewClose(live.id).tournamentStatus).toBe("settled");
+  });
+
+  it("refuses to close anything that is not live, and the settlement hook reports rather than throws", async () => {
+    const settled = app.tournament(SLUGS.settled);
+    const preview = previewClose(settled.id);
+    expect(preview.blockers).toEqual([]);
+    try {
+      await closeTournament({ tournamentId: settled.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+      throw new Error("expected not_live");
+    } catch (err) {
+      expect((err as ApiFailure).detail).toMatchObject({ code: "not_live", status: "settled" });
+    }
+    // An already settled tournament cannot be settled again; the hook turns that into a reported failure, never an exception after a close.
+    await expect(lucraSettlementHook({ tournamentId: settled.id, standings: [], rewards: [], previewHash: preview.previewHash, closedAt: 0, closedByUserId: organizerId }, organizer(), clock)).resolves.toMatchObject({ state: "failed" });
   });
 });

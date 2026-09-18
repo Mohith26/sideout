@@ -34,9 +34,12 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 - Console output only through `src/lib/log.ts`; ESLint makes `console`, `any`, and
   empty `catch` errors everywhere else.
 - `src/env.ts` is `server-only`; `src/env.public.ts` holds the only values allowed in
-  the browser. `npm run test:bundle` (`src/env.bundle-check.ts`) builds with a sentinel
-  backend key and fails if it, or the variable name, appears under `.next/static`, or
-  if `.next/server/app/api/dev` exists.
+  the browser. `npm run test:bundle` (`src/env.bundle-check.ts`) builds in sandbox mode
+  with sentinel backend key and webhook secret and fails if either, or its variable
+  name, appears under `.next/static`, or if `.next/server/app/api/dev` (dev login) or
+  `.next/server/app/api/rest/%5Fmock` (mock state) exists. Route files gated by page
+  extension (`route.dev.ts`, `route.mock.ts`) are registered by
+  `src/lib/build-gates.ts`, which `next.config.ts` imports.
 - Database: Drizzle + better-sqlite3, schema in `src/db/schema.ts`, migrations checked
   in under `drizzle/` (`npm run db:generate` after schema edits, then read the SQL:
   drizzle-kit's SQLite table rebuilds can select columns that do not exist yet, and
@@ -93,11 +96,38 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   (`src/server/close.ts`) is preview → hash →
   confirm: `previewClose` names every blocker, `closeTournament` refuses
   `close_blocked`/`preview_stale`, freezes the preview on
-  `tournaments.close_preview_json`, and ends at `lucraSettlementHook`, the phase-4
-  seam. A forfeit settles a disputed match: its consensus row stays `disputed`
+  `tournaments.close_preview_json`, and ends at `lucraSettlementHook`, which runs
+  `settleTournament` after the close commits. A forfeit settles a disputed match: its consensus row stays `disputed`
   but records `resolved_by_user_id` and `disputed_reason` "Settled by forfeit"
   (audit `consensus.settled_by_forfeit`); the queue, the close, the match page
   and the submission check all key on the match status.
+- Lucra (spec §7, §8; `docs/lucra-integration.md` has the write-path diagram and the
+  strictness table): `src/lucra/` is `endpoints.ts` (every path, header and error string;
+  the legacy-to-Forge migration is this file plus `types.ts`), `types.ts` (zod for every
+  request and response, `StrictMatchupTarget`), `errors.ts` (the sealed `LucraError`
+  union the app branches on), `client.ts` (5s/10s timeouts, three jittered retries on 5xx
+  and transport only, zod on every response, key redacted), `mock.ts` (the in-process
+  Lucra), `matcher.ts` (the ported similarity algorithm, `literal` | `doc-examples`;
+  `matcher.test.ts` is the table of which published examples reproduce),
+  `webhook-signature.ts`, `adapter.ts` (the only public surface, re-exported by
+  `index.ts` as `@/lucra`). **ESLint refuses `@/lucra/client`, `@/lucra/mock` and any
+  `fetch` naming a Lucra host outside `src/lucra/`** (`import-boundary.test.ts` proves it).
+  `src/domain/lucra-score.ts` is the pure match → request mapping shared by the service
+  and the seed. `src/server/lucra.ts` owns the write path: `submitConsensusScores`
+  (gate → `ensureMatchupTarget` (§7.3.4, cached on `tournaments.lucra_matchup_id`,
+  otherwise a blocking `LucraAlert` in `lucra_alert_json` and a live event moved to
+  `awaiting_settlement`) → pending row + `submitting` → adapter → row updated →
+  `accepted | partial | rejected`), `retryConsensusScores`, `settleTournament` (the
+  close's `lucraSettlementHook`; sweeps unwritten agreed matches, reads participants back
+  to learn Lucra ids, sends the documented complete call, `awaiting_settlement → settled`),
+  `reconcileParticipants`, `linkLucraAccount`. The score and resolve routes call
+  `writeAgreedConsensus` after the consensus commits (inline; it never throws).
+  `src/server/lucra-webhooks.ts` is the receiver (raw body → signature → derived event id
+  → dedupe → persist → transaction) and `deliverPendingMockWebhooks` hands the mock's
+  signed emissions to it in process. `getLucra()` seeds the mock from the database once
+  per process (`buildMockSeedFromDb`: one matchup per tournament plus the overlapping and
+  recreational ones, accepted rows replayed); tests get a fresh one per `createTestApp()`.
+  `/admin/lucra` and `GET /api/admin/lucra/submissions` show every attempt row verbatim.
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
   production when unset — `/health` reports which; the ephemeral value lives on
@@ -119,7 +149,8 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   charitable donation provider only through `src/server/donations/stub-provider.ts`
   (pending → succeeded after `STUB_SETTLE_DELAY_MS` on the injected clock, swept on
   read). Lucra entry at registration is `lucraEntryHook` in
-  `src/server/registration.ts`, which returns `not_available` until phase 4.
+  `src/server/registration.ts`, which reports the roster's link state
+  (`awaiting_sdk_join`); joining is the player's SDK action (phase 4b).
 
 ## Screens (phase 2b conventions)
 
@@ -150,21 +181,24 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 
 ## Phase status
 
-Phases 1 (Foundation), 2a (Domain + application API), 2b (Screens) and 3 (Consensus)
-are complete: shell, primitives, schema, seed, `/health`, Home, every `/t/[slug]` tab
-(Overview, Bracket with pool sheets, Standings, Impact), the draw engine, bracket
-advancement, standings tiebreaks, status machines, phone sign-in (`/sign-in`), teams
-and registration (`/teams/new`, `/t/[slug]/register`, `/me`), the organizer console
-(`/organizer/events`, the builder with its live draw preview, the court board), every
-§9 public, player and organizer route except the Lucra ones, the score consensus
-machine with `/m/[id]` and its score sheet, the dispute queue (`/organizer/disputes`)
-and the two-step close (`/organizer/events/[id]/close`). The last pool match to become
-terminal — agreed, resolved or forfeited — seeds the bracket through
-`seedBracketIfPoolsComplete` (`src/server/matches.ts`, after the resolving transaction
-commits). `double_elim` is in the enum but refused by `draw()`. No Lucra code exists
-yet (phase 4); `src/lucra/version.ts` is the only file there, `lucraSettlementHook` /
-`lucraEntryHook` report `not_available`, and the profile leaves a documented slot for
-the verification row and wallet chip.
+Phases 1 (Foundation), 2a (Domain + application API), 2b (Screens), 3 (Consensus) and
+4a (Lucra integration layer) are complete: shell, primitives, schema, seed, `/health`,
+Home, every `/t/[slug]` tab (Overview, Bracket with pool sheets, Standings, Impact), the
+draw engine, bracket advancement, standings tiebreaks, status machines, phone sign-in
+(`/sign-in`), teams and registration (`/teams/new`, `/t/[slug]/register`, `/me`), the
+organizer console (`/organizer/events`, the builder with its live draw preview, the
+court board), every §9 route, the score consensus machine with `/m/[id]` and its score
+sheet, the dispute queue (`/organizer/disputes`), the two-step close
+(`/organizer/events/[id]/close`) that now settles through Lucra, the
+adapter/client/mock/matcher, the consensus-time write, the organizer retry, the webhook
+receiver, `POST /api/me/lucra/link`, participant reconciliation and `/admin/lucra`. The
+last pool match to become terminal — agreed, resolved or forfeited — seeds the bracket
+through `seedBracketIfPoolsComplete` (`src/server/matches.ts`, after the resolving
+transaction commits). `double_elim` is in the enum but refused by `draw()`. Phase 4b
+(the browser SDK, `LucraGate`, the SDK-launched flows, the registration join step, the
+profile's verification row and wallet chip, for which the profile leaves a documented
+slot) is not built; `lucraEntryHook` reports `awaiting_sdk_join` with the roster's link
+state.
 
 ## Maintaining this file
 

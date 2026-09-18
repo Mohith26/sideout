@@ -24,6 +24,7 @@ const TABLE_ORDER = [
   ["sets", schema.sets],
   ["scoreSubmissions", schema.scoreSubmissions],
   ["matchConsensus", schema.matchConsensus],
+  ["lucraScoreSubmissions", schema.lucraScoreSubmissions],
   ["donations", schema.donations],
   ["sponsors", schema.sponsors],
   ["rewards", schema.rewards],
@@ -31,7 +32,7 @@ const TABLE_ORDER = [
 ] as const satisfies ReadonlyArray<readonly [keyof SeedDataset, SQLiteTable]>;
 
 /** Tables the seed never populates but must still be emptied on reset. */
-const RESET_ONLY_TABLES: readonly SQLiteTable[] = [schema.lucraScoreSubmissions, schema.webhookEvents, schema.authCodes];
+const RESET_ONLY_TABLES: readonly SQLiteTable[] = [schema.webhookEvents, schema.authCodes];
 
 const CHUNK = 200;
 

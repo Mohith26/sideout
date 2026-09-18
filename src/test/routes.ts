@@ -6,7 +6,9 @@ import { applyMigrations, openConnection, type Connection } from "@/db/connectio
 import { auditLog } from "@/db/schema";
 import { env } from "@/env";
 import { failEnvelopeSchema } from "@/lib/api";
+import { installLucraAdapter } from "@/lucra";
 import { REQUEST_CODE_LIMITS, VERIFY_CODE_LIMITS } from "@/server/auth/codes";
+import { resetLucraForTests } from "@/server/lucra";
 import { SESSION_COOKIE, signSession } from "@/server/auth/session";
 import { buildSeed, DEFAULT_RNG_SEED, startOfTodayIn, VENUE_TIMEZONE, type SeedDataset, type SLUGS } from "@/seed/build";
 import { writeSeed } from "@/seed/write";
@@ -69,6 +71,9 @@ export function createTestApp(options: { seed?: boolean } = {}): TestApp {
   globalThis.__sideoutDb?.close();
   globalThis.__sideoutDb = conn;
   for (const limiter of [...Object.values(REQUEST_CODE_LIMITS), ...Object.values(VERIFY_CODE_LIMITS)]) limiter.reset();
+  // A fresh Lucra adapter (and mock) per database: the mock is seeded from these rows on first use.
+  installLucraAdapter(undefined);
+  resetLucraForTests();
 
   const cookieFor = (userId: string) => `${SESSION_COOKIE}=${signSession(userId, env.sessionSecret)}`;
 

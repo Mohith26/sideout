@@ -191,6 +191,8 @@ export const lucraLinks = sqliteTable(
   (t) => [
     uniqueIndex("lucra_links_external_id_unique").on(t.externalId),
     uniqueIndex("lucra_links_user_id_unique").on(t.userId),
+    // One Lucra account per Sideout account: a second claimant of the same Lucra id is refused, never merged.
+    uniqueIndex("lucra_links_lucra_user_id_unique").on(t.lucraUserId),
     enumCheck("lucra_links", "verification_state", VERIFICATION_STATES),
   ],
 );
@@ -233,7 +235,16 @@ export const tournaments = sqliteTable(
     currency: text("currency").notNull(),
     prizeKind: enumColumn("prize_kind", PRIZE_KINDS).notNull(),
     status: enumColumn("status", TOURNAMENT_STATUSES).notNull(),
+    /** The one Lucra matchup this tournament writes to, cached by the pre-write assertion (§7.3.4). */
     lucraMatchupId: text("lucra_matchup_id"),
+    /** When `lucra_matchup_id` was last confirmed as the single match of the pre-write query; null until then. */
+    lucraMatchupVerifiedAt: epochMs("lucra_matchup_verified_at"),
+    /**
+     * A blocking organizer alert from the Lucra layer (`LucraAlert` in
+     * `@/server/lucra`, as JSON): the pre-write query did not return exactly one
+     * matchup, or settlement was refused. Null when nothing blocks. Organizer-only.
+     */
+    lucraAlertJson: text("lucra_alert_json"),
     /** Namespaced, globally unique; what we put in `matchupMetadata.externalId`. */
     lucraExternalId: text("lucra_external_id").notNull(),
     lucraGameId: text("lucra_game_id").notNull(),
@@ -681,6 +692,7 @@ export type NewScoreSubmission = typeof scoreSubmissions.$inferInsert;
 export type MatchConsensus = typeof matchConsensus.$inferSelect;
 export type NewMatchConsensus = typeof matchConsensus.$inferInsert;
 export type LucraScoreSubmission = typeof lucraScoreSubmissions.$inferSelect;
+export type NewLucraScoreSubmission = typeof lucraScoreSubmissions.$inferInsert;
 export type Donation = typeof donations.$inferSelect;
 export type NewDonation = typeof donations.$inferInsert;
 export type Sponsor = typeof sponsors.$inferSelect;

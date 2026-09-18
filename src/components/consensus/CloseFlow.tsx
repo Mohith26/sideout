@@ -23,7 +23,12 @@ import { cx } from "@/lib/cx";
 export interface CloseResponse {
   detail: { tournament: { status: string } };
   frozen: StoredClosePreview;
-  settlement: { state: "not_available" } | { state: "triggered"; reference: string };
+  settlement:
+    | { state: "settled"; matchupId: string; unassignedUserIds: string[]; writes: number }
+    | { state: "refused"; alert: { code: string; message: string }; writes: number }
+    | { state: "failed"; message: string }
+    /** A tournament closed earlier, rendered from its stored preview: the settlement outcome lives on the tournament row. */
+    | { state: "unknown" };
 }
 
 export interface CloseFlowProps {
@@ -74,9 +79,24 @@ export function BlockingList({ blockers, slug }: { blockers: readonly CloseBlock
   );
 }
 
+function settlementCopy(settlement: CloseResponse["settlement"], status: string): string {
+  switch (settlement.state) {
+    case "settled":
+      return settlement.unassignedUserIds.length > 0
+        ? `Lucra settled the tournament (matchup ${settlement.matchupId}) but could not assign ${settlement.unassignedUserIds.length} reward${settlement.unassignedUserIds.length === 1 ? "" : "s"}; see /admin/lucra.`
+        : `Lucra settled the tournament (matchup ${settlement.matchupId})${settlement.writes > 0 ? `, writing ${settlement.writes} outstanding score${settlement.writes === 1 ? "" : "s"} first` : ""}.`;
+    case "refused":
+      return `Lucra settlement was refused: ${settlement.alert.message} The event stays in awaiting settlement; fix the cause and settle again from /admin/lucra.`;
+    case "failed":
+      return `Settlement could not run (${settlement.message}). The event stays in awaiting settlement; settle again from /admin/lucra.`;
+    case "unknown":
+      return status === "settled" ? "Lucra settlement completed." : "Lucra settlement has not completed; the outcome and any alert are on /admin/lucra.";
+  }
+}
+
 export function CloseFlow({ tournament, preview, stored, closedByName, close }: CloseFlowProps) {
   const router = useRouter();
-  const [step, setStep] = useState<Step>(() => (stored ? { kind: "closed", frozen: stored, settlement: { state: "not_available" } } : { kind: "review" }));
+  const [step, setStep] = useState<Step>(() => (stored ? { kind: "closed", frozen: stored, settlement: { state: "unknown" } } : { kind: "review" }));
   const send = close ?? ((id: string, previewHash: string) => postJson<CloseResponse>(`/api/admin/tournaments/${id}/close`, { previewHash }));
 
   if (step.kind === "closed") {
@@ -86,13 +106,9 @@ export function CloseFlow({ tournament, preview, stored, closedByName, close }: 
           <Icons.circleCheck size={20} className="mt-0.5 shrink-0 text-surf" />
           <div>
             <p className="text-text-primary">
-              <span className="font-medium">{tournament.name}</span> is closed and awaiting settlement. The standings and rewards below are frozen exactly as confirmed.
+              <span className="font-medium">{tournament.name}</span> is closed{step.settlement.state === "settled" || tournament.status === "settled" ? " and settled through Lucra" : " and awaiting settlement"}. The standings and rewards below are frozen exactly as confirmed.
             </p>
-            <p className="mt-1 text-text-secondary">
-              {step.settlement.state === "triggered"
-                ? `Lucra settlement triggered (${step.settlement.reference}).`
-                : "Lucra settlement is not wired in this build; the event stays in awaiting settlement until it is."}
-            </p>
+            <p className="mt-1 text-text-secondary">{settlementCopy(step.settlement, tournament.status)}</p>
           </div>
         </div>
         <FrozenPreview

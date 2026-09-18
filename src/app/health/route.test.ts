@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyMigrations, openConnection } from "@/db/connection";
 import { failEnvelopeSchema, okEnvelopeSchema } from "@/lib/api";
+import { LUCRA_SDK_VERSION } from "@/lucra/version";
 import { z } from "zod";
 
 const healthSchema = z.object({
   buildSha: z.string().min(1),
   lucraMode: z.enum(["mock", "sandbox", "production"]),
   lucraSdkVersion: z.string().min(1),
+  lucraSdk: z.object({ package: z.string().min(1), version: z.string().min(1), source: z.string().min(1) }),
+  lucraMatcherInterpretation: z.enum(["literal", "doc-examples"]),
   session: z.enum(["env", "dev-default", "ephemeral"]),
   devLogin: z.boolean(),
   migrations: z.object({ applied: z.number(), available: z.number(), pending: z.number() }),
@@ -61,7 +64,8 @@ describe("GET /health", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     const text = await res.text();
     const body = okEnvelopeSchema(healthSchema).parse(JSON.parse(text));
-    expect(body.data).toMatchObject({ buildSha: "abc123", lucraMode: "mock", lucraSdkVersion: "unpinned", session: "dev-default", devLogin: true });
+    expect(body.data).toMatchObject({ buildSha: "abc123", lucraMode: "mock", lucraSdkVersion: LUCRA_SDK_VERSION, lucraMatcherInterpretation: "literal", session: "dev-default", devLogin: true });
+    expect(body.data.lucraSdk).toEqual({ package: "lucra-web-sdk", version: LUCRA_SDK_VERSION, source: `github:Lucra-Sports/lucra-web-sdk#v${LUCRA_SDK_VERSION}` });
     expect(body.data.migrations.pending).toBe(0);
     expect(body.data.migrations.applied).toBe(body.data.migrations.available);
     expect(text).not.toContain("super-secret-backend-key");

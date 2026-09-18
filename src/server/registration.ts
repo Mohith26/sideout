@@ -10,6 +10,7 @@ import { systemClock, type Clock } from "@/lib/clock";
 import { uuidv7 } from "@/lib/uuid";
 import { writeAudit } from "@/server/audit";
 import { getDonationProvider, settleDueDonations } from "@/server/donations/stub-provider";
+import { lucraEntryState } from "@/server/lucra";
 import { requireTournamentBySlug } from "@/server/tournaments";
 
 /**
@@ -23,18 +24,34 @@ import { requireTournamentBySlug } from "@/server/tournaments";
 export const registerSchema = z.object({ teamId: z.string().min(1) }).strict();
 
 export interface LucraEntryOutcome {
-  /** Phase 4 replaces this with the real SDK/REST entry; nothing here pretends otherwise. */
-  state: "not_available";
+  /**
+   * Joining a Lucra tournament is the player's own SDK action (auto-join on
+   * sign-in, or `api.joinTournament`), launched by the registration screen in
+   * phase 4b; the server cannot enrol anyone. What it can say is who on the
+   * roster is linked to Lucra yet, and whether the tournament's matchup has
+   * been verified (§7.3.4). The organizer's reconciliation view is the truth
+   * about who actually joined; auto-join is never relied on (§7.5).
+   */
+  state: "awaiting_sdk_join";
+  players: Array<{ userId: string; linked: boolean; externalId: string | null }>;
+  matchupVerified: boolean;
   reason: string;
 }
 
 /**
- * PHASE 4 HOOK — Lucra tournament entry. Called after the donation intent is
- * recorded so the two steps stay ordered and separate. Today it reports that
- * the step is not built; it never fakes an enrolment.
+ * Lucra tournament entry, called after the donation intent is recorded so
+ * the two steps stay ordered and separate. Reports the roster's link state
+ * for the client's join step; it never fakes an enrolment.
  */
-export function lucraEntryHook(_input: { tournamentId: string; teamId: string; userIds: string[] }): LucraEntryOutcome {
-  return { state: "not_available", reason: "Lucra tournament entry arrives in phase 4." };
+export function lucraEntryHook(input: { tournamentId: string; teamId: string; userIds: string[] }): LucraEntryOutcome {
+  const { players, matchupVerified } = lucraEntryState(input.tournamentId, input.userIds);
+  const unlinked = players.filter((p) => !p.linked).length;
+  return {
+    state: "awaiting_sdk_join",
+    players,
+    matchupVerified,
+    reason: unlinked > 0 ? `${unlinked} player${unlinked === 1 ? " has" : "s have"} not signed in to Lucra yet; each joins the tournament from the Lucra SDK.` : "Each player joins the tournament from the Lucra SDK; the organizer's participant view confirms who has.",
+  };
 }
 
 export interface RegistrationResult {

@@ -249,7 +249,7 @@ describe("teams, invites and registration", () => {
     const open = app.tournament(SLUGS.upcoming);
     expect(res.body.data.team.status).toBe("registered");
     expect(res.body.data.donation).toMatchObject({ status: "pending", provider: "stub", amountCents: open.entryDonationCents });
-    expect(res.body.data.lucraEntry.state).toBe("not_available");
+    expect(res.body.data.lucraEntry.state).toBe("awaiting_sdk_join");
     expect(app.audits(team.id, "team.registered")).toHaveLength(1);
     expect(app.audits(res.body.data.donation?.id ?? "", "donation.created")).toHaveLength(1);
 

@@ -4,11 +4,12 @@ import { ZodError, type z } from "zod";
 import { DatabaseNotReadyError } from "@/db/connection";
 import type { User } from "@/db/schema";
 import { BracketError } from "@/domain/bracket";
-import { ConsensusError } from "@/domain/consensus";
+import { ConsensusError, LucraWriteRefused } from "@/domain/consensus";
 import { DrawError } from "@/domain/draw";
 import { ApiFailure, fail, type ApiErrorCode } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
 import { errorMessage, log } from "@/lib/log";
+import { isLucraError, type LucraErrorCode } from "@/lucra";
 import { SESSION_COOKIE } from "@/server/auth/session";
 import { userForSessionToken } from "@/server/auth/viewer";
 
@@ -40,6 +41,43 @@ const CONSENSUS_ERROR_CODE: Record<ConsensusError["code"], ApiErrorCode> = {
   invalid_transition: "conflict",
 };
 
+/**
+ * A Lucra failure surfaces as a Sideout envelope: the sealed code in
+ * `detail.code`, a plain message, and nothing Lucra said verbatim (§9: never
+ * leak Lucra internals). An unreachable or misconfigured Lucra is `unavailable`.
+ */
+const LUCRA_ERROR_CODE: Record<LucraErrorCode, ApiErrorCode> = {
+  invalid_api_key: "unavailable",
+  no_matchup_identifiers: "conflict",
+  matchup_not_found: "conflict",
+  user_not_found: "conflict",
+  validation: "conflict",
+  http: "unavailable",
+  server: "unavailable",
+  transport: "unavailable",
+  shape: "unavailable",
+  not_participant: "conflict",
+  strict_targeting: "conflict",
+  ambiguous_matchup: "conflict",
+  unlinked_user: "conflict",
+};
+
+const LUCRA_ERROR_MESSAGE: Record<LucraErrorCode, string> = {
+  invalid_api_key: "Lucra refused this deployment's API key; check LUCRA_BACKEND_API_KEY.",
+  no_matchup_identifiers: "The Lucra request named no matchup.",
+  matchup_not_found: "Lucra has no matchup for this tournament's externalId.",
+  user_not_found: "Lucra does not know one of the players.",
+  validation: "Lucra refused the request.",
+  http: "Lucra answered with an unexpected status.",
+  server: "Lucra is unavailable right now; the attempt can be retried.",
+  transport: "Lucra could not be reached; the attempt can be retried.",
+  shape: "Lucra answered with an unexpected shape; the attempt can be retried.",
+  not_participant: "Lucra accepted the request but the player is not a participant of the matchup.",
+  strict_targeting: "The Lucra write was not strictly targeted and was refused before it was sent.",
+  ambiguous_matchup: "Lucra returned more than one matchup for this tournament; verify targeting from the console.",
+  unlinked_user: "A player has no Lucra link yet.",
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -65,6 +103,11 @@ export async function handle(fn: () => Promise<Response> | Response): Promise<Re
     if (err instanceof DrawError) return fail(DRAW_ERROR_CODE[err.code], err.message, { code: err.code }, { headers: NO_STORE });
     if (err instanceof BracketError) return fail("conflict", err.message, { code: err.code }, { headers: NO_STORE });
     if (err instanceof ConsensusError) return fail(CONSENSUS_ERROR_CODE[err.code], err.message, { ...err.detail, code: err.code }, { headers: NO_STORE });
+    if (err instanceof LucraWriteRefused) return fail("conflict", err.message, { code: err.code }, { headers: NO_STORE });
+    if (isLucraError(err)) {
+      const body = err.detail.body;
+      return fail(LUCRA_ERROR_CODE[err.code], LUCRA_ERROR_MESSAGE[err.code], { code: err.code, ...(isRecord(body) && typeof body.count === "number" ? { count: body.count } : {}) }, { headers: NO_STORE });
+    }
     if (err instanceof DatabaseNotReadyError) return fail("unavailable", "Database is not ready; run `npm run seed`.", undefined, { headers: NO_STORE });
     log.error("route: unhandled error", { message: errorMessage(err) }, err);
     return fail("internal", "Something went wrong on our side.", undefined, { headers: NO_STORE });

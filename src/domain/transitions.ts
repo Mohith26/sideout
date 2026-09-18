@@ -14,7 +14,8 @@ import type { ActorKind, MatchStatus, TournamentStatus } from "@/db/schema";
  * match has started. `live → awaiting_settlement` is the close flow
  * (`@/server/close`, an organizer confirming a frozen preview after its
  * blocking checks); `awaiting_settlement → settled` is the settlement outcome
- * (phase 4). The status PATCH route never takes those edges directly.
+ * (`@/server/lucra`, or Lucra's `TournamentCompleted` webhook). The status
+ * PATCH route never takes those edges directly.
  *
  * Match:
  *
@@ -41,7 +42,8 @@ interface Edge<S extends string> {
 }
 
 const ORGANIZER: readonly ActorKind[] = ["organizer"];
-const SETTLEMENT: readonly ActorKind[] = ["organizer", "system"];
+/** Settlement outcomes may also arrive as Lucra's `TournamentCompleted` webhook (phase 4). */
+const SETTLEMENT: readonly ActorKind[] = ["organizer", "system", "lucra_webhook"];
 const PLAY: readonly ActorKind[] = ["player", "organizer", "system"];
 const CONSENSUS: readonly ActorKind[] = ["system"];
 

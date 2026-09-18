@@ -11,7 +11,10 @@ import { computePlacements, type PlacementBasis } from "@/domain/placement";
 import { TERMINAL_MATCH_STATUSES, transitionTournament, type TransitionActor } from "@/domain/transitions";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
+import { errorMessage, log } from "@/lib/log";
 import { writeAudit } from "@/server/audit";
+import { settleTournament, type LucraAlert } from "@/server/lucra";
+import { deliverPendingMockWebhooks } from "@/server/lucra-webhooks";
 import { requireTournamentById } from "@/server/tournaments";
 
 /**
@@ -22,9 +25,13 @@ import { requireTournamentById } from "@/server/tournaments";
  * organizer confirmed no longer matches, and only then moves
  * `live → awaiting_settlement`, storing the preview it froze on the row.
  *
- * Settlement itself is Lucra's (phase 4): `lucraSettlementHook` is the single
- * named seam that phase fills in. Tournaments never auto-settle (spec §7.4);
- * this organizer action is the trigger.
+ * Settlement itself is Lucra's: once the close has committed,
+ * `lucraSettlementHook` hands the frozen preview to `settleTournament` in
+ * `@/server/lucra`, which writes any agreed score that never reached Lucra,
+ * closes the matchup with the frozen rewards, and moves the tournament to
+ * `settled` — or leaves it `awaiting_settlement` with a blocking organizer
+ * alert. Tournaments never auto-settle (spec §7.4); this organizer action is
+ * the trigger.
  */
 
 // ---------------------------------------------------------------------------
@@ -278,7 +285,7 @@ export interface CloseResult {
   settlement: SettlementHookResult;
 }
 
-export function closeTournament(input: CloseTournamentInput, clock: Clock = systemClock): CloseResult {
+export async function closeTournament(input: CloseTournamentInput, clock: Clock = systemClock): Promise<CloseResult> {
   const db = getDb();
   const actor: TransitionActor = { kind: "organizer", userId: input.organizerUserId };
   const t = requireTournamentById(input.tournamentId).tournament;
@@ -312,7 +319,6 @@ export function closeTournament(input: CloseTournamentInput, clock: Clock = syst
     closedAt: now,
     closedByUserId: input.organizerUserId,
   };
-  let settlement: SettlementHookResult = { state: "not_available" };
   db.transaction((tx) => {
     tx.update(tournaments).set({ status: "awaiting_settlement", closePreviewJson: JSON.stringify(frozen) }).where(eq(tournaments.id, t.id)).run();
     writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "awaiting_settlement" }, at: now });
@@ -324,8 +330,9 @@ export function closeTournament(input: CloseTournamentInput, clock: Clock = syst
       detail: { previewHash: frozen.previewHash, standings: frozen.standings.length, rewards: frozen.rewards.length, matches: preview.matchesTotal },
       at: now,
     });
-    settlement = lucraSettlementHook(frozen);
   });
+  // After the close has committed: a Lucra problem never unwinds the close, it leaves an alert.
+  const settlement = await lucraSettlementHook(frozen, actor, clock);
   return { detail: getTournamentDetail(requireTournamentById(t.id)), frozen, settlement };
 }
 
@@ -341,18 +348,30 @@ export function closedByName(stored: Pick<StoredClosePreview, "closedByUserId">)
 }
 
 // ---------------------------------------------------------------------------
-// Settlement hook (phase 4)
+// Settlement hook
 // ---------------------------------------------------------------------------
 
-export type SettlementHookResult = { state: "not_available" } | { state: "triggered"; reference: string };
+export type SettlementHookResult =
+  | { state: "settled"; matchupId: string; unassignedUserIds: string[]; writes: number }
+  | { state: "refused"; alert: LucraAlert; writes: number }
+  | { state: "failed"; message: string };
 
 /**
- * Phase 4 replaces the body of this function with the Lucra settlement
- * trigger: every `agreed` consensus of the closed tournament is written
- * through the adapter (after `assertMayWriteToLucra`), then the documented
- * close call. Until then it reports honestly that nothing was triggered; the
- * tournament sits in `awaiting_settlement` and `settled` is not reachable.
+ * The Lucra settlement trigger (spec §7.4, §9): every `agreed` consensus of
+ * the closed tournament is written through the adapter, then the documented
+ * close call. In mock mode the `TournamentCompleted` webhook the mock emits
+ * is delivered to the app's own receiver in process before returning. Any
+ * refusal is reported, never thrown: the tournament stays
+ * `awaiting_settlement` with the alert the organizer acts on.
  */
-export function lucraSettlementHook(_frozen: StoredClosePreview): SettlementHookResult {
-  return { state: "not_available" };
+export async function lucraSettlementHook(frozen: StoredClosePreview, actor: TransitionActor, clock: Clock = systemClock): Promise<SettlementHookResult> {
+  try {
+    const report = await settleTournament(frozen.tournamentId, actor, clock);
+    await deliverPendingMockWebhooks(clock);
+    if (report.state === "settled") return { state: "settled", matchupId: report.matchupId, unassignedUserIds: report.unassignedUserIds, writes: report.writes.length };
+    return { state: "refused", alert: report.alert, writes: report.writes.length };
+  } catch (err) {
+    log.error("close: settlement failed after the close committed", { tournamentId: frozen.tournamentId, message: errorMessage(err) }, err);
+    return { state: "failed", message: errorMessage(err) };
+  }
 }

@@ -120,7 +120,8 @@ function ensureConsensus(tx: Tx, matchId: string, existing: MatchConsensus | nul
   return row;
 }
 
-function moveConsensus(tx: Tx, consensus: MatchConsensus, to: ConsensusState, actor: TransitionActor, now: number, patch: Partial<MatchConsensus>, detail: Record<string, unknown>): void {
+/** Move a consensus row along one edge of the table, auditing it; shared with the Lucra write path in `@/server/lucra`. */
+export function moveConsensus(tx: Tx, consensus: MatchConsensus, to: ConsensusState, actor: TransitionActor, now: number, patch: Partial<MatchConsensus>, detail: Record<string, unknown>): void {
   const verdict = transitionConsensus(consensus.state, to, actor);
   if (!verdict.ok) throw new ConsensusError("invalid_transition", verdict.reason, { code: "invalid_transition", from: consensus.state, to });
   tx.update(matchConsensus)

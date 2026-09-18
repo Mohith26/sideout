@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { NextConfig } from "next";
+import { pageExtensionsFor } from "./src/lib/build-gates";
 
 /**
  * Resolve the build sha once at build/dev start. `BUILD_SHA` (set by the deploy
@@ -22,19 +23,14 @@ function resolveBuildSha(): string {
 }
 
 /**
- * `POST /api/dev/login` lives in `route.dev.ts`. The `dev.ts` page extension is
- * registered only when dev login is enabled, so a normal production build does
- * not contain the route. Mirrors `isDevLoginEnabled` in `src/env.ts`, which
- * cannot be imported here (it is `server-only`).
+ * `POST /api/dev/login` (`route.dev.ts`) and `GET /api/rest/_mock/state`
+ * (`route.mock.ts`) are registered by page extension, so a build that must
+ * not contain them does not (`src/lib/build-gates.ts`; asserted by
+ * `npm run test:bundle`).
  */
-function devLoginEnabled(): boolean {
-  const flag = (process.env.SIDEOUT_DEV_LOGIN ?? "").trim();
-  return process.env.NODE_ENV !== "production" || flag === "true" || flag === "1";
-}
-
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  pageExtensions: devLoginEnabled() ? ["tsx", "ts", "jsx", "js", "dev.ts"] : ["tsx", "ts", "jsx", "js"],
+  pageExtensions: pageExtensionsFor(process.env),
   poweredByHeader: false,
   // Repo guidance for agents lives in AGENTS.md under our own control; keep
   // `next dev` from rewriting it on every start.

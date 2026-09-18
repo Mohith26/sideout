@@ -10,8 +10,8 @@ describe("tournament transitions", () => {
     draft: { registration_open: ["organizer"], cancelled: ["organizer"] },
     registration_open: { registration_closed: ["organizer"], cancelled: ["organizer"] },
     registration_closed: { live: ["organizer"], cancelled: ["organizer"] },
-    live: { awaiting_settlement: ["organizer", "system"] },
-    awaiting_settlement: { settled: ["organizer", "system"] },
+    live: { awaiting_settlement: ["organizer", "system", "lucra_webhook"] },
+    awaiting_settlement: { settled: ["organizer", "system", "lucra_webhook"] },
     settled: {},
     cancelled: {},
   };

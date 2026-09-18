@@ -11,13 +11,15 @@ export const dynamic = "force-dynamic";
  * confirm (spec §9, §10.7, §11.6). Requires the `previewHash` from
  * `GET …/close/preview`; refused with `close_blocked` (naming every blocking
  * match) or `preview_stale` (the standings or rewards changed) rather than
- * ever closing over something the organizer did not see.
+ * ever closing over something the organizer did not see. Once the close has
+ * committed, Lucra settlement runs (`lucraSettlementHook`) and its outcome is
+ * returned as `settlement`.
  */
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/admin/tournaments/[id]/close">) {
   return handle(async () => {
     const organizer = requireOrganizer(request);
     const { id } = await ctx.params;
     const { previewHash } = await parseBody(request, closeRequestSchema);
-    return ok(closeTournament({ tournamentId: id, organizerUserId: organizer.id, previewHash }), { headers: NO_STORE });
+    return ok(await closeTournament({ tournamentId: id, organizerUserId: organizer.id, previewHash }), { headers: NO_STORE });
   });
 }

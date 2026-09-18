@@ -4,6 +4,7 @@ import type {
   NewCharity,
   NewDonation,
   NewLucraLink,
+  NewLucraScoreSubmission,
   NewMatch,
   NewMatchConsensus,
   NewPool,
@@ -32,13 +33,17 @@ import {
   type DrawTeam,
 } from "@/domain/draw";
 import { canonicalizeSubmission, CONSENSUS_AUDIT, describeDifferences, diffScorelines, toPerspective, type StoredSubmission } from "@/domain/consensus";
+import { buildLucraScoreWrite, callsForStorage, LUCRA_AUDIT, OUTCOME_EVENT, OUTCOME_TO_STATE, storedRequestFor, storedResponseFor, type StoredLucraRequest } from "@/domain/lucra-score";
 import { computeStandings, type StandingRow, type StandingsMatch } from "@/domain/standings";
 import { assertTeamRoster } from "@/domain/team";
 import { DECIDING_SET_TARGET, SET_TARGET, judgeMatch, judgeSet, setTarget, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
 import { hashScoreline } from "@/domain/scoreline-hash";
 import { pairName, surname } from "@/lib/format";
 import { createRng, type Rng } from "@/lib/rng";
-import { createUuidV7Generator, shortId } from "@/lib/uuid";
+import { createUuidV7Generator, shortId, uuidFromSeed } from "@/lib/uuid";
+import { LUCRA_API_KEY_HEADER, LUCRA_ERROR_BODIES, LUCRA_PATHS, REDACTED } from "@/lucra/endpoints";
+import type { ScoreWriteResult, WriteOutcome } from "@/lucra/adapter";
+import type { CallRecord } from "@/lucra/types";
 import { ORGANIZER_NAMES, PLAYER_NAMES } from "@/seed/names";
 
 /**
@@ -70,6 +75,7 @@ export interface SeedDataset {
   sets: NewSetRow[];
   scoreSubmissions: NewScoreSubmission[];
   matchConsensus: NewMatchConsensus[];
+  lucraScoreSubmissions: NewLucraScoreSubmission[];
   donations: NewDonation[];
   sponsors: NewSponsor[];
   rewards: NewReward[];
@@ -196,6 +202,17 @@ interface PoolResult {
   standings: StandingRow[];
 }
 
+/** What a seeded Lucra attempt looks like: the outcome, and for a failure the documented shape it carries. */
+type SeededLucraAttempt = { outcome: "accepted" } | { outcome: "partial" } | { outcome: "rejected"; error: string; httpStatus: number } | { outcome: "transport_error"; httpStatus: number };
+
+interface AgreedMatch {
+  match: NewMatch;
+  consensus: NewMatchConsensus;
+  a: SeedTeam;
+  b: SeedTeam;
+  sets: SetScore[];
+}
+
 // ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
@@ -204,6 +221,8 @@ class SeedBuilder {
   readonly rng: Rng;
   private clock: number;
   private readonly mint: () => string;
+  /** Every agreed match, so the Lucra writes can be replayed after play. */
+  readonly agreed = new Map<string, AgreedMatch>();
   readonly data: SeedDataset = {
     charities: [],
     users: [],
@@ -218,6 +237,7 @@ class SeedBuilder {
     sets: [],
     scoreSubmissions: [],
     matchConsensus: [],
+    lucraScoreSubmissions: [],
     donations: [],
     sponsors: [],
     rewards: [],
@@ -608,6 +628,161 @@ class SeedBuilder {
     }
     this.matchTransition(match, "final", { kind: "system", userId: null }, finalizedAt, { winnerTeamId, consensusId: consensus.id, hash });
     match.finalizedAt = finalizedAt;
+    this.agreed.set(match.id, { match, consensus, a, b, sets: [...sets] });
+  }
+
+  // -- Lucra ------------------------------------------------------------------
+  //
+  // The rows and audit entries `submitConsensusScores` (`@/server/lucra`)
+  // writes for an agreed match: the consensus moves `agreed → submitting →
+  // accepted | partial | rejected` as actor `system`, and one
+  // `lucra_score_submissions` row per attempt holds exactly what went over the
+  // wire (key redacted) and exactly what came back. The mock is rebuilt from
+  // these rows at boot, so the leaderboard it serves agrees with them.
+
+  /** The mock's matchup id for a tournament: what the pre-write query returns for its `externalId`. */
+  static lucraMatchupId(t: Pick<NewTournament, "lucraExternalId">): string {
+    return uuidFromSeed(`matchup:${t.lucraExternalId}`);
+  }
+
+  /** The §7.3.4 assertion, already run and cached for a tournament whose scores were written. */
+  verifyLucraMatchup(t: NewTournament, at: number): void {
+    t.lucraMatchupId = SeedBuilder.lucraMatchupId(t);
+    t.lucraMatchupVerifiedAt = at;
+    this.audit({
+      actorUserId: null,
+      actorKind: "system",
+      action: LUCRA_AUDIT.matchupVerified,
+      subjectType: "tournament",
+      subjectId: t.id,
+      detailJson: JSON.stringify({ externalId: t.lucraExternalId, matchupId: t.lucraMatchupId, count: 1 }),
+      createdAt: at,
+    });
+  }
+
+  /** One Lucra attempt for an agreed match, exactly as the service records it. */
+  writeToLucra(t: NewTournament, agreed: AgreedMatch, attempt: SeededLucraAttempt, attemptNumber: number, at: number): NewLucraScoreSubmission {
+    const { match, consensus, a, b, sets } = agreed;
+    const idempotencyKey = consensus.idempotencyKey;
+    if (!idempotencyKey) throw new Error("seed: an agreed consensus has no idempotency key");
+    const externalIdOf = (u: SeedUser) => this.data.lucraLinks.find((l) => l.userId === u.row.id)?.externalId ?? null;
+    const team = (st: SeedTeam) => ({ id: st.row.id, members: st.members.map((m) => ({ userId: m.row.id, externalId: externalIdOf(m) })) });
+    const { input, unlinked } = buildLucraScoreWrite({
+      match: { id: match.id, round: match.round, winnerTeamId: match.winnerTeamId ?? null },
+      tournament: { slug: t.slug, lucraExternalId: t.lucraExternalId, lucraGameId: t.lucraGameId, lucraLocationId: t.lucraLocationId ?? null },
+      idempotencyKey,
+      teamA: team(a),
+      teamB: team(b),
+      sets,
+    });
+    if (unlinked.length > 0) throw new Error("seed: every seeded player is linked");
+    const matchupId = SeedBuilder.lucraMatchupId(t);
+    const submissionId = this.id(at);
+    const startedAt = at;
+    const finishedAt = at + 180 + this.rng.int(0, 420);
+
+    // One call per user score, as the type-specific endpoint takes them.
+    const headers = { Accept: "application/json", [LUCRA_API_KEY_HEADER]: REDACTED, "Content-Type": "application/json" };
+    const calls: CallRecord[] = input.userScores.map((userScore, i) => {
+      const body = { object: { matchupMetadata: { externalId: t.lucraExternalId }, gameId: t.lucraGameId, userScore } };
+      const base = { method: "POST" as const, path: LUCRA_PATHS.poolTournamentUserScore, request: { headers, body }, startedAt: startedAt + i, error: null };
+      switch (attempt.outcome) {
+        case "accepted":
+          return { ...base, tries: 1, finishedAt: finishedAt + i, response: { status: 200, body: { status: "success", data: { affectedMatchupIds: [matchupId], failedMatchupIds: [] } } } };
+        case "partial":
+          return { ...base, tries: 1, finishedAt: finishedAt + i, response: { status: 200, body: { status: "success", data: { affectedMatchupIds: [], failedMatchupIds: [matchupId] } } } };
+        case "rejected":
+          return { ...base, tries: 1, finishedAt: finishedAt + i, response: { status: attempt.httpStatus, body: { status: "failure", error: attempt.error } }, error: { code: attempt.error === LUCRA_ERROR_BODIES.matchupNotFound ? "matchup_not_found" : "user_not_found", message: `Lucra refused the request: ${attempt.error}` } };
+        case "transport_error":
+          return { ...base, tries: 4, finishedAt: finishedAt + 2_000 + i, response: { status: attempt.httpStatus, body: { error: "upstream unavailable" } }, error: { code: "server", message: `Lucra answered ${attempt.httpStatus} (after 4 tries)` } };
+      }
+    });
+    const outcome: WriteOutcome = attempt.outcome;
+    const httpStatus = attempt.outcome === "accepted" || attempt.outcome === "partial" ? 200 : attempt.httpStatus;
+    const error: ScoreWriteResult["error"] =
+      attempt.outcome === "accepted"
+        ? null
+        : attempt.outcome === "partial"
+          ? { code: "validation", message: `Lucra reported failed matchups: ${matchupId}` }
+          : (calls[0]?.error ?? null);
+    const result: ScoreWriteResult = { outcome, endpoint: "pool_tournament", calls, affectedMatchupIds: attempt.outcome === "accepted" ? [matchupId] : [], failedMatchupIds: attempt.outcome === "partial" ? [matchupId] : [], httpStatus, error };
+    const stored: StoredLucraRequest = { ...storedRequestFor(input), calls: callsForStorage(calls) };
+    const row: NewLucraScoreSubmission = {
+      id: submissionId,
+      matchId: match.id,
+      tournamentId: t.id,
+      idempotencyKey,
+      requestJson: JSON.stringify(stored),
+      responseJson: JSON.stringify(storedResponseFor(result)),
+      httpStatus,
+      affectedMatchupIdsJson: JSON.stringify(result.affectedMatchupIds),
+      failedMatchupIdsJson: JSON.stringify(result.failedMatchupIds),
+      outcome,
+      attempt: attemptNumber,
+      createdAt: startedAt,
+    };
+    this.data.lucraScoreSubmissions.push(row);
+
+    const system = { kind: "system" as const, userId: null };
+    const actorKind = attemptNumber === 1 ? "system" : "organizer";
+    const actorUserId = attemptNumber === 1 ? null : (this.data.users.find((u) => u.role === "organizer")?.id ?? null);
+    this.audit({
+      actorUserId,
+      actorKind,
+      action: CONSENSUS_AUDIT.stateChanged,
+      subjectType: "consensus",
+      subjectId: consensus.id,
+      detailJson: JSON.stringify({ matchId: match.id, from: consensus.state, to: "submitting", event: attemptNumber === 1 ? "lucra_submit" : "organizer_retry", attempt: attemptNumber, submissionId, idempotencyKey }),
+      createdAt: startedAt,
+    });
+    consensus.state = "submitting";
+    consensus.updatedAt = startedAt;
+    const next = OUTCOME_TO_STATE[outcome];
+    this.audit({
+      actorUserId: system.userId,
+      actorKind: system.kind,
+      action: CONSENSUS_AUDIT.stateChanged,
+      subjectType: "consensus",
+      subjectId: consensus.id,
+      detailJson: JSON.stringify({ matchId: match.id, from: "submitting", to: next, event: OUTCOME_EVENT[outcome], outcome, attempt: attemptNumber, submissionId, httpStatus, error }),
+      createdAt: finishedAt,
+    });
+    consensus.state = next;
+    consensus.updatedAt = finishedAt;
+    this.audit({
+      actorUserId: null,
+      actorKind: "system",
+      action: LUCRA_AUDIT.scoreWritten,
+      subjectType: "match",
+      subjectId: match.id,
+      detailJson: JSON.stringify({ submissionId, attempt: attemptNumber, outcome, affected: result.affectedMatchupIds, failed: result.failedMatchupIds, httpStatus, error, calls: calls.length }),
+      createdAt: finishedAt,
+    });
+    return row;
+  }
+
+  /**
+   * Write every agreed match of a tournament to Lucra as it was agreed, with
+   * `failures` naming matches whose first attempt did not land (each is then
+   * retried by the organizer and accepted), so the audit view shows every
+   * outcome on first run.
+   */
+  writeAgreedToLucra(t: NewTournament, failures: ReadonlyMap<string, SeededLucraAttempt>): void {
+    const rows = [...this.agreed.values()].filter((x) => x.match.tournamentId === t.id).sort((x, y) => (x.match.finalizedAt ?? 0) - (y.match.finalizedAt ?? 0));
+    if (rows.length === 0) return;
+    const firstAt = Math.min(...rows.map((r) => r.match.finalizedAt ?? 0));
+    this.verifyLucraMatchup(t, firstAt + 1_000);
+    for (const agreed of rows) {
+      const at = (agreed.match.finalizedAt ?? 0) + 2_000 + this.rng.int(0, 3_000);
+      const failure = failures.get(agreed.match.id);
+      if (!failure) {
+        this.writeToLucra(t, agreed, { outcome: "accepted" }, 1, at);
+        continue;
+      }
+      this.writeToLucra(t, agreed, failure, 1, at);
+      // The organizer retries a few minutes later with the same key; it lands.
+      this.writeToLucra(t, agreed, { outcome: "accepted" }, 2, at + this.rng.int(4, 11) * MINUTE);
+    }
   }
 
   /**
@@ -1071,6 +1246,18 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     b.seedBracketFromPools(t, drawn, results, SEED_DRAWS.settled, teamsById, lastPool + 5 * MINUTE);
     b.playBracket(drawn, organizer, { 1: "final", 2: "final", 3: "final", 4: "final", 5: "final", 6: "final", 7: "final" }, teamsById);
     b.commitMatches(drawn);
+    // Every agreed result was written to Lucra as it was agreed. One pool match hit a
+    // Lucra outage (503s through every retry) and one quarterfinal was written before
+    // the matchup existed in Lucra ("Matchup not found"); both were retried and landed.
+    {
+      const finals = b.data.matches.filter((m) => m.tournamentId === t.id && m.status === "final").sort((x, y) => (x.finalizedAt ?? 0) - (y.finalizedAt ?? 0));
+      const outage = finals[3];
+      const early = finals.find((m) => m.bracketPosition === 1);
+      const failures = new Map<string, SeededLucraAttempt>();
+      if (outage) failures.set(outage.id, { outcome: "transport_error", httpStatus: 503 });
+      if (early) failures.set(early.id, { outcome: "rejected", error: LUCRA_ERROR_BODIES.matchupNotFound, httpStatus: 404 });
+      b.writeAgreedToLucra(t, failures);
+    }
 
     const northline = b.sponsor(t, "Northline Boardworks", "presenting", 150000);
     b.sponsor(t, "Dune & Co. Eyewear", "prize", 50000);
@@ -1204,6 +1391,14 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       teamsById,
     );
     b.commitMatches(drawn);
+    // Written as agreed, including the two finished quarterfinals; Lucra reported the
+    // matchup as failed on quarterfinal 10's first attempt (a partial), retried and accepted.
+    {
+      const ten = b.data.matches.find((m) => m.tournamentId === t.id && m.bracketPosition === 10);
+      const failures = new Map<string, SeededLucraAttempt>();
+      if (ten) failures.set(ten.id, { outcome: "partial" });
+      b.writeAgreedToLucra(t, failures);
+    }
 
     b.sponsor(t, "Northline Boardworks", "presenting", 250000);
     b.sponsor(t, "Saltwater Coffee Roasters", "court", 75000);

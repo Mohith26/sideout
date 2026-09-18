@@ -12,9 +12,15 @@ import { log } from "@/lib/log";
  * reached the server env. `server-only` on `src/env.ts` is the build-time guard;
  * this is the proof over the artifact.
  *
- * The same build must not contain `POST /api/dev/login`: `next.config.ts`
- * registers its `dev.ts` page extension only outside production or with
- * `SIDEOUT_DEV_LOGIN=true`, and this build sets neither.
+ * The same is asserted for the webhook secret (`LUCRA_WEBHOOK_SECRET`, spec
+ * §7.6): a second sentinel, the same scan.
+ *
+ * The build runs with `LUCRA_MODE=sandbox` (pointing at an unreachable host;
+ * nothing is called at build time) so that it must also contain neither
+ * `POST /api/dev/login` nor `GET /api/rest/_mock/state`: `next.config.ts`
+ * registers their `dev.ts` and `mock.ts` page extensions only outside
+ * production / in mock mode (`src/lib/build-gates.ts`), and this build is
+ * neither.
  *
  * Nor may the client output carry Node's `crypto` polyfill: the score sheet
  * judges legality in the browser with `@/domain/scoreline`, and the hash that
@@ -24,9 +30,13 @@ import { log } from "@/lib/log";
  */
 const VARIABLE_NAME = "LUCRA_BACKEND_API_KEY";
 const SENTINEL = "sideout-backend-key-sentinel-4b1f9e2d";
+const SECRET_VARIABLE_NAME = "LUCRA_WEBHOOK_SECRET";
+const SECRET_SENTINEL = "sideout-webhook-secret-sentinel-9c7e21aa";
 const CRYPTO_POLYFILL = "/crypto-browserify/";
 const CLIENT_OUTPUT = resolve(process.cwd(), ".next", "static");
 const DEV_LOGIN_OUTPUT = resolve(process.cwd(), ".next", "server", "app", "api", "dev");
+/** The `%5Fmock` folder (a URL-encoded underscore segment) may be emitted under either spelling. */
+const MOCK_STATE_OUTPUTS = ["%5Fmock", "_mock"].map((name) => resolve(process.cwd(), ".next", "server", "app", "api", "rest", name));
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -38,7 +48,13 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const nextBin = resolve(process.cwd(), "node_modules", "next", "dist", "bin", "next");
-const buildEnv: NodeJS.ProcessEnv = { ...process.env, LUCRA_MODE: "mock", [VARIABLE_NAME]: SENTINEL };
+const buildEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  LUCRA_MODE: "sandbox",
+  LUCRA_BASE_URL: "https://lucra.invalid",
+  [VARIABLE_NAME]: SENTINEL,
+  [SECRET_VARIABLE_NAME]: SECRET_SENTINEL,
+};
 delete buildEnv.SIDEOUT_DEV_LOGIN;
 execFileSync(process.execPath, [nextBin, "build"], {
   stdio: "inherit",
@@ -51,10 +67,12 @@ if (files.length === 0) {
 }
 
 const leaks: string[] = [];
+const secretLeaks: string[] = [];
 const polyfilled: string[] = [];
 for (const file of files) {
   const bytes = readFileSync(file);
   if (bytes.includes(SENTINEL) || bytes.includes(VARIABLE_NAME)) leaks.push(file);
+  if (bytes.includes(SECRET_SENTINEL) || bytes.includes(SECRET_VARIABLE_NAME)) secretLeaks.push(file);
   if (bytes.includes(CRYPTO_POLYFILL)) polyfilled.push(file);
 }
 
@@ -65,6 +83,15 @@ if (leaks.length > 0) {
   process.exitCode = 1;
 } else {
   log.info("client bundle is clean", { scanned: files.length, variable: VARIABLE_NAME });
+}
+
+if (secretLeaks.length > 0) {
+  for (const file of secretLeaks) {
+    log.error("webhook secret reached a client bundle", { file: relative(process.cwd(), file) });
+  }
+  process.exitCode = 1;
+} else {
+  log.info("client bundle has no webhook secret", { variable: SECRET_VARIABLE_NAME });
 }
 
 if (polyfilled.length > 0) {
@@ -81,4 +108,12 @@ if (existsSync(DEV_LOGIN_OUTPUT)) {
   process.exitCode = 1;
 } else {
   log.info("production build has no dev login route");
+}
+
+const mockOutput = MOCK_STATE_OUTPUTS.find((dir) => existsSync(dir));
+if (mockOutput) {
+  log.error("mock state route exists in a non-mock build", { dir: relative(process.cwd(), mockOutput) });
+  process.exitCode = 1;
+} else {
+  log.info("sandbox build has no mock state route");
 }

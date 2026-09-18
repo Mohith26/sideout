@@ -36,6 +36,13 @@
       "when": 1789701594908,
       "tag": "0004_slim_roxanne_simpson",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789719654120,
+      "tag": "0005_burly_fixer",
+      "breakpoints": true
     }
   ]
 }

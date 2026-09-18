@@ -54,8 +54,9 @@ test.describe("Match page", () => {
     const m = matchWithStatus(detail, "final");
     await page.goto(`/m/${m.match.id}`);
     await expect(page.getByText("Final", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Agreed", { exact: true })).toBeVisible();
-    await expect(page.getByText("Both teams submitted the same result.")).toBeVisible();
+    // Seeded finals were agreed and then written to Lucra (phase 4): the badge shows the accepted write.
+    await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+    await expect(page.getByText("Lucra accepted the agreed result.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Agreed result" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Score history" })).toBeVisible();
     await expect(page.getByRole("link", { name: detail.tournament.name })).toBeVisible();
