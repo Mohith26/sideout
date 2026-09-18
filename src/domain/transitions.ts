@@ -69,8 +69,6 @@ export const MATCH_TRANSITIONS: readonly Edge<MatchStatus>[] = [
 
 /** Statuses a tournament can still be drawn in. */
 export const DRAWABLE_STATUSES: ReadonlySet<TournamentStatus> = new Set(["registration_closed"]);
-/** Statuses that count as "before live": cancellable, editable without care. */
-export const PRE_LIVE_STATUSES: ReadonlySet<TournamentStatus> = new Set(["draft", "registration_open", "registration_closed"]);
 /** Terminal match statuses. */
 export const TERMINAL_MATCH_STATUSES: ReadonlySet<MatchStatus> = new Set(["final", "forfeited", "bye"]);
 
@@ -90,9 +88,4 @@ export function transitionTournament(from: TournamentStatus, to: TournamentStatu
 
 export function transitionMatch(from: MatchStatus, to: MatchStatus, actor: TransitionActor): TransitionVerdict {
   return judge(MATCH_TRANSITIONS, "match", from, to, actor);
-}
-
-/** Targets reachable from `from` for `actor`, for UI affordances. */
-export function tournamentTargets(from: TournamentStatus, actor: TransitionActor): TournamentStatus[] {
-  return TOURNAMENT_TRANSITIONS.filter((e) => e.from === from && e.actors.includes(actor.kind)).map((e) => e.to);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceWinner, BracketError, fillSlot, forfeitMatch, resolveBye, type BracketMatch } from "@/domain/bracket";
+import { advanceWinner, BracketError, fillSlot, forfeitMatch, type BracketMatch } from "@/domain/bracket";
 
 const AT = 1_800_000_000_000;
 
@@ -63,22 +63,6 @@ describe("forfeitMatch", () => {
     expect(errorCode(() => forfeitMatch(match(), "Z", AT))).toBe("not_a_participant");
     expect(errorCode(() => forfeitMatch(match({ teamBId: null, status: "scheduled" }), "A", AT))).toBe("missing_opponent");
     expect(errorCode(() => forfeitMatch(match({ status: "forfeited", winnerTeamId: "B" }), "A", AT))).toBe("already_resolved");
-  });
-});
-
-describe("resolveBye", () => {
-  it("auto-advances the only team of a round-1 match", () => {
-    const out = resolveBye(match({ teamBId: null, status: "scheduled" }), AT);
-    expect(out.match).toEqual({ id: "m1", status: "bye", winnerTeamId: "A", finalizedAt: AT });
-    expect(out.next).toEqual({ matchId: "m9", slot: "a", teamId: "A" });
-    expect(resolveBye(match({ teamAId: null, status: "scheduled" }), AT).match.winnerTeamId).toBe("B");
-  });
-
-  it("is only a bye in round 1 with exactly one team, and only once", () => {
-    expect(errorCode(() => resolveBye(match({ status: "scheduled" }), AT))).toBe("not_a_bye");
-    expect(errorCode(() => resolveBye(match({ teamAId: null, teamBId: null, status: "scheduled" }), AT))).toBe("not_a_bye");
-    expect(errorCode(() => resolveBye(match({ teamBId: null, status: "scheduled", round: 2 }), AT))).toBe("not_a_bye");
-    expect(errorCode(() => resolveBye(match({ teamBId: null, status: "bye", winnerTeamId: "A" }), AT))).toBe("already_resolved");
   });
 });
 

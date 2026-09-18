@@ -1,15 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ACTOR_KINDS, MATCH_STATUSES, TOURNAMENT_STATUSES, type ActorKind, type MatchStatus, type TournamentStatus } from "@/db/schema";
-import {
-  DRAWABLE_STATUSES,
-  MATCH_TRANSITIONS,
-  PRE_LIVE_STATUSES,
-  TERMINAL_MATCH_STATUSES,
-  TOURNAMENT_TRANSITIONS,
-  tournamentTargets,
-  transitionMatch,
-  transitionTournament,
-} from "@/domain/transitions";
+import { DRAWABLE_STATUSES, MATCH_TRANSITIONS, TERMINAL_MATCH_STATUSES, TOURNAMENT_TRANSITIONS, transitionMatch, transitionTournament } from "@/domain/transitions";
 
 const actor = (kind: ActorKind) => ({ kind, userId: kind === "system" || kind === "lucra_webhook" ? null : "u1" });
 
@@ -40,17 +31,14 @@ describe("tournament transitions", () => {
   });
 
   it("cancels only before live, and never reopens a cancelled or settled event", () => {
-    for (const from of PRE_LIVE_STATUSES) expect(transitionTournament(from, "cancelled", actor("organizer")).ok).toBe(true);
+    for (const from of ["draft", "registration_open", "registration_closed"] as const) expect(transitionTournament(from, "cancelled", actor("organizer")).ok).toBe(true);
     expect(transitionTournament("live", "cancelled", actor("organizer")).ok).toBe(false);
     expect(transitionTournament("cancelled", "draft", actor("organizer")).ok).toBe(false);
     expect(transitionTournament("settled", "live", actor("system")).ok).toBe(false);
   });
 
-  it("keeps settlement edges away from players and lists targets per actor", () => {
+  it("keeps settlement edges away from players", () => {
     expect(transitionTournament("live", "awaiting_settlement", actor("player")).ok).toBe(false);
-    expect(tournamentTargets("draft", actor("organizer"))).toEqual(["registration_open", "cancelled"]);
-    expect(tournamentTargets("draft", actor("player"))).toEqual([]);
-    expect(tournamentTargets("live", actor("system"))).toEqual(["awaiting_settlement"]);
   });
 
   it("draws only in registration_closed", () => {

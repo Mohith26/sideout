@@ -24,6 +24,9 @@ describe("public tournament routes", () => {
 
   const succeeded = (tournamentId: string) =>
     app.data.donations.filter((d) => d.tournamentId === tournamentId && d.status === "succeeded").reduce((s, d) => s + d.amountCents, 0);
+  /** Every seeded pending stub intent is past its settle delay, so a public read counts it too. */
+  const settled = (tournamentId: string) =>
+    app.data.donations.filter((d) => d.tournamentId === tournamentId && (d.status === "succeeded" || d.status === "pending")).reduce((s, d) => s + d.amountCents, 0);
 
   it("lists every event with figures derived from rows, filterable by status", async () => {
     const res = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
@@ -32,7 +35,7 @@ describe("public tournament routes", () => {
     expect(res.body.ok).toBe(true);
     expect(res.body.data.map((s) => s.tournament.status).sort()).toEqual(["live", "registration_open", "settled"]);
     for (const s of res.body.data) {
-      expect(s.raisedCents).toBe(succeeded(s.tournament.id));
+      expect(s.raisedCents).toBe(settled(s.tournament.id));
       expect(s.activeTeams).toBe(app.data.teams.filter((t) => t.tournamentId === s.tournament.id && (t.status === "registered" || t.status === "checked_in")).length);
     }
     const upcoming = res.body.data.find((s) => s.tournament.slug === SLUGS.upcoming);
@@ -43,6 +46,22 @@ describe("public tournament routes", () => {
     const two = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live,settled");
     expect(two.body.data).toHaveLength(2);
     expectFailure(await app.call(listTournaments, "/api/tournaments?status=bogus"), 400, "bad_request");
+  });
+
+  it("reports one figure per event whichever public read comes first", async () => {
+    const live = app.tournament(SLUGS.live);
+    expect(settled(live.id)).toBeGreaterThan(succeeded(live.id));
+    // The list is the first read on a fresh database: it already carries the settled total.
+    const list = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live");
+    const listed = list.body.data.find((s) => s.tournament.id === live.id);
+    expect(listed?.raisedCents).toBe(settled(live.id));
+    const detail = await app.call<Envelope<{ raisedCents: number; donorCount: number }>>(getTournament, `/api/tournaments/${SLUGS.live}`, { params: { slug: SLUGS.live } });
+    const impact = await app.call<Envelope<{ breakdown: { raisedCents: number; donorCount: number } }>>(getImpact, `/api/tournaments/${SLUGS.live}/impact`, { params: { slug: SLUGS.live } });
+    const again = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live");
+    expect([detail.body.data.raisedCents, impact.body.data.breakdown.raisedCents, again.body.data[0]?.raisedCents]).toEqual([settled(live.id), settled(live.id), settled(live.id)]);
+    expect([detail.body.data.donorCount, impact.body.data.breakdown.donorCount, again.body.data[0]?.donorCount]).toEqual([listed?.donorCount, listed?.donorCount, listed?.donorCount]);
+    // Sweeping is idempotent: the flip is audited exactly once per donation.
+    for (const d of app.data.donations.filter((x) => x.tournamentId === live.id && x.status === "pending")) expect(app.audits(d.id, "donation.succeeded")).toHaveLength(1);
   });
 
   it("keeps every Lucra identifier off the public shapes and never exposes a draft", async () => {

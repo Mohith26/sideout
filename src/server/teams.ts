@@ -3,13 +3,13 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { findUserTeamInTournament, getTeamDetail, type TeamDetail } from "@/db/queries/teams";
-import { teamInvites, teamMembers, teams, users, type User } from "@/db/schema";
+import { teamInvites, teamMembers, teams, users, type Team, type User } from "@/db/schema";
 import { checkTeamRoster } from "@/domain/team";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
 import { phoneSchema } from "@/lib/phone";
 import { uuidv7 } from "@/lib/uuid";
-import { writeAudit } from "@/server/audit";
+import { writeAudit, type Tx } from "@/server/audit";
 import { getSmsSender } from "@/server/auth/sms";
 import { requireTournamentBySlug } from "@/server/tournaments";
 
@@ -29,6 +29,18 @@ export const createTeamSchema = z
   .strict();
 export type CreateTeamInput = z.infer<typeof createTeamSchema>;
 
+/**
+ * A captain's own team that is still waiting on its partner: one member, the
+ * caller, and no registration. Creating another team supersedes it, so a
+ * mistyped invite is not a dead end. Anything further along (a partner has
+ * joined, or the team registered) stays and blocks a second team.
+ */
+function findSupersedableTeam(db: Tx, existing: Team | null, captainId: string): Team | null {
+  if (!existing || existing.status !== "forming") return null;
+  const roster = db.select({ userId: teamMembers.userId, role: teamMembers.role }).from(teamMembers).where(eq(teamMembers.teamId, existing.id)).all();
+  return roster.length === 1 && roster[0]?.userId === captainId && roster[0].role === "captain" ? existing : null;
+}
+
 export function createTeam(input: CreateTeamInput, captain: User, clock: Clock = systemClock): TeamDetail {
   const db = getDb();
   const { tournament } = requireTournamentBySlug(input.tournamentSlug);
@@ -37,7 +49,8 @@ export function createTeam(input: CreateTeamInput, captain: User, clock: Clock =
   }
   if (captain.phoneE164 && captain.phoneE164 === input.partnerPhone) throw new ApiFailure("bad_request", "Invite someone other than yourself.");
   const existing = findUserTeamInTournament(captain.id, tournament.id);
-  if (existing) throw new ApiFailure("conflict", `You are already on "${existing.name}" in this event.`, { teamId: existing.id });
+  const superseded = findSupersedableTeam(db, existing, captain.id);
+  if (existing && !superseded) throw new ApiFailure("conflict", `You are already on "${existing.name}" in this event.`, { teamId: existing.id });
   const partner = db.select().from(users).where(eq(users.phoneE164, input.partnerPhone)).get();
   if (partner && findUserTeamInTournament(partner.id, tournament.id)) {
     throw new ApiFailure("conflict", "That player is already on a team in this event.");
@@ -46,13 +59,22 @@ export function createTeam(input: CreateTeamInput, captain: User, clock: Clock =
   const now = clock.now();
   const teamId = uuidv7();
   db.transaction((tx) => {
+    const actor = { kind: "player" as const, userId: captain.id };
+    if (superseded) {
+      tx.update(teamInvites)
+        .set({ status: "revoked", respondedAt: now })
+        .where(and(eq(teamInvites.teamId, superseded.id), eq(teamInvites.status, "pending")))
+        .run();
+      tx.update(teams).set({ status: "withdrawn" }).where(eq(teams.id, superseded.id)).run();
+      writeAudit(tx, { actor, action: "team.invite_revoked", subjectType: "team", subjectId: superseded.id, detail: { reason: "superseded", supersededBy: teamId }, at: now });
+      writeAudit(tx, { actor, action: "team.withdrawn", subjectType: "team", subjectId: superseded.id, detail: { from: "forming", to: "withdrawn", supersededBy: teamId }, at: now });
+    }
     tx.insert(teams).values({ id: teamId, tournamentId: tournament.id, name: input.name, seed: null, status: "forming", createdAt: now }).run();
     tx.insert(teamMembers).values({ id: uuidv7(), teamId, userId: captain.id, role: "captain" }).run();
     tx.insert(teamInvites)
       .values({ id: uuidv7(), teamId, invitedByUserId: captain.id, phoneE164: input.partnerPhone, status: "pending", acceptedByUserId: null, createdAt: now, respondedAt: null })
       .run();
-    const actor = { kind: "player" as const, userId: captain.id };
-    writeAudit(tx, { actor, action: "team.created", subjectType: "team", subjectId: teamId, detail: { tournamentId: tournament.id, name: input.name }, at: now });
+    writeAudit(tx, { actor, action: "team.created", subjectType: "team", subjectId: teamId, detail: { tournamentId: tournament.id, name: input.name, supersedes: superseded?.id ?? null }, at: now });
     writeAudit(tx, { actor, action: "team.invite_sent", subjectType: "team", subjectId: teamId, detail: { knownPlayer: Boolean(partner) }, at: now });
   });
   // Best-effort: the invite also waits under the partner's profile, so no sender is not a failure.

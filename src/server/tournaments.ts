@@ -37,6 +37,7 @@ import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
 import { shortId, uuidv7 } from "@/lib/uuid";
 import { writeAudit, type Tx } from "@/server/audit";
+import { sweepDueDonations } from "@/server/donations/stub-provider";
 
 /**
  * Organizer tournament service: create, edit every editable column plus the
@@ -147,14 +148,18 @@ export function requireTournamentById(id: string): TournamentSummary {
   return summary;
 }
 
-export function listPublicTournaments(statuses?: readonly TournamentStatus[]): PublicTournamentSummary[] {
+/** Public reads carry donation figures, so the stub sweep runs first: the same event answers the same on every route. */
+export function listPublicTournaments(statuses?: readonly TournamentStatus[], clock: Clock = systemClock): PublicTournamentSummary[] {
   const wanted = (statuses ?? TOURNAMENT_STATUSES).filter(isPublished);
   if (wanted.length === 0) return [];
+  sweepDueDonations(clock.now());
   return listTournamentSummaries(wanted).map(publicSummary);
 }
 
-export function getPublicDetailBySlug(slug: string): PublicTournamentDetail {
-  return publicSummary(getTournamentDetail(requireTournamentBySlug(slug)));
+export function getPublicDetailBySlug(slug: string, clock: Clock = systemClock): PublicTournamentDetail {
+  const summary = requireTournamentBySlug(slug);
+  sweepDueDonations(clock.now());
+  return publicSummary(getTournamentDetail(requireTournamentById(summary.tournament.id)));
 }
 
 export function getDetailById(id: string): TournamentDetail {

@@ -5,7 +5,7 @@ import { POST as joinTeam } from "@/app/api/teams/[id]/join/route";
 import { POST as createTeam } from "@/app/api/teams/route";
 import { GET as getImpact } from "@/app/api/tournaments/[slug]/impact/route";
 import { POST as register } from "@/app/api/tournaments/[slug]/register/route";
-import { donations, teams, tournaments } from "@/db/schema";
+import { donations, teamInvites, teams, tournaments } from "@/db/schema";
 import { settleDueDonations, STUB_SETTLE_DELAY_MS } from "@/server/donations/stub-provider";
 import { SLUGS } from "@/seed/build";
 import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
@@ -64,13 +64,6 @@ describe("teams, invites and registration", () => {
     expect(team.invites[0]).toMatchObject({ status: "pending", phoneE164: partner.phoneE164 });
     expect(app.audits(team.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent"]);
 
-    const again = await app.call(createTeam, "/api/teams", {
-      method: "POST",
-      cookie: app.cookieFor(captain.id),
-      body: { tournamentSlug: SLUGS.upcoming, name: "Second try", partnerPhone: "+15550109999" },
-    });
-    expectFailure(again, 409, "conflict");
-
     const self = await app.call(createTeam, "/api/teams", {
       method: "POST",
       cookie: app.cookieFor(partner.id),
@@ -91,6 +84,62 @@ describe("teams, invites and registration", () => {
       body: { tournamentSlug: SLUGS.upcoming, name: "X", partnerPhone: "nope" },
     });
     expectFailure(invalid, 400, "bad_request");
+  });
+
+  it("lets a captain recover from a mistyped partner phone by creating the team again", async () => {
+    const mistyped = await app.call<Envelope<TeamData>>(createTeam, "/api/teams", {
+      method: "POST",
+      cookie: app.cookieFor(captain.id),
+      body: { tournamentSlug: SLUGS.upcoming, name: "Rivera / Okafor", partnerPhone: "+15550109999" },
+    });
+    expect(mistyped.status).toBe(201);
+    const old = mistyped.body.data;
+
+    // The second attempt supersedes the first: old invite revoked, old team withdrawn, both audited.
+    const retry = await createOpenTeam("Rivera / Okafor");
+    expect(retry.id).not.toBe(old.id);
+    expect(retry.status).toBe("forming");
+    expect(retry.invites).toEqual([expect.objectContaining({ status: "pending", phoneE164: partner.phoneE164 })]);
+    expect(app.conn.db.select({ status: teams.status }).from(teams).where(eq(teams.id, old.id)).get()?.status).toBe("withdrawn");
+    const oldInvites = app.conn.db.select().from(teamInvites).where(eq(teamInvites.teamId, old.id)).all();
+    expect(oldInvites.map((i) => [i.status, i.respondedAt !== null])).toEqual([["revoked", true]]);
+    expect(app.audits(old.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent", "team.invite_revoked", "team.withdrawn"]);
+    expect(JSON.parse(app.audits(old.id, "team.withdrawn")[0]?.detailJson ?? "{}")).toEqual({ from: "forming", to: "withdrawn", supersededBy: retry.id });
+    expect(JSON.parse(app.audits(retry.id, "team.created")[0]?.detailJson ?? "{}")).toMatchObject({ supersedes: old.id });
+
+    // The mistyped number no longer has a pending invite anywhere; the right partner does.
+    const profile = await app.call<Envelope<Profile>>(me, "/api/me", { cookie: app.cookieFor(partner.id) });
+    expect(profile.body.data.invites.map((i) => i.team.id)).toEqual([retry.id]);
+
+    // Once the partner has joined, the team is no longer the captain's alone to replace.
+    const joined = await app.call(joinTeam, `/api/teams/${retry.id}/join`, { method: "POST", params: { id: retry.id }, cookie: app.cookieFor(partner.id) });
+    expect(joined.status).toBe(200);
+    const blocked = await app.call(createTeam, "/api/teams", {
+      method: "POST",
+      cookie: app.cookieFor(captain.id),
+      body: { tournamentSlug: SLUGS.upcoming, name: "Third try", partnerPhone: "+15550109998" },
+    });
+    expect(expectFailure(blocked, 409, "conflict").detail).toEqual({ teamId: retry.id });
+    // Nor can the partner start a team of their own while on this one.
+    const partnerBlocked = await app.call(createTeam, "/api/teams", {
+      method: "POST",
+      cookie: app.cookieFor(partner.id),
+      body: { tournamentSlug: SLUGS.upcoming, name: "Breakaway", partnerPhone: "+15550109998" },
+    });
+    expectFailure(partnerBlocked, 409, "conflict");
+    // A registered team is final: still 409 after registration.
+    const registered = await app.call(register, `/api/tournaments/${SLUGS.upcoming}/register`, {
+      method: "POST",
+      params: { slug: SLUGS.upcoming },
+      cookie: app.cookieFor(captain.id),
+      body: { teamId: retry.id },
+    });
+    expect(registered.status).toBe(201);
+    expectFailure(
+      await app.call(createTeam, "/api/teams", { method: "POST", cookie: app.cookieFor(captain.id), body: { tournamentSlug: SLUGS.upcoming, name: "Fourth", partnerPhone: "+15550109998" } }),
+      409,
+      "conflict",
+    );
   });
 
   it("lets only the invited phone join, then enforces the two-member rule", async () => {

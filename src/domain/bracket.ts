@@ -3,20 +3,20 @@ import type { MatchSlot, MatchStatus } from "@/db/schema";
 /**
  * Bracket advancement (spec §6.2 `next_match_id` / `next_match_slot`). Pure:
  * takes the match as it stands, returns the patches to apply, and never touches
- * the database. Three ways a bracket match resolves:
+ * the database. Two ways a played bracket match resolves:
  *
  * - `final`      — the consensus state machine (phase 3) calls `advanceWinner`
  *                  with the agreed winner once a match reaches `agreed`.
  * - `forfeited`  — an organizer forfeits one side; the other side advances.
  *                  `forfeitMatch` is the only path phase 2 exposes on a route.
- * - `bye`        — a round-1 match with one team auto-advances that team
- *                  (`resolveBye`). Byes never occur past round 1.
  *
+ * Byes are placed, resolved and pre-advanced when round 1 is seeded
+ * (`seedBracketSlots` in `@/domain/draw`); they never occur past round 1.
  * Pool matches (no `nextMatchId`) resolve the same way; they simply advance
  * nobody.
  */
 
-export const BRACKET_ERROR_CODES = ["not_a_participant", "already_resolved", "missing_opponent", "not_a_bye", "slot_taken"] as const;
+export const BRACKET_ERROR_CODES = ["not_a_participant", "already_resolved", "missing_opponent", "slot_taken"] as const;
 export type BracketErrorCode = (typeof BRACKET_ERROR_CODES)[number];
 
 export class BracketError extends Error {
@@ -45,7 +45,7 @@ export const RESOLVABLE_STATUSES: ReadonlySet<MatchStatus> = new Set(["scheduled
 
 export interface Advancement {
   /** The resolved match. */
-  match: { id: string; status: "final" | "forfeited" | "bye"; winnerTeamId: string; finalizedAt: number };
+  match: { id: string; status: "final" | "forfeited"; winnerTeamId: string; finalizedAt: number };
   /** The slot the winner moves into, if the match feeds another. */
   next: { matchId: string; slot: MatchSlot; teamId: string } | null;
 }
@@ -90,20 +90,6 @@ export function forfeitMatch(match: BracketMatch, forfeitingTeamId: string, fina
     throw new BracketError("missing_opponent", `Match ${match.id} has no opponent to award the forfeit to.`);
   }
   return advanceWinner(match, winner, "forfeited", finalizedAt);
-}
-
-/** A round-1 match with exactly one team is a bye: that team advances untouched. */
-export function resolveBye(match: BracketMatch, at: number): Advancement {
-  if (match.status !== "scheduled") throw new BracketError("already_resolved", `Match ${match.id} is ${match.status}, not a pending bye.`);
-  if (match.round !== 1) throw new BracketError("not_a_bye", `Byes only exist in round 1; match ${match.id} is in round ${match.round}.`);
-  const present = match.teamAId ?? match.teamBId;
-  if (present === null || (match.teamAId !== null && match.teamBId !== null)) {
-    throw new BracketError("not_a_bye", `Match ${match.id} is not a bye: it needs exactly one team.`);
-  }
-  return {
-    match: { id: match.id, status: "bye", winnerTeamId: present, finalizedAt: at },
-    next: nextSlotFor(match, present),
-  };
 }
 
 /**

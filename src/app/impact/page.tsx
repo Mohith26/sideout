@@ -8,8 +8,10 @@ import { Icons } from "@/components/ui/icons";
 import { StatusPill, TOURNAMENT_STATUS_PILL } from "@/components/ui/StatusPill";
 import { ImpactMeter } from "@/components/tournament/ImpactMeter";
 import { getGlobalImpact, type GlobalImpact } from "@/db/queries/impact";
+import { requestNow } from "@/lib/clock";
 import { formatCents, formatDate, formatPercent } from "@/lib/format";
 import { load } from "@/lib/load";
+import { sweepDueDonations } from "@/server/donations/stub-provider";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Impact" };
@@ -39,7 +41,10 @@ const columns: DataTableColumn<EventRow>[] = [
 ];
 
 export default function ImpactPage() {
-  const loaded = load(() => getGlobalImpact());
+  const loaded = load(() => {
+    sweepDueDonations(requestNow());
+    return getGlobalImpact();
+  });
   if (!loaded.ok) return <DatabaseNotReady message={loaded.message} />;
   const impact = loaded.data;
 

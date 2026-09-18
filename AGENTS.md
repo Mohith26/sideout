@@ -50,7 +50,8 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   given anchor day and RNG seed; `src/seed/build.test.ts` holds the invariants and
   asserts the seeded draws equal `draw()` for the same inputs (`SEED_DRAWS`).
 - Pure rules live under `src/domain/` and are unit-tested, no I/O: `draw.ts` (pools,
-  round robin, bracket, advancement rule), `bracket.ts` (advance/forfeit/bye),
+  round robin, bracket, advancement rule; byes are placed by `seedBracketSlots`),
+  `bracket.ts` (advance/forfeit/slot fill),
   `standings.ts` (tiebreak order in `TIEBREAK_ORDER`; per-match `CROSS_POOL_ORDER`
   for ranking across pools of unequal size), `transitions.ts` (the two
   status matrices; `final` is only ever set by actor `system`, i.e. the consensus

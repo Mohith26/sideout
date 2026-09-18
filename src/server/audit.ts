@@ -1,5 +1,5 @@
 import "server-only";
-import { auditLog, type ActorKind, type NewAuditLogEntry } from "@/db/schema";
+import { auditLog, type NewAuditLogEntry } from "@/db/schema";
 import type { Db } from "@/db/connection";
 import type { TransitionActor } from "@/domain/transitions";
 import { uuidv7 } from "@/lib/uuid";
@@ -39,7 +39,3 @@ export function writeAudit(tx: Tx, input: AuditInput): NewAuditLogEntry {
 }
 
 export const SYSTEM_ACTOR: TransitionActor = { kind: "system", userId: null };
-
-export function actorFor(kind: ActorKind, userId: string | null): TransitionActor {
-  return { kind, userId };
-}

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getGlobalImpact } from "@/db/queries/impact";
 import { tournaments } from "@/db/schema";
+import { sweepDueDonations } from "@/server/donations/stub-provider";
 import { SLUGS } from "@/seed/build";
 import { createTestApp, type TestApp } from "@/test/routes";
 
@@ -11,6 +12,19 @@ describe("getGlobalImpact", () => {
     app = createTestApp();
   });
   afterEach(() => app.close());
+
+  it("counts a stub intent once its delay has run and the page has swept, then stays put", () => {
+    const succeeded = app.data.donations.filter((d) => d.status === "succeeded");
+    const pending = app.data.donations.filter((d) => d.status === "pending");
+    expect(pending.length).toBeGreaterThan(0);
+    expect(getGlobalImpact().totalRaisedCents).toBe(succeeded.reduce((s, d) => s + d.amountCents, 0));
+    expect(sweepDueDonations(Date.now())).toBe(pending.length);
+    const swept = getGlobalImpact();
+    expect(swept.totalRaisedCents).toBe([...succeeded, ...pending].reduce((s, d) => s + d.amountCents, 0));
+    expect(swept.donorCount).toBe(succeeded.length + pending.length);
+    expect(sweepDueDonations(Date.now())).toBe(0);
+    expect(getGlobalImpact()).toEqual(swept);
+  });
 
   it("sums succeeded donations and goals over published events only", () => {
     const before = getGlobalImpact();
