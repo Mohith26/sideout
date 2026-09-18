@@ -22,7 +22,7 @@ export function TeamHistoryCard({ history: h, pendingInvite, primaryAction }: { 
   const played = h.played > 0 || h.bracketRoundReached !== null;
 
   return (
-    <article className="surface-raised flex flex-col gap-4 rounded-md p-4 md:p-5" aria-label={`${h.team.name} at ${h.tournament.name}`}>
+    <article className="surface-raised flex min-w-0 flex-col gap-4 rounded-md p-4 md:p-5" aria-label={`${h.team.name} at ${h.tournament.name}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link href={`/t/${h.tournament.slug}`} className="target inline-flex min-w-0 items-center font-medium text-text-primary hover:text-volt">
           <span className="truncate">{h.tournament.name}</span>

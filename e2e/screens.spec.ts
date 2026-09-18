@@ -52,9 +52,15 @@ async function settled(page: Page): Promise<void> {
   await expect(page.locator("main .animate-pulse")).toHaveCount(0);
 }
 
-async function noHorizontalOverflow(page: Page): Promise<void> {
-  const { scrollWidth, innerWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
-  expect(scrollWidth, "page must not scroll sideways").toBeLessThanOrEqual(innerWidth);
+/**
+ * The page itself never scrolls sideways at any of the three widths (spec §11): a
+ * table may scroll inside its own box, but nothing may widen the document. Measured
+ * against the layout viewport (`clientWidth`): under mobile emulation `innerWidth`
+ * stretches to the overflowing content, so comparing against it never fails.
+ */
+async function noHorizontalOverflow(page: Page, what: string): Promise<void> {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
+  expect(scrollWidth, `${what}: page must not scroll sideways`).toBeLessThanOrEqual(clientWidth);
 }
 
 test.describe("screens", () => {
@@ -87,7 +93,7 @@ test.describe("screens", () => {
         await expect(page.locator("main")).toBeVisible();
         await settled(page);
         await page.screenshot({ path: `test-results/screens/${screen.name}-${width}.png`, fullPage: true });
-        if (width === 390) await noHorizontalOverflow(page);
+        await noHorizontalOverflow(page, `${screen.name} at ${width}`);
         if (screen.anonymous) await page.request.post("/api/dev/login", { data: { phone: playerPhone(0) } });
       }
       await page.request.post("/api/dev/login", { data: { phone: ORGANIZER_PHONE } });
@@ -96,7 +102,7 @@ test.describe("screens", () => {
         await expect(page.getByRole("navigation", { name: "Console" })).toBeVisible();
         await settled(page);
         await page.screenshot({ path: `test-results/screens/${screen.name}-${width}.png`, fullPage: true });
-        if (width === 390) await noHorizontalOverflow(page);
+        await noHorizontalOverflow(page, `${screen.name} at ${width}`);
       }
     }
   });

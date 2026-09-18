@@ -4,7 +4,9 @@ import { cx } from "@/lib/cx";
 /**
  * Dense, table-driven data for standings, donor walls and the organizer
  * console. Numeric columns are right-aligned and tabular. Scrolls horizontally
- * inside its own box at narrow widths rather than breaking the page.
+ * inside its own box at narrow widths rather than breaking the page; the box is
+ * positioned so `sr-only` headers (absolutely positioned) scroll with it instead
+ * of resolving against `<body>` and widening the document.
  */
 export interface DataTableColumn<Row> {
   key: string;
@@ -46,7 +48,7 @@ export function DataTable<Row>({
   rowAttributes,
 }: DataTableProps<Row>) {
   return (
-    <div className={cx("surface-raised overflow-x-auto rounded-md", className)}>
+    <div className={cx("surface-raised relative overflow-x-auto rounded-md", className)}>
       <table className="w-full min-w-full border-collapse text-body">
         {caption ? <caption className={cx("text-start type-label text-text-tertiary", captionVisible ? "px-4 pt-3 pb-1" : "sr-only")}>{caption}</caption> : null}
         <thead>
