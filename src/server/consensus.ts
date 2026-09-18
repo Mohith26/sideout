@@ -17,7 +17,6 @@ import {
   diffScorelines,
   idempotencyKeyFor,
   judgeSubmission,
-  OPEN_CONSENSUS_STATES,
   storedSubmissionSets,
   toPerspective,
   transitionConsensus,
@@ -190,7 +189,7 @@ function enterAgreed(
   applyAdvancement(tx, advancement, loaded.match.status, SYSTEM_ACTOR, { consensusId: consensus.id, hash: outcome.hash });
 }
 
-/** Match statuses a team may submit a scoreline for. */
+/** Match statuses a team may submit a scoreline for; the match status, not the consensus row, decides (a forfeit settles a disputed match without moving its row). */
 const SUBMITTABLE_MATCH_STATUSES: ReadonlySet<Match["status"]> = new Set(["scheduled", "in_progress", "awaiting_scores"]);
 
 /**
@@ -242,13 +241,12 @@ export function submitScoreline(input: SubmitScorelineInput, clock: Clock = syst
     if (!membership) throw new ConsensusError("not_on_team", "Only a member of one of the two teams can submit this match's score.", { code: "not_on_team" });
     assertLive(loaded);
 
-    const existing = loaded.consensus;
-    if (existing && !OPEN_CONSENSUS_STATES.has(existing.state)) {
+    if (match.status === "disputed" || match.status === "final") {
       const message =
-        existing.state === "disputed"
+        match.status === "disputed"
           ? "Both teams have submitted and the scorelines differ; the organizer will settle it. Nothing more can be submitted."
           : "Both teams have already confirmed this result; it is final.";
-      throw new ConsensusError("already_submitted_by_team", message, { code: "already_submitted_by_team", state: existing.state });
+      throw new ConsensusError("already_submitted_by_team", message, { code: "already_submitted_by_team", state: loaded.consensus?.state ?? null, status: match.status });
     }
     if (!SUBMITTABLE_MATCH_STATUSES.has(match.status)) {
       throw new ConsensusError("match_not_open", `Scores are submitted for a match that is scheduled, in progress or awaiting scores; this one is ${match.status}.`, {
@@ -264,7 +262,7 @@ export function submitScoreline(input: SubmitScorelineInput, clock: Clock = syst
     const canonical = canonicalizeSubmission(match.id, input.scoreline.sets, membership.side, match.bestOf);
     assertLegalScoreline(canonical, match.bestOf);
 
-    const consensus = ensureConsensus(tx, match.id, existing, now);
+    const consensus = ensureConsensus(tx, match.id, loaded.consensus, now);
     const live = listLiveSubmissions(tx, match.id);
     const mine = live.find((s) => s.submittedForTeamId === membership.team.id) ?? null;
     const standing = live.find((s) => s.submittedForTeamId !== null && s.submittedForTeamId !== membership.team.id) ?? null;
@@ -418,19 +416,4 @@ export function resolveDispute(input: ResolveDisputeInput, clock: Clock = system
   const match = getMatchDetail(input.matchId);
   if (!consensus || !match) throw new ApiFailure("internal", "The match disappeared while resolving the dispute.");
   return { consensus, match, submissionId, bracketSeeded };
-}
-
-// ---------------------------------------------------------------------------
-// The Lucra gate, loaded from rows
-// ---------------------------------------------------------------------------
-
-/**
- * Load a match's consensus and assert it may be written to Lucra. Phase 4
- * builds every request from the row this returns and nothing else.
- */
-export function requireLucraWritableConsensus(matchId: string): MatchConsensus & { state: "agreed"; idempotencyKey: string } {
-  const row = getDb().select().from(matchConsensus).where(eq(matchConsensus.matchId, matchId)).get();
-  if (!row) throw new ApiFailure("conflict", `Match ${matchId} has no consensus; nothing to write.`);
-  assertMayWriteToLucra(row);
-  return row;
 }

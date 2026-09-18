@@ -376,4 +376,6 @@ export const CONSENSUS_AUDIT = {
   scoreSuperseded: "score.superseded",
   /** The consensus moved (subject: consensus; detail carries from/to/event). */
   stateChanged: "consensus.state_changed",
+  /** An organizer forfeit settled a disputed match; the row stays `disputed`, set aside (subject: consensus). */
+  settledByForfeit: "consensus.settled_by_forfeit",
 } as const;

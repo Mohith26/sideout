@@ -2,13 +2,13 @@ import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getConsensusView, listDisputes } from "@/db/queries/consensus";
 import { matchConsensus, matches, scoreSubmissions, sets, teamMembers, teams, tournaments, type Match } from "@/db/schema";
-import { ConsensusError, LucraWriteRefused, type SubmittedSet } from "@/domain/consensus";
+import { assertMayWriteToLucra, ConsensusError, LucraWriteRefused, type SubmittedSet } from "@/domain/consensus";
 import type { SetScore } from "@/domain/scoreline";
 import { hashScoreline } from "@/domain/scoreline-hash";
 import { fixedClock } from "@/lib/clock";
 import { isUuidV7, uuidv7 } from "@/lib/uuid";
 import { SEED_DRAWS, SLUGS } from "@/seed/build";
-import { requireLucraWritableConsensus, resolveDispute, submitScoreline } from "@/server/consensus";
+import { resolveDispute, submitScoreline } from "@/server/consensus";
 import { runDraw } from "@/server/draw";
 import { forfeitMatch } from "@/server/matches";
 import { createTournament, updateTournament } from "@/server/tournaments";
@@ -236,8 +236,8 @@ describe("consensus service (spec §10)", () => {
       expect(finalized?.actorKind).toBe("system");
 
       // Rule 5: this consensus may now be written to Lucra; nothing else in the event may.
-      expect(requireLucraWritableConsensus(m.id).idempotencyKey).toBe(row?.idempotencyKey);
-      expect(() => requireLucraWritableConsensus(bracketMatch(13).id)).toThrow(LucraWriteRefused);
+      expect(() => assertMayWriteToLucra(row!)).not.toThrow();
+      expect(() => assertMayWriteToLucra(consensusRow(bracketMatch(13).id)!)).toThrow(LucraWriteRefused);
     });
 
     it("mints the idempotency key exactly once: a replayed submission is refused and the key survives", () => {
@@ -296,7 +296,7 @@ describe("consensus service (spec §10)", () => {
       expect(row?.idempotencyKey).toBeNull();
       expect(setRows(m.id).every((s) => !s.agreed)).toBe(true);
       expect(listDisputes(live.id).map((d) => d.match.id)).toContain(m.id);
-      expect(() => requireLucraWritableConsensus(m.id)).toThrow(LucraWriteRefused);
+      expect(() => assertMayWriteToLucra(row!)).toThrow(LucraWriteRefused);
       // Nobody on either team can submit again.
       try {
         submit(m.id, captainOf(m.teamAId), typed(other, "a"));
@@ -538,13 +538,45 @@ describe("consensus service (spec §10)", () => {
       expect(view?.differences.map((d) => d.setNumber)).toEqual([3]);
       expect(view?.history).toHaveLength(2);
       expect(view?.agreedSets).toBeNull();
-      // Forfeit is the organizer's other tool on a disputed match: it settles the match and leaves the queue.
-      const done = forfeitMatch(m.id, m.teamAId ?? "", { kind: "organizer", userId: app.organizer().id }, clock);
+    });
+
+    it("an organizer forfeit settles the seeded dispute: the row is set aside, attributed, and nothing more is accepted", () => {
+      const m = bracketMatch(11);
+      const before = consensusRow(m.id);
+      expect(before?.state).toBe("disputed");
+      expect(before?.disputedReason).toMatch(/differs/);
+      const organizerId = app.organizer().id;
+
+      const done = forfeitMatch(m.id, m.teamAId ?? "", { kind: "organizer", userId: organizerId }, clock);
       expect(done.match.status).toBe("forfeited");
       expect(done.match.winnerTeamId).toBe(m.teamBId);
       expect(listDisputes(live.id)).toEqual([]);
-      expect(consensusRow(m.id)?.state).toBe("disputed");
-      expect(() => requireLucraWritableConsensus(m.id)).toThrow(LucraWriteRefused);
+
+      const after = consensusRow(m.id);
+      expect(after).toMatchObject({ state: "disputed", disputedReason: "Settled by forfeit", resolvedByUserId: organizerId, idempotencyKey: null, updatedAt: clock.now() });
+      expect(() => assertMayWriteToLucra(after!)).toThrow(LucraWriteRefused);
+      const settled = app.audits(after?.id ?? "", "consensus.settled_by_forfeit");
+      expect(settled).toHaveLength(1);
+      expect(settled[0]).toMatchObject({ actorKind: "organizer", actorUserId: organizerId });
+      expect(JSON.parse(settled[0]?.detailJson ?? "{}")).toMatchObject({ matchId: m.id, forfeitedTeamId: m.teamAId, previousReason: before?.disputedReason });
+      // The two readings stay as history; the view still reports the differing set.
+      const view = getConsensusView(m.id);
+      expect(view?.resolvedBy?.userId).toBe(organizerId);
+      expect(view?.live).toHaveLength(2);
+      expect(view?.differences.map((d) => d.setNumber)).toEqual([3]);
+
+      // A further submission is refused because the match is settled, not because a dispute is open.
+      for (const teamId of [m.teamAId, m.teamBId]) {
+        try {
+          submit(m.id, captainOf(teamId), typed(A_WINS_3, teamId === m.teamAId ? "a" : "b"));
+          throw new Error("expected a refusal");
+        } catch (err) {
+          expect((err as ConsensusError).code).toBe("match_not_open");
+          expect((err as ConsensusError).detail).toMatchObject({ status: "forfeited" });
+        }
+      }
+      expect(() => resolveDispute({ matchId: m.id, organizerUserId: organizerId, sets: A_WINS_3 }, clock)).toThrow(ConsensusError);
+      expect(consensusRow(m.id)).toEqual(after);
     });
   });
 });

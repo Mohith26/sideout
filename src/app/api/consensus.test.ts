@@ -136,6 +136,19 @@ describe("consensus routes (spec §9, §10)", () => {
       expect(expectFailure(blocked, 409, "conflict").detail).toMatchObject({ code: "already_submitted_by_team", state: "disputed" });
     });
 
+    it("refuses a submission to a forfeited dispute as a settled match, and the queue no longer lists it", async () => {
+      const m = at(11);
+      const forfeit = await app.call(forfeitRoute, `/api/admin/matches/${m.id}/forfeit`, { method: "POST", params: { id: m.id }, cookie: organizerCookie, body: { teamId: m.teamAId } });
+      expect(forfeit.status).toBe(200);
+      const res = await submit(m.id, captainOf(m.teamAId), typed(A_WINS, "a"));
+      expect(expectFailure(res, 409, "conflict").detail).toEqual({ code: "match_not_open", status: "forfeited" });
+      const queue = await app.call<Envelope<{ disputes: unknown[] }>>(listDisputesRoute, "/api/admin/disputes", { cookie: organizerCookie });
+      expect(queue.body.data.disputes).toEqual([]);
+      const view = await app.call<Envelope<{ match: Match; consensusState: string }>>(getMatch, `/api/matches/${m.id}`, { params: { id: m.id } });
+      expect(view.body.data).toMatchObject({ match: { status: "forfeited", winnerTeamId: m.teamBId }, consensusState: "disputed" });
+      expect(JSON.stringify(view.body)).not.toContain("Settled by forfeit");
+    });
+
     it("takes a scheduled match on the sand with its first submission, and refuses a settled one", async () => {
       const m = at(15);
       app.conn.db.update(matches).set({ teamAId: at(13).teamAId, teamBId: at(13).teamBId }).where(eq(matches.id, m.id)).run();

@@ -2,8 +2,9 @@ import "server-only";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { getMatchDetail, type MatchDetail } from "@/db/queries/tournaments";
-import { matches, tournaments } from "@/db/schema";
+import { matchConsensus, matches, tournaments } from "@/db/schema";
 import { fillSlot, forfeitMatch as forfeitInDomain, type Advancement } from "@/domain/bracket";
+import { CONSENSUS_AUDIT } from "@/domain/consensus";
 import { TERMINAL_MATCH_STATUSES, transitionMatch, type TransitionActor } from "@/domain/transitions";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
@@ -18,7 +19,14 @@ import { seedBracketFromPools } from "@/server/draw";
  * the next slot, and audits both, inside the caller's transaction; then, once
  * that transaction has committed, `seedBracketIfPoolsComplete` unlocks the
  * bracket if this was the last pool match.
+ *
+ * A forfeit on a disputed match sets the dispute aside: the consensus row
+ * keeps its `disputed` state (nothing is ever written to Lucra for it) but
+ * records who settled it and that a forfeit did, so every reader keys on the
+ * match status.
  */
+
+const SETTLED_BY_FORFEIT = "Settled by forfeit";
 
 export function requireMatch(matchId: string): MatchDetail {
   const detail = getMatchDetail(matchId);
@@ -107,10 +115,22 @@ export function forfeitMatch(matchId: string, forfeitingTeamId: string, actor: T
 
   const verdict = transitionMatch(match.status, "forfeited", actor);
   if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);
-  const advancement = forfeitInDomain(match, forfeitingTeamId, clock.now());
+  const now = clock.now();
+  const advancement = forfeitInDomain(match, forfeitingTeamId, now);
+  const consensus = db.select().from(matchConsensus).where(eq(matchConsensus.matchId, matchId)).get();
 
   db.transaction((tx) => {
     applyAdvancement(tx, advancement, match.status, actor, { forfeitedTeamId: forfeitingTeamId });
+    if (consensus?.state !== "disputed") return;
+    tx.update(matchConsensus).set({ disputedReason: SETTLED_BY_FORFEIT, resolvedByUserId: actor.userId, updatedAt: now }).where(eq(matchConsensus.id, consensus.id)).run();
+    writeAudit(tx, {
+      actor,
+      action: CONSENSUS_AUDIT.settledByForfeit,
+      subjectType: "consensus",
+      subjectId: consensus.id,
+      detail: { matchId, forfeitedTeamId: forfeitingTeamId, previousReason: consensus.disputedReason },
+      at: now,
+    });
   });
   const bracketSeeded = seedBracketIfPoolsComplete(matchId, clock);
   return { ...requireMatch(matchId), bracketSeeded };

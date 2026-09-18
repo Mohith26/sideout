@@ -93,8 +93,10 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   confirm: `previewClose` names every blocker, `closeTournament` refuses
   `close_blocked`/`preview_stale`, freezes the preview on
   `tournaments.close_preview_json`, and ends at `lucraSettlementHook`, the phase-4
-  seam. A forfeit settles a disputed match (its consensus row stays `disputed`;
-  the queue and the close read the match status).
+  seam. A forfeit settles a disputed match: its consensus row stays `disputed`
+  but records `resolved_by_user_id` and `disputed_reason` "Settled by forfeit"
+  (audit `consensus.settled_by_forfeit`); the queue, the close, the match page
+  and the submission check all key on the match status.
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
   production when unset — `/health` reports which). `users.role` gates `/api/admin/*`

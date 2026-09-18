@@ -30,7 +30,9 @@ export const dynamic = "force-dynamic";
  * What each viewer sees of the submissions is deliberate: a team sees its own
  * scoreline while waiting, never the opponent's, so the second submission is
  * independent; both teams and the organizer see the two readings side by side
- * once they differ; everyone sees the agreed sets once the match is final.
+ * once they differ, and keep seeing them as history after an organizer forfeit
+ * settles the match; everyone sees the agreed sets once the match is final.
+ * The match status, not the consensus row, says whether a dispute is open.
  */
 
 interface Loaded {
@@ -153,7 +155,9 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
 
   const open = (match.status === "scheduled" || match.status === "in_progress" || match.status === "awaiting_scores") && (state === null || state === "awaiting_first" || state === "awaiting_second");
   const canSubmit = open && tournament.status === "live" && us !== null && them !== null && viewerSide !== null;
-  const showCompare = state === "disputed" && (viewerSide !== null || viewerRole === "organizer") && liveTeam.length === 2;
+  const disputed = match.status === "disputed";
+  const settledByForfeit = match.status === "forfeited" && state === "disputed";
+  const showCompare = (disputed || settledByForfeit) && (viewerSide !== null || viewerRole === "organizer") && liveTeam.length === 2;
   const winnerSide = match.winnerTeamId ? (match.winnerTeamId === match.teamAId ? "a" : "b") : null;
 
   return (
@@ -230,10 +234,19 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
           <h2 id="compare-heading" className="type-subheading">
             Two readings of this match
           </h2>
-          <div className="flex items-start gap-3 rounded-md border border-fault/40 bg-fault/10 p-4">
-            <Icons.triangleAlert size={20} className="mt-0.5 shrink-0 text-fault" />
-            <p className="text-text-primary">The two scorelines don&apos;t match. The organizer will settle it with both teams; nothing is final until then.</p>
-          </div>
+          {disputed ? (
+            <div className="flex items-start gap-3 rounded-md border border-fault/40 bg-fault/10 p-4">
+              <Icons.triangleAlert size={20} className="mt-0.5 shrink-0 text-fault" />
+              <p className="text-text-primary">The two scorelines don&apos;t match. The organizer will settle it with both teams; nothing is final until then.</p>
+            </div>
+          ) : (
+            <div className="surface-inset flex items-start gap-3 rounded-md p-4" data-testid="settled-by-forfeit">
+              <Icons.info size={20} className="mt-0.5 shrink-0 text-text-tertiary" />
+              <p className="text-text-secondary">
+                The two scorelines didn&apos;t match. The organizer{consensus.resolvedBy ? ` (${consensus.resolvedBy.displayName})` : ""} settled this match by forfeit; the readings below are kept as history and neither is the result.
+              </p>
+            </div>
+          )}
           <ScorelineCompare
             teamA={teamA?.name ?? "Team A"}
             teamB={teamB?.name ?? "Team B"}
@@ -241,7 +254,7 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
             right={{ label: liveTeam[1]?.teamId === us?.id ? "Your team" : (liveTeam[1]?.teamName ?? "Team"), sets: liveTeam[1]?.sets ?? [], note: `${liveTeam[1]?.submittedBy.displayName ?? ""} · ${formatTime(liveTeam[1]?.createdAt ?? 0, tz)}` }}
             differingSets={consensus.differences.map((d) => d.setNumber)}
           />
-          {viewerRole === "organizer" ? (
+          {disputed && viewerRole === "organizer" ? (
             <Button variant="primary" href="/organizer/disputes" iconEnd={<Icons.chevronRight size={16} />}>
               Resolve in the dispute queue
             </Button>
