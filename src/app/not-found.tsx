@@ -7,7 +7,7 @@ export default function NotFound() {
     <Container className="py-8">
       <EmptyState
         level={1}
-        icon="circleDashed"
+        scene="notFound"
         title="No page here"
         body="The link may be old, or the event may not exist yet."
         action={

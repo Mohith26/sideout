@@ -136,7 +136,7 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
         </h2>
         {overview.rounds.length === 0 ? (
           <EmptyState
-            icon="clock"
+            scene="net"
             title="Schedule arrives with the draw"
             body={`Pools and courts are assigned once registration closes. ${activeTeams} of ${t.maxTeams} teams are in so far.`}
           />

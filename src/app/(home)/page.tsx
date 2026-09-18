@@ -66,13 +66,14 @@ export default function HomePage() {
       <Container className="space-y-10 py-6 md:py-8">
         {featured ? (
           <section aria-labelledby="featured-heading">
-            <h2 id="featured-heading" className="type-label mb-3 text-text-tertiary">
+            {/* The one tilted sticker: a label, not a figure, so it may lean. */}
+            <h2 id="featured-heading" className="sticker sticker-tilt mb-4 inline-block rounded-full border-border-strong bg-bg-raised px-3 py-1 type-label font-semibold text-text-primary">
               {featured.tournament.status === "live" ? "Happening now" : "Next up"}
             </h2>
             <TournamentCard summary={featured} variant="featured" nowMs={nowMs} />
           </section>
         ) : (
-          <EmptyState level={2} icon="calendar" title="No events scheduled" body="When an organizer opens registration, it shows up here first." />
+          <EmptyState level={2} scene="shore" title="No events scheduled" body="When an organizer opens registration, it shows up here first." />
         )}
 
         {otherUpcoming.length > 0 ? (

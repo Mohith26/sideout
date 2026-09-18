@@ -41,7 +41,7 @@ function StepCard({ number, title, tone, status, children, className }: { number
       <div className="flex items-start gap-4 p-4 md:p-5">
         <span
           aria-hidden="true"
-          className={cx("tabular flex size-9 shrink-0 items-center justify-center rounded-full type-label", tone === "ember" ? "bg-ember/15 text-ember" : "bg-bg-overlay text-text-tertiary")}
+          className={cx("tabular flex size-9 shrink-0 items-center justify-center rounded-full type-label", tone === "ember" ? "bg-ember/10 text-ember" : "bg-bg-overlay text-text-tertiary")}
         >
           {number}
         </span>

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { SkyBand, WaveDivider } from "@/components/art";
 import { OfflineStatus } from "@/components/offline/OfflineStatus";
 import { ServiceWorkerRegistration } from "@/components/offline/ServiceWorkerRegistration";
 import { navItemsFor } from "@/components/shell/nav";
@@ -12,9 +13,10 @@ import { viewerSession, type ViewerSession } from "@/server/auth/viewer";
 
 /**
  * Bottom tab bar on mobile, left rail from 1280px, one content column with
- * 16px gutters that grow to 32px at desktop (spec §12.3). The organizer
- * console tab appears only for an organizer session; the page itself is
- * gated again on the server. The shell also owns the offline surface: the
+ * 16px gutters that grow to 32px at desktop (spec §12.3). The mobile header is
+ * the sky band: sun and clouds behind the wordmark, a wave-edged bottom. The
+ * organizer console tab appears only for an organizer session; the page itself
+ * is gated again on the server. The shell also owns the offline surface: the
  * service worker registration (production builds), the connectivity status
  * line above the content, and the outbox replay. A session opened through
  * the public demo's account picker carries the "Demo" pill on every screen.
@@ -32,8 +34,12 @@ export async function AppShell({ children }: { children: ReactNode }) {
       </a>
       <NavRail items={items} />
       <div className="xl:pl-navrail">
-        <header className="flex h-14 items-center border-b border-border-subtle px-gutter xl:hidden">
-          <Wordmark />
+        <header className="relative xl:hidden">
+          <SkyBand />
+          <div className="relative flex h-14 items-center px-gutter">
+            <Wordmark />
+          </div>
+          <WaveDivider fill="base" height={12} className="relative" />
         </header>
         <OfflineStatus />
         <main id="main" className="pb-[calc(var(--tabbar-height)+env(safe-area-inset-bottom,0px)+24px)] xl:pb-12">

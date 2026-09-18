@@ -75,6 +75,19 @@ describe("motion.css", () => {
     expect([...properties]).toEqual(["opacity"]);
   });
 
+  it("every other keyframe in the file (decoration such as the wave drift) has the same opacity-only branch", () => {
+    expect(full.size).toBeGreaterThan(Object.keys(NAMED).length);
+    for (const name of full.keys()) {
+      const body = reducedFrames.get(name);
+      expect(body, `reduced @keyframes ${name}`).toBeDefined();
+      expect([...new Set(declaredProperties(body ?? ""))], name).toEqual(["opacity"]);
+    }
+  });
+
+  it("holds the wave divider still under reduced motion", () => {
+    expect(reduced).toMatch(/\.wave-drift\s*\{\s*animation:\s*none;/);
+  });
+
   it("the full keyframes really do move, so the reduced branch is a change and not a copy", () => {
     const moving = ["rank-flash", "draw-path", "confirm-check", "sheet-in", "sheet-out", "live-pulse"];
     for (const name of moving) {
@@ -84,7 +97,7 @@ describe("motion.css", () => {
   });
 
   it("holds the live dot still and drops the dash on the path under reduced motion", () => {
-    expect(reduced).toMatch(/\.live-dot\s*\{\s*animation:\s*none;/);
+    expect(reduced).toMatch(/\.live-dot,\s*\.wave-drift\s*\{\s*animation:\s*none;/);
     expect(reduced).toMatch(/\.path-draw\s*\{\s*stroke-dasharray:\s*none;/);
   });
 

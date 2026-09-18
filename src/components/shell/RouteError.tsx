@@ -20,7 +20,7 @@ export function RouteError({ error, reset, where }: { error: Error & { digest?: 
     <Container className="py-8">
       <EmptyState
         level={1}
-        icon="circleAlert"
+        scene="trouble"
         title={where ? `Something went wrong loading ${where}` : "Something went wrong loading this page"}
         body={
           <>

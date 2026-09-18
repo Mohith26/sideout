@@ -7,8 +7,8 @@ import type { MetadataRoute } from "next";
  * tokens. The icons are rendered from `public/icon.svg` by
  * `scripts/render-icons.ts`.
  */
-export const MANIFEST_THEME = "#08090b";
-export const MANIFEST_BACKGROUND = "#08090b";
+export const MANIFEST_THEME = "#fbf2df";
+export const MANIFEST_BACKGROUND = "#fbf2df";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {

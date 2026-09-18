@@ -208,7 +208,7 @@ function presentSheet(host: HTMLElement, spec: SheetSpec, onDismiss: () => void)
   const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   host.style.cssText = HOST_CSS;
   const wide = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 768px)").matches : false;
-  const backdrop = h("div", { "data-lucra-mock-backdrop": "", style: "position:absolute;inset:0;background:rgb(5 6 7 / 0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" });
+  const backdrop = h("div", { "data-lucra-mock-backdrop": "", style: "position:absolute;inset:0;background:var(--scrim);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" });
   const panel = h("div", {
     role: "dialog",
     "aria-modal": "true",

@@ -1,26 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo, Instrument_Sans } from "next/font/google";
+import { Baloo_2, Nunito } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/shell/AppShell";
 
-/** UI face: Instrument Sans variable, 400–600. */
-const instrumentSans = Instrument_Sans({
+/** UI face: Nunito variable, 400–700. Its digits are tabular by default, so every figure stays put. */
+const nunito = Nunito({
   subsets: ["latin"],
   display: "swap",
-  variable: "--font-instrument-sans",
+  variable: "--font-nunito",
 });
 
 /**
- * Display face. "Archivo Expanded" is not a separate Google Fonts family; it is
- * the Archivo variable font with its width axis at the expanded stop. Loading
- * the `wdth` axis here and setting `font-stretch: 125%` in the display type
- * utilities (globals.css) produces the expanded cut without a second download.
+ * Display face: Baloo 2 variable, for headings, scores and the wordmark. Of the
+ * rounded display families it is the one that ships true tabular figures (a
+ * `tnum` feature; Fredoka and Lilita One have proportional digits only), which
+ * the display type utilities in globals.css rely on for rolling scores.
  */
-const archivo = Archivo({
+const baloo = Baloo_2({
   subsets: ["latin"],
   display: "swap",
-  variable: "--font-archivo",
-  axes: ["wdth"],
+  variable: "--font-baloo",
 });
 
 export const metadata: Metadata = {
@@ -31,12 +30,12 @@ export const metadata: Metadata = {
   description: "Charity beach volleyball tournaments: live play, standings, and what every event raises.",
   applicationName: "Sideout",
   icons: { icon: "/icon.svg", apple: "/icons/apple-touch-icon.png" },
-  appleWebApp: { capable: true, title: "Sideout", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "Sideout", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#08090B",
-  colorScheme: "dark",
+  themeColor: "#fbf2df",
+  colorScheme: "light",
   viewportFit: "cover",
   width: "device-width",
   initialScale: 1,
@@ -44,7 +43,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${instrumentSans.variable} ${archivo.variable} h-full`}>
+    <html lang="en" className={`${nunito.variable} ${baloo.variable} h-full`}>
       <body className="min-h-full">
         <AppShell>{children}</AppShell>
       </body>

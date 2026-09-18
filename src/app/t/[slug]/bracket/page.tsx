@@ -44,7 +44,7 @@ export default async function BracketPage({ params }: PageProps<"/t/[slug]">) {
       <Container className="py-6 md:py-8">
         <EmptyState
           level={2}
-          icon="bracket"
+          scene="net"
           title="No draw yet"
           body={`Pools and the bracket are generated once registration closes. ${summary.activeTeams} of ${t.maxTeams} teams are in so far.`}
         />
@@ -67,7 +67,7 @@ export default async function BracketPage({ params }: PageProps<"/t/[slug]">) {
         <section aria-labelledby="bracket-heading">
           <SectionHeading id="bracket-heading">Bracket</SectionHeading>
           <EmptyState
-            icon="bracket"
+            scene="court"
             title={poolsDone ? "Bracket seeding is next" : "Bracket unlocks after pool play"}
             body={advancementNote(t.drawConfigJson, detail.pools.length) ?? `${nodes.length} bracket matches are drawn and will be filled from the pool standings.`}
           />

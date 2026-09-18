@@ -32,7 +32,7 @@ export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) 
       <Container className="py-6 md:py-8">
         <EmptyState
           level={2}
-          icon="table"
+          scene="net"
           title="No pools yet"
           body={
             t.format === "single_elim"

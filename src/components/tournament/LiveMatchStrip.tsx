@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { MatchView } from "@/db/queries/tournaments";
 import { Icons } from "@/components/ui/icons";
 import { MatchCard } from "@/components/tournament/MatchCard";
+import { BeachBall } from "@/components/art";
 import { LiveDot } from "@/components/motion/LiveDot";
 
 /**
@@ -26,6 +27,7 @@ export function LiveMatchStrip({ tournamentName, slug, matches, bracketRounds }:
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 id="live-strip-heading" className="flex items-center gap-2 truncate type-label text-surf">
+              <BeachBall size={20} />
               <LiveDot />
               Live · {tournamentName}
             </h2>

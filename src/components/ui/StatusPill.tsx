@@ -7,16 +7,17 @@ import { cx } from "@/lib/cx";
  * Status as a label plus an icon — color is never the only carrier of meaning.
  * `surf` = live/agreed, `fault` = disputes and blocks, `ember` is reserved for
  * charity and never appears here. The `live` tone alone carries the breathing
- * dot (spec §12.4, transition 6).
+ * dot (spec §12.4, transition 6). Pills wear the sticker outline (a chunky 2px
+ * border on a sand underline); they carry data, so they never tilt.
  */
 export type PillTone = "neutral" | "live" | "attention" | "muted" | "success";
 
 const TONE: Record<PillTone, string> = {
-  neutral: "surface-raised text-text-primary",
-  muted: "surface-raised text-text-secondary",
-  live: "border border-surf/40 bg-surf/10 text-surf",
-  success: "border border-surf/40 bg-surf/10 text-surf",
-  attention: "border border-fault/40 bg-fault/10 text-fault",
+  neutral: "sticker border-border-strong bg-bg-raised text-text-primary",
+  muted: "sticker border-border-subtle bg-bg-raised text-text-secondary",
+  live: "sticker border-surf bg-surf/10 text-surf",
+  success: "sticker border-surf bg-surf/10 text-surf",
+  attention: "sticker border-fault bg-fault/10 text-fault",
 };
 
 export interface PillSpec {
@@ -90,8 +91,8 @@ export function StatusPill({ spec, size = "md", className }: StatusPillProps) {
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-full whitespace-nowrap type-label",
-        size === "sm" ? "h-6 px-2" : "h-7 px-2.5",
+        "inline-flex items-center gap-1.5 rounded-full whitespace-nowrap type-label font-semibold",
+        size === "sm" ? "h-6 px-2" : "h-7 px-3",
         TONE[spec.tone],
         className,
       )}

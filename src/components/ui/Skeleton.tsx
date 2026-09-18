@@ -5,7 +5,7 @@ import { cx } from "@/lib/cx";
  * block is composed into shapes below; screens use the shapes, not the block.
  */
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden="true" className={cx("animate-pulse rounded-sm bg-bg-overlay", className)} />;
+  return <div aria-hidden="true" className={cx("animate-pulse rounded-sm bg-border-subtle/60", className)} />;
 }
 
 export function TournamentCardSkeleton({ featured = false }: { featured?: boolean }) {

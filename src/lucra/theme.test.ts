@@ -22,9 +22,9 @@ describe("Lucra web theme", () => {
     expect(hexToHsl("#ff0000")).toEqual({ h: 0, s: 100, l: 50 });
     expect(hexToHsl("#00ff00")).toEqual({ h: 120, s: 100, l: 50 });
     expect(hexToHsl("#0000ff")).toEqual({ h: 240, s: 100, l: 50 });
-    // Volt: a yellow-green at full lightness contrast, as any online converter reports it.
-    expect(hexToHsl("#d7ff3e")).toEqual({ h: 72.4, s: 100, l: 62.2 });
-    expect(formatHsl(hexToHsl("#d7ff3e"))).toBe("72.4 100% 62.2%");
+    // Volt: the deep coral, as any online converter reports it.
+    expect(hexToHsl("#c33b22")).toEqual({ h: 9.3, s: 70.3, l: 44.9 });
+    expect(formatHsl(hexToHsl("#c33b22"))).toBe("9.3 70.3% 44.9%");
     expect(() => hexToHsl("#abc")).toThrow(/6-digit/);
   });
 

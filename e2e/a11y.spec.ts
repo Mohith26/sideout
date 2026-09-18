@@ -146,8 +146,8 @@ test.describe("accessibility", () => {
     });
     expect(ring?.matches, JSON.stringify(ring)).toBe(true);
     expect(ring).toMatchObject({ outlineWidth: "2px", outlineStyle: "solid", outlineOffset: "2px" });
-    // #d7ff3e as the browser reports it.
-    expect(ring?.outlineColor).toBe("rgb(215, 255, 62)");
+    // --volt (#c33b22, the coral) as the browser reports it.
+    expect(ring?.outlineColor).toBe("rgb(195, 59, 34)");
   });
 
   test("the score sheet is a keyboard-operable modal: focus lands inside, Tab stays inside, Escape closes and returns focus", async ({ page, request }) => {

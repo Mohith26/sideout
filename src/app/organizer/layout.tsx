@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SkyBand, WaveDivider } from "@/components/art";
 import { ConsoleNav, type ConsoleNavItem } from "@/components/organizer/ConsoleNav";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { countDisputedMatches } from "@/db/queries/console";
@@ -10,7 +11,8 @@ export const metadata: Metadata = { title: { default: "Console", template: "%s ย
 
 /**
  * Organizer console shell (spec ยง11.6): role-gated here for every page beneath
- * it, with its own dense navigation. The dispute queue and the close flow are
+ * it, with its own dense navigation. The beach stays in the header band (the
+ * sky strip over the console label); the pages beneath are calm and dense. The dispute queue and the close flow are
  * the consensus phase's pages; they render beneath this layout and gate
  * themselves. "Lucra" is the audit page (`/admin/lucra`), which lists every
  * event's targeting state, alerts and writes; each event's participant
@@ -29,9 +31,16 @@ export default async function OrganizerLayout({ children }: LayoutProps<"/organi
   ];
   return (
     <>
-      <div className="border-b border-border-subtle bg-bg-base">
-        <div className="mx-auto flex max-w-content items-center gap-4 px-gutter pt-3">
-          <span className="type-label text-text-tertiary">Console</span>
+      {/* The band shows where the app header does not (the rail breakpoint); on a phone the header's sky is directly above. */}
+      <div className="relative hidden xl:block">
+        <SkyBand variant="console" />
+        <div className="relative mx-auto flex h-10 max-w-content items-center px-gutter">
+          <span className="type-label font-semibold text-text-primary">Console</span>
+        </div>
+        <WaveDivider fill="raised" height={10} className="relative" />
+      </div>
+      <div className="border-b border-border-subtle bg-bg-raised">
+        <div className="mx-auto flex max-w-content items-center gap-4 px-gutter">
           <ConsoleNav items={items} />
         </div>
       </div>

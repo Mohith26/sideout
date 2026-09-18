@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   const browser = await chromium.launch();
   try {
     for (const shot of SHOTS) {
-      const context = await browser.newContext({ viewport: { width: shot.width, height: shot.height }, deviceScaleFactor: 2, isMobile: shot.mobile, hasTouch: shot.mobile, colorScheme: "dark" });
+      const context = await browser.newContext({ viewport: { width: shot.width, height: shot.height }, deviceScaleFactor: 2, isMobile: shot.mobile, hasTouch: shot.mobile, colorScheme: "light" });
       const page = await context.newPage();
       await page.goto(`${BASE_URL}${shot.path}`, { waitUntil: "networkidle" });
       await page.locator("main .animate-pulse").waitFor({ state: "detached" }).catch(() => undefined);
