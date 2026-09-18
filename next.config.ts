@@ -57,6 +57,24 @@ const lucraMode = (process.env.LUCRA_MODE ?? "").trim() || "mock";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // A navigation, refresh or prefetch that fails for lack of network waits
+    // for the connection instead of falling back to a full page load; the
+    // shell reads the same signal through `useOffline` (src/components/offline).
+    useOffline: true,
+  },
+  async headers() {
+    return [
+      {
+        // The service worker must never be served stale: the browser checks it on every registration.
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+    ];
+  },
   pageExtensions: pageExtensionsFor(process.env),
   poweredByHeader: false,
   // Repo guidance for agents lives in AGENTS.md under our own control; keep

@@ -85,7 +85,7 @@ export function ScorelineEditor({ bestOf, leftLabel, rightLabel, value, onChange
                   {!rowTouched ? "Enter the set" : setVerdict.legal ? (
                     <span className="inline-flex items-center gap-1">
                       <Icons.check size={12} />
-                      Legal set
+                      Valid set
                     </span>
                   ) : (
                     setVerdict.reason
@@ -104,7 +104,7 @@ export function ScorelineEditor({ bestOf, leftLabel, rightLabel, value, onChange
         {!touched
           ? `Best of ${bestOf}: ${bestOf === "3" ? "sets to 21, a third set to 15, win by two." : "one set to 21, win by two."}`
           : verdict.legal
-            ? `Legal result: ${verdict.winner === "a" ? leftLabel : rightLabel} win ${verdict.winner === "a" ? `${verdict.setsWon.a}–${verdict.setsWon.b}` : `${verdict.setsWon.b}–${verdict.setsWon.a}`} in sets.`
+            ? `Valid result: ${verdict.winner === "a" ? leftLabel : rightLabel} win ${verdict.winner === "a" ? `${verdict.setsWon.a}–${verdict.setsWon.b}` : `${verdict.setsWon.b}–${verdict.setsWon.a}`} in sets.`
             : verdict.reason}
       </p>
     </div>

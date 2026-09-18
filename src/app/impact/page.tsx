@@ -85,7 +85,7 @@ export default function ImpactPage() {
           />
         </section>
       ) : (
-        <EmptyState icon="heartHandshake" title="No beneficiary yet" />
+        <EmptyState level={2} icon="heartHandshake" title="No beneficiary yet" />
       )}
 
       <section aria-labelledby="per-event-heading">

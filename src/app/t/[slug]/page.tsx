@@ -3,6 +3,7 @@ import { Container } from "@/components/shell/Container";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LiveRefresh } from "@/components/ui/LiveRefresh";
 import { Icons } from "@/components/ui/icons";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";
 import { ImpactMeter } from "@/components/tournament/ImpactMeter";
@@ -16,6 +17,9 @@ import { formatCents, formatTime } from "@/lib/format";
 import { requireTournament, viewerTeam } from "./_lib";
 
 export const dynamic = "force-dynamic";
+
+/** Seconds between refreshes of a live event's overview, matching the standings API's 10s cache. */
+const LIVE_REFRESH_MS = 10_000;
 
 const STATUS_ORDER: readonly MatchStatus[] = MATCH_STATUSES;
 
@@ -67,6 +71,7 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
 
   return (
     <Container className="space-y-10 py-6 md:py-8">
+      {t.status === "live" ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
       {t.status === "registration_open" ? (
         <section aria-labelledby="register-heading" className="surface-raised flex flex-wrap items-center justify-between gap-4 rounded-md p-5 md:p-6">
           <div className="min-w-0">
@@ -113,7 +118,7 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
           <h2 id="on-sand-heading" className="type-label mb-3 text-text-tertiary">
             On the sand now
           </h2>
-          <ul className="-mx-gutter flex snap-x gap-3 overflow-x-auto px-gutter pb-1 md:mx-0 md:grid md:grid-cols-2 md:overflow-visible md:px-0 xl:grid-cols-3">
+          <ul aria-live="polite" aria-atomic={false} className="-mx-gutter flex snap-x gap-3 overflow-x-auto px-gutter pb-1 md:mx-0 md:grid md:grid-cols-2 md:overflow-visible md:px-0 xl:grid-cols-3">
             {live.map((m) => (
               <li key={m.match.id} className="snap-start md:min-w-0">
                 <Link href={`/m/${m.match.id}`} className="block rounded-md" aria-label={`Open match: ${m.teamA?.name ?? "TBD"} vs ${m.teamB?.name ?? "TBD"}`}>

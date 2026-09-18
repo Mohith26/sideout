@@ -1,6 +1,10 @@
 # Per-repo no-mistakes configuration. These are the canonical checks; the GitHub
 # workflow in .github/workflows/ci.yml is generated from them with
 # `no-mistakes ci-workflow` and must be regenerated when they change.
+#
+# `npm run test:e2e` (Playwright, a Chromium download plus a seeded production
+# build) is not a pipeline command: it runs as the separate `e2e` job in the
+# same workflow, so the GitHub checks cover it while the pipeline stays fast.
 commands:
   typecheck: npm run typecheck
   lint: npm run lint

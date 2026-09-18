@@ -99,7 +99,7 @@ export default async function MePage() {
                   <dt className="sr-only">Role</dt>
                   <dd>
                     Organizer ·{" "}
-                    <Link href="/organizer" className="text-text-primary hover:text-volt">
+                    <Link href="/organizer" className="link-inline text-text-primary hover:text-volt">
                       open the console
                     </Link>
                   </dd>
@@ -163,7 +163,7 @@ export default async function MePage() {
               {openEvents.map((s, i) => (
                 <span key={s.tournament.id}>
                   {i > 0 ? ", " : ""}
-                  <Link href={`/teams/new?t=${s.tournament.slug}`} className="text-text-primary hover:text-volt">
+                  <Link href={`/teams/new?t=${s.tournament.slug}`} className="link-inline text-text-primary hover:text-volt">
                     {s.tournament.name}
                   </Link>
                 </span>

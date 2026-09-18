@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "../styles/tokens.css";
+@import "../styles/motion.css";
 
 /*
  * Map the token layer into Tailwind. Default palettes and radii are dropped
@@ -115,9 +116,10 @@
   }
 
   dialog::backdrop {
-    /* The one place backdrop blur is allowed: a sheet or dialog backdrop (§14). */
+    /* The one place backdrop blur is allowed: a sheet or dialog backdrop (§14). It fades in (motion.css). */
     background: rgb(5 6 7 / 0.6);
     backdrop-filter: blur(8px);
+    animation: backdrop-in var(--d-base) var(--ease-out-expo) both;
   }
 }
 
@@ -207,43 +209,20 @@
 }
 
 /*
- * Named transitions 4 and 5 (§12.4), consumed by the consensus components:
- * the sheet enters on translateY with --ease-out-expo; the consensus confirm
- * is a single decisive beat in --surf. The reduced-motion block in tokens.css
- * collapses both to a 1ms opacity change. Phase 5 tunes them.
+ * A link inside running text is told apart by its underline, never by color
+ * alone (WCAG 1.4.1); the underline sits on the hairline color and brightens
+ * on hover and focus.
  */
-@keyframes sheet-in {
-  from {
-    transform: translateY(100%);
-    opacity: 0.4;
+@utility link-inline {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-strong);
+  transition: text-decoration-color var(--d-micro) var(--ease-out-expo), color var(--d-micro) var(--ease-out-expo);
+  &:hover,
+  &:focus-visible {
+    text-decoration-color: currentColor;
   }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-@keyframes confirm-check {
-  0% {
-    transform: scale(0.5);
-    opacity: 0;
-  }
-  70% {
-    transform: scale(1.08);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-@utility sheet-enter {
-  animation: sheet-in var(--d-enter) var(--ease-out-expo) both;
-}
-
-@utility confirm-enter {
-  animation: confirm-check var(--d-base) var(--ease-out-expo) both;
 }
 
 /* Minimum touch target (§12.6). */

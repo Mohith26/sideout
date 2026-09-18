@@ -8,11 +8,14 @@ export interface EmptyStateProps {
   body?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /** The heading level the title takes, so the outline stays in order: 1 for a whole page, 2 directly under a page title, 3 (default) under a section heading. */
+  level?: 1 | 2 | 3;
 }
 
 /** An honest empty or not-yet state. Left-aligned text; no marketing voice. */
-export function EmptyState({ icon = "info", title, body, action, className }: EmptyStateProps) {
+export function EmptyState({ icon = "info", title, body, action, className, level = 3 }: EmptyStateProps) {
   const Icon = Icons[icon];
+  const Heading = `h${level}` as const;
   return (
     <div className={cx("surface-inset rounded-md p-5 md:p-6", className)}>
       <div className="flex items-start gap-4">
@@ -20,7 +23,7 @@ export function EmptyState({ icon = "info", title, body, action, className }: Em
           <Icon size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="type-subheading text-text-primary">{title}</h3>
+          <Heading className="type-subheading text-text-primary">{title}</Heading>
           {body ? <div className="mt-1 text-text-secondary">{body}</div> : null}
           {action ? <div className="mt-4">{action}</div> : null}
         </div>

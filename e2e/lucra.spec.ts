@@ -74,7 +74,7 @@ const NOT_ALLOWED_PHONE = playerPhone(5);
 const DEMOGRAPHICS_PHONE = playerPhone(11);
 const OPEN = "pier-9-open-2026";
 
-type Reconciliation = { data: { missing: Array<{ userId: string; displayName: string }>; matched: Array<{ userId: string }>; extra: unknown[]; unlinked: unknown[] } };
+type Reconciliation = { data: { missing: Array<{ userId: string; displayName: string; teamId: string }>; matched: Array<{ userId: string; teamId: string }>; extra: unknown[]; unlinked: unknown[] } };
 type Entry = { data: { players: Array<{ userId: string; you: boolean; entered: boolean | null }>; complete: boolean } };
 
 /**
@@ -90,7 +90,8 @@ test.describe("Lucra in the browser (mock stand-in)", () => {
     const tournament = (await (await page.request.get(`/api/tournaments/${OPEN}`)).json()) as { data: { tournament: { id: string } } };
     const before = (await (await page.request.get(`/api/admin/tournaments/${tournament.data.tournament.id}/lucra/participants`)).json()) as Reconciliation;
     // Both projects run this against one server; whoever is second finds the join already done and asserts the finished state.
-    const missing = before.data.missing[0];
+    // The seeded gap is one player whose partner Lucra already lists; a team another spec registered after boot is missing both.
+    const missing = before.data.missing.find((m) => before.data.matched.some((x) => x.teamId === m.teamId));
     let phone: string | null = null;
     for (let i = 0; i < 48 && !phone; i += 1) {
       const candidate = playerPhone(i);
@@ -128,14 +129,16 @@ test.describe("Lucra in the browser (mock stand-in)", () => {
     const entry = (await (await page.request.get(`/api/tournaments/${OPEN}/lucra/entry`)).json()) as Entry;
     expect(entry.data.players.every((p) => p.entered === true)).toBe(true);
 
-    // The organizer's reconciliation is the proof: nobody registered is missing any more.
+    // The organizer's reconciliation is the proof: the player who just entered is matched and no longer missing
+    // (a team another spec registers in this event meanwhile is missing until its players enter; that is not this player).
     expect((await page.request.post("/api/dev/login", { data: { phone: ORGANIZER_PHONE } })).ok()).toBe(true);
     const after = (await (await page.request.get(`/api/admin/tournaments/${tournament.data.tournament.id}/lucra/participants`)).json()) as Reconciliation;
-    expect(after.data.missing).toHaveLength(0);
+    const enteredIds = entry.data.players.map((p) => p.userId);
+    expect(after.data.missing.filter((m) => enteredIds.includes(m.userId))).toHaveLength(0);
+    for (const id of enteredIds) expect(after.data.matched.some((m) => m.userId === id), `${id} matched`).toBe(true);
     expect(after.data.matched.length).toBeGreaterThanOrEqual(before.data.matched.length);
     await page.goto(`/organizer/events/${tournament.data.tournament.id}/lucra`);
     await expect(page.getByRole("heading", { level: 1, name: "Lucra entry" })).toBeVisible();
-    await expect(page.getByTestId("reconciliation-missing")).toHaveAttribute("data-count", "0");
     await expect(page.getByTestId("reconciliation-matched")).not.toHaveAttribute("data-count", "0");
   });
 

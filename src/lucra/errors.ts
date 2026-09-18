@@ -100,6 +100,15 @@ export function codeForFailureBody(body: LucraFailureBody): LucraErrorCode {
   }
 }
 
+/**
+ * Structural on purpose, not `instanceof`: a production server bundles this
+ * module once per route, but the adapter that throws these is one
+ * process-wide instance (`globalThis`, see adapter.ts), so an error made by
+ * the bundle that created the adapter reaches other routes as a different
+ * `LucraError` class. The name and the sealed code set identify one either way.
+ */
 export function isLucraError(err: unknown): err is LucraError {
-  return err instanceof LucraError;
+  if (!(err instanceof Error) || err.name !== "LucraError") return false;
+  const { code, detail } = err as Partial<LucraError>;
+  return typeof code === "string" && (LUCRA_ERROR_CODES as readonly string[]).includes(code) && typeof detail === "object" && detail !== null;
 }

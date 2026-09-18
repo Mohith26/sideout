@@ -28,7 +28,7 @@ export function TournamentCard({ summary, variant = "compact", nowMs, className 
         : `${formatDate(t.startsAt, t.venueTimezone)} · ${formatRelative(t.startsAt, nowMs)}`;
 
   return (
-    <article className={cx("surface-raised relative rounded-md", featured ? "p-5 md:p-6" : "p-4", className)}>
+    <article className={cx("surface-raised relative rounded-md has-[a[data-target=card]:focus-visible]:outline-2 has-[a[data-target=card]:focus-visible]:outline-offset-2 has-[a[data-target=card]:focus-visible]:outline-volt", featured ? "p-5 md:p-6" : "p-4", className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <StatusPill spec={pill} />
         <span className="type-label text-text-tertiary">
@@ -36,7 +36,7 @@ export function TournamentCard({ summary, variant = "compact", nowMs, className 
         </span>
       </div>
       <h3 className={cx("mt-3", featured ? "type-display-l" : "type-heading")}>
-        <Link href={href} className="after:absolute after:inset-0 after:rounded-md hover:text-volt focus-visible:outline-none">
+        <Link href={href} data-target="card" className="after:absolute after:inset-0 after:rounded-md hover:text-volt focus-visible:outline-none">
           {t.name}
         </Link>
       </h3>

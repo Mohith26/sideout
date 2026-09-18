@@ -76,7 +76,7 @@ function EventCard({ summary: s }: { summary: TournamentSummary }) {
         <span className="tabular type-label text-text-tertiary">{formatDate(t.startsAt, t.venueTimezone)}</span>
       </div>
       <h2 className="type-heading mt-2">
-        <Link href={`/organizer/events/${t.id}`} className="target inline-flex items-center after:absolute after:inset-0 after:rounded-md hover:text-volt">
+        <Link href={`/organizer/events/${t.id}`} data-target="card" className="target inline-flex items-center after:absolute after:inset-0 after:rounded-md hover:text-volt">
           {t.name}
         </Link>
       </h2>

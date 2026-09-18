@@ -194,7 +194,7 @@ export default async function LucraAdminPage({ searchParams }: PageProps<"/admin
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-subheading text-text-primary">{t.name}</h3>
                   <StatusPill spec={TOURNAMENT_STATUS_PILL[t.status]} size="sm" />
-                  <Link href={filterHref({ tournament: t.id })} className="type-label text-text-secondary hover:text-text-primary">
+                  <Link href={filterHref({ tournament: t.id })} className="target inline-flex items-center type-label text-text-secondary hover:text-text-primary">
                     {counts.accepted + counts.partial + counts.rejected + counts.transport_error + counts.pending} attempts
                   </Link>
                 </div>
@@ -267,23 +267,23 @@ export default async function LucraAdminPage({ searchParams }: PageProps<"/admin
             Attempts
           </h2>
           <nav aria-label="Filter by outcome" className="flex flex-wrap gap-1">
-            <Link href={filterHref({ outcome: undefined })} className={outcome === undefined ? "rounded-full surface-raised px-3 py-1 type-label text-text-primary" : "rounded-full px-3 py-1 type-label text-text-secondary hover:text-text-primary"}>
+            <Link href={filterHref({ outcome: undefined })} className={outcome === undefined ? "inline-flex min-h-11 items-center rounded-full surface-raised px-3 type-label text-text-primary" : "inline-flex min-h-11 items-center rounded-full px-3 type-label text-text-secondary hover:text-text-primary"}>
               all {submissions.length}
             </Link>
             {LUCRA_SUBMISSION_OUTCOMES.map((o) => (
-              <Link key={o} href={filterHref({ outcome: o })} className={outcome === o ? "rounded-full surface-raised px-3 py-1 type-label text-text-primary" : "rounded-full px-3 py-1 type-label text-text-secondary hover:text-text-primary"}>
+              <Link key={o} href={filterHref({ outcome: o })} className={outcome === o ? "inline-flex min-h-11 items-center rounded-full surface-raised px-3 type-label text-text-primary" : "inline-flex min-h-11 items-center rounded-full px-3 type-label text-text-secondary hover:text-text-primary"}>
                 {o.replace("_", " ")} {outcome === undefined ? totals[o] : ""}
               </Link>
             ))}
             {tournamentId ? (
-              <Link href={filterHref({ tournament: undefined })} className="rounded-full px-3 py-1 type-label text-text-secondary hover:text-text-primary">
+              <Link href={filterHref({ tournament: undefined })} className="inline-flex min-h-11 items-center rounded-full px-3 type-label text-text-secondary hover:text-text-primary">
                 clear tournament
               </Link>
             ) : null}
           </nav>
         </div>
         {submissions.length === 0 ? (
-          <EmptyState icon="circleDashed" title="No attempts match" body="Nothing has been written to Lucra under this filter. Attempts appear the moment a consensus reaches agreed." />
+          <EmptyState level={2} icon="circleDashed" title="No attempts match" body="Nothing has been written to Lucra under this filter. Attempts appear the moment a consensus reaches agreed." />
         ) : (
           <div className="space-y-2">
             {submissions.map((view) => (

@@ -77,22 +77,22 @@
 }
 
 /*
- * Motion communicates state; under reduced motion it collapses to opacity-only.
- * Every named transition (phase 5) inherits this wrapper by using the tokens above.
+ * Reduced motion. The durations shorten so anything that still animates is a
+ * quick fade; transitions keep only opacity; no animation may loop. Each of
+ * the six named transitions (src/styles/motion.css) redefines its own
+ * keyframes under the same query as opacity-only, so nothing moves.
  */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --d-micro: 1ms;
-    --d-base: 1ms;
-    --d-enter: 1ms;
-    --d-draw: 1ms;
+    --d-base: 160ms;
+    --d-enter: 160ms;
+    --d-draw: 160ms;
   }
   *,
   *::before,
   *::after {
-    animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
     transition-property: opacity !important;
     scroll-behavior: auto !important;
   }

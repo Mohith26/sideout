@@ -62,7 +62,7 @@ export const CONSENSUS_TRANSITIONS: readonly ConsensusEdge[] = [
   { from: "awaiting_second", to: "agreed", event: "matching_submission", actors: PLAYER },
   { from: "awaiting_second", to: "disputed", event: "conflicting_submission", actors: PLAYER },
   { from: "disputed", to: "agreed", event: "organizer_resolution", actors: ORGANIZER },
-  // Phase 4 (Lucra). Listed so the table is complete; no code takes them yet.
+  // The Lucra write path (src/server/lucra.ts): the write, its three outcomes, and the organizer's retry.
   { from: "agreed", to: "submitting", event: "lucra_submit", actors: LUCRA_WRITER },
   { from: "submitting", to: "accepted", event: "lucra_accepted", actors: LUCRA_OUTCOME },
   { from: "submitting", to: "partial", event: "lucra_partial", actors: LUCRA_OUTCOME },

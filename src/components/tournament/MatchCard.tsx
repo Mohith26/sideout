@@ -2,12 +2,15 @@ import type { MatchView } from "@/db/queries/tournaments";
 import { bracketRoundLabel } from "@/lib/rounds";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";
 import { TeamName } from "@/components/tournament/TeamName";
+import { LiveDot } from "@/components/motion/LiveDot";
+import { ScoreDisplay } from "@/components/motion/ScoreDisplay";
 import { cx } from "@/lib/cx";
 
 /**
  * One match as a card: court, round, both teams, and the set scores that exist.
- * A live match shows its provisional sets; a disputed one shows no numbers at
- * all, because there is no agreed number to show.
+ * A live match shows its provisional sets, each digit rolling to a new value
+ * (`ScoreDisplay`); a disputed one shows no numbers at all, because there is
+ * no agreed number to show.
  */
 export interface MatchCardProps {
   view: MatchView;
@@ -49,7 +52,12 @@ export function MatchCard({ view, bracketRounds, className }: MatchCardProps) {
       </div>
       <div className="flex items-baseline justify-between gap-3 type-label">
         <span className="shrink-0 text-text-tertiary">{roundLabel}</span>
-        {note ? <span className={cx("min-w-0 text-end", note.className)}>{note.text}</span> : null}
+        {note ? (
+          <span className={cx("flex min-w-0 items-center justify-end gap-1.5 text-end", note.className)}>
+            {live ? <LiveDot /> : null}
+            {note.text}
+          </span>
+        ) : null}
       </div>
     </article>
   );
@@ -76,9 +84,7 @@ function TeamLine({
       {points.length ? (
         <span className={cx("tabular flex gap-2 type-mono-stat", live && "text-surf")}>
           {points.map((p, i) => (
-            <span key={i} className="w-6 text-end">
-              {p}
-            </span>
+            <ScoreDisplay key={i} value={p} className="w-6 text-end" />
           ))}
         </span>
       ) : null}

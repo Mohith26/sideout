@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
+import { clearCachedPages } from "@/components/offline/ServiceWorkerRegistration";
 import { api } from "@/lib/api-client";
 
 export function SignOutButton() {
@@ -25,6 +26,8 @@ export function SignOutButton() {
           toast({ tone: "error", title: "Could not sign out", body: result.error.message });
           return;
         }
+        // The offline cache held this player's pages; a shared phone must not keep them.
+        clearCachedPages();
         router.replace("/");
         router.refresh();
       }}

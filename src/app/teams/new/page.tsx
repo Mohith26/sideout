@@ -41,7 +41,7 @@ export default async function NewTeamPage({ searchParams }: PageProps<"/teams/ne
           </div>
           <h1 className="type-display-l mt-2">New team</h1>
           <p className="mt-2 text-text-secondary">
-            <Link href={`/t/${tournament.slug}`} className="text-text-primary hover:text-volt">
+            <Link href={`/t/${tournament.slug}`} className="link-inline text-text-primary hover:text-volt">
               {tournament.name}
             </Link>{" "}
             · {activeTeams} of {tournament.maxTeams} teams in · entry is a {formatCents(tournament.entryDonationCents, tournament.currency)} donation to {charity.name}, collected when you register.
@@ -50,6 +50,7 @@ export default async function NewTeamPage({ searchParams }: PageProps<"/teams/ne
 
         {tournament.status !== "registration_open" ? (
           <EmptyState
+            level={2}
             icon="ban"
             title="Registration is not open"
             body={`${tournament.name} is ${TOURNAMENT_STATUS_PILL[tournament.status].label.toLowerCase()}, so no new teams can be created.`}
@@ -61,6 +62,7 @@ export default async function NewTeamPage({ searchParams }: PageProps<"/teams/ne
           />
         ) : existing && existing.status !== "forming" ? (
           <EmptyState
+            level={2}
             icon="users"
             title={`You are already on "${existing.name}"`}
             body="A player holds one entry per event."

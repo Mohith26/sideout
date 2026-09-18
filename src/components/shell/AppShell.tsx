@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { OfflineStatus } from "@/components/offline/OfflineStatus";
+import { ServiceWorkerRegistration } from "@/components/offline/ServiceWorkerRegistration";
 import { navItemsFor } from "@/components/shell/nav";
 import { NavRail } from "@/components/shell/NavRail";
 import { TabBar } from "@/components/shell/TabBar";
@@ -11,7 +13,9 @@ import { viewer } from "@/server/auth/viewer";
  * Bottom tab bar on mobile, left rail from 1280px, one content column with
  * 16px gutters that grow to 32px at desktop (spec §12.3). The organizer
  * console tab appears only for an organizer session; the page itself is
- * gated again on the server.
+ * gated again on the server. The shell also owns the offline surface: the
+ * service worker registration (production builds), the connectivity status
+ * line above the content, and the outbox replay.
  */
 export async function AppShell({ children }: { children: ReactNode }) {
   const items = navItemsFor(await viewerRole());
@@ -28,11 +32,13 @@ export async function AppShell({ children }: { children: ReactNode }) {
         <header className="flex h-14 items-center border-b border-border-subtle px-gutter xl:hidden">
           <Wordmark />
         </header>
+        <OfflineStatus />
         <main id="main" className="pb-[calc(var(--tabbar-height)+env(safe-area-inset-bottom,0px)+24px)] xl:pb-12">
           {children}
         </main>
       </div>
       <TabBar items={items} />
+      <ServiceWorkerRegistration version={process.env.BUILD_SHA ?? "unknown"} />
     </ToastProvider>
   );
 }

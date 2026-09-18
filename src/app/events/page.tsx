@@ -38,7 +38,7 @@ export default function EventsPage() {
     <Container className="space-y-10 py-6 md:py-8">
       <h1 className="type-display-l">Events</h1>
       {groups.length === 0 ? (
-        <EmptyState icon="calendar" title="No events yet" body="Events appear here once an organizer creates one." />
+        <EmptyState level={2} icon="calendar" title="No events yet" body="Events appear here once an organizer creates one." />
       ) : (
         groups.map((g) => (
           <section key={g.key} aria-labelledby={`events-${g.key}`}>

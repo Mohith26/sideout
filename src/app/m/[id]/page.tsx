@@ -4,10 +4,14 @@ import { notFound } from "next/navigation";
 import { ConsensusBadge } from "@/components/consensus/ConsensusBadge";
 import { ScoreSubmitSheet } from "@/components/consensus/ScoreSubmitSheet";
 import { ScorelineCompare, ScorelineTable } from "@/components/consensus/ScorelineCompare";
+import { LiveDot } from "@/components/motion/LiveDot";
+import { ScoreDisplay } from "@/components/motion/ScoreDisplay";
+import { QueuedScoreNotice } from "@/components/offline/QueuedScoreNotice";
 import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { Button } from "@/components/ui/Button";
 import { Icons } from "@/components/ui/icons";
+import { LiveRefresh } from "@/components/ui/LiveRefresh";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";
 import { getMatchConsensusContext, type ConsensusView, type SubmissionView } from "@/db/queries/consensus";
 import { bracketRoundLabel, getBracketRoundCount, getMatchDetail, isPublished, type MatchDetail } from "@/db/queries/tournaments";
@@ -19,6 +23,9 @@ import { loadAsync } from "@/lib/load";
 import { viewer } from "@/server/auth/viewer";
 
 export const dynamic = "force-dynamic";
+
+/** Seconds between refreshes while the match can still change; the standings API caches for the same 10s. */
+const LIVE_REFRESH_MS = 10_000;
 
 /**
  * Match detail (spec §11.3): the two teams, court and round, where the
@@ -83,9 +90,7 @@ function Scoreboard({ detail }: { detail: MatchDetail }) {
         {showSets ? (
           <span className={cx("flex shrink-0 gap-3 type-display-l", live ? "text-surf" : won ? "text-text-primary" : "text-text-tertiary")} aria-live={live ? "polite" : "off"}>
             {sets.map((s) => (
-              <span key={s.setNumber} className="w-[2ch] text-end">
-                {side === "a" ? s.teamAPoints : s.teamBPoints}
-              </span>
+              <ScoreDisplay key={s.setNumber} value={side === "a" ? s.teamAPoints : s.teamBPoints} className="w-[2ch] text-end" />
             ))}
           </span>
         ) : null}
@@ -96,6 +101,12 @@ function Scoreboard({ detail }: { detail: MatchDetail }) {
     <div className="surface-raised space-y-3 rounded-md p-4 md:p-5">
       {line("a")}
       {line("b")}
+      {live ? (
+        <p className="flex items-center gap-2 type-label text-surf">
+          <LiveDot />
+          Set {sets.length || 1} in play
+        </p>
+      ) : null}
       {teamA || teamB ? (
         <p className="type-label text-text-tertiary">
           {[teamA, teamB]
@@ -159,11 +170,14 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
   const settledByForfeit = match.status === "forfeited" && state === "disputed";
   const showCompare = (disputed || settledByForfeit) && (viewerSide !== null || viewerRole === "organizer") && liveTeam.length === 2;
   const winnerSide = match.winnerTeamId ? (match.winnerTeamId === match.teamAId ? "a" : "b") : null;
+  // While the match can still change, re-render on a cadence so a submission from the other phone shows up and the score rolls.
+  const refreshes = tournament.status === "live" && (match.status === "scheduled" || match.status === "in_progress" || match.status === "awaiting_scores" || match.status === "disputed");
 
   return (
     <Container className="space-y-8 py-6 md:py-8">
+      {refreshes ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
       <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 type-label text-text-tertiary">
-        <Link href={`/t/${tournament.slug}`} className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary">
+        <Link href={`/t/${tournament.slug}`} className="inline-flex min-h-11 items-center gap-1 text-text-secondary hover:text-text-primary">
           {tournament.name}
         </Link>
         <Icons.chevronRight size={12} />
@@ -215,6 +229,9 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
               <ScorelineTable teamA={teamA?.name ?? "Team A"} teamB={teamB?.name ?? "Team B"} sets={ours.sets} winner={null} />
             </div>
           ) : null}
+          <div className="mt-4 empty:hidden">
+            <QueuedScoreNotice matchId={match.id} teamA={teamA?.name ?? "Team A"} teamB={teamB?.name ?? "Team B"} perspective={viewerSide} timeZone={tz} />
+          </div>
           <div className="mt-4">
             <ScoreSubmitSheet
               matchId={match.id}
@@ -276,7 +293,7 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
       {detail.next ? (
         <p className="type-label text-text-tertiary">
           Winner advances to{" "}
-          <Link href={`/m/${detail.next.matchId}`} className="text-text-secondary hover:text-text-primary">
+          <Link href={`/m/${detail.next.matchId}`} className="link-inline text-text-secondary hover:text-text-primary">
             {detail.next.bracketPosition !== null ? `bracket match ${detail.next.bracketPosition}` : "the next round"}
           </Link>
           .

@@ -1,6 +1,7 @@
 import type { Charity, Tournament } from "@/db/schema";
 import { StatusPill, TOURNAMENT_STATUS_PILL } from "@/components/ui/StatusPill";
 import { Countdown } from "@/components/tournament/Countdown";
+import { LiveDot } from "@/components/motion/LiveDot";
 import { TabNav } from "@/components/tournament/TabNav";
 import { formatDate, formatDateRange } from "@/lib/format";
 
@@ -27,7 +28,8 @@ export function TournamentHeader({ tournament: t, charity, nowMs, liveMatchCount
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <StatusPill spec={TOURNAMENT_STATUS_PILL[t.status]} />
           {t.status === "live" ? (
-            <span className="tabular type-label text-surf">
+            <span className="tabular inline-flex items-center gap-2 type-label text-surf">
+              <LiveDot />
               {liveMatchCount} {liveMatchCount === 1 ? "match" : "matches"} on court
             </span>
           ) : upcoming ? (

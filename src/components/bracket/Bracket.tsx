@@ -15,6 +15,8 @@ import {
   type ReactNode,
 } from "react";
 import type { MatchStatus } from "@/db/schema";
+import { LiveDot } from "@/components/motion/LiveDot";
+import { ScoreDisplay } from "@/components/motion/ScoreDisplay";
 import { Icons } from "@/components/ui/icons";
 import { MATCH_STATUS_PILL, StatusPill } from "@/components/ui/StatusPill";
 import {
@@ -45,7 +47,9 @@ import { cx } from "@/lib/cx";
  * link (`<a>` inside the SVG) so Enter opens it; arrow keys move between
  * matches with a roving tabindex, and a visible 2px volt ring at 2px offset
  * follows focus. Winner paths are separate `<path>` elements carrying
- * `data-from`/`data-to`, ready for the phase-5 `stroke-dashoffset` draw.
+ * `data-from`/`data-to`; one that becomes advanced after mount draws itself
+ * in with a `stroke-dashoffset` animation over --d-draw (spec §12.4,
+ * transition 3), which the live refresh triggers when a winner advances.
  */
 
 export interface BracketProps {
@@ -153,6 +157,26 @@ export function Bracket({ nodes, timeZone, label = "Bracket" }: BracketProps) {
   const [tabbableId, setTabbableId] = useState<string | null>(current?.id ?? layout.columns[0]?.nodes[0]?.node.id ?? null);
 
   const canvasHeight = Math.min(560, Math.max(280, layout.height));
+
+  // Transition 3: a connector advanced since the last render draws itself in.
+  const advancedIds = useMemo(() => new Set(layout.connectors.filter((c) => c.advanced).map((c) => c.id)), [layout]);
+  const seenAdvanced = useRef<Set<string> | null>(null);
+  const [drawing, setDrawing] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    const seen = seenAdvanced.current;
+    seenAdvanced.current = advancedIds;
+    if (!seen) return;
+    const fresh = [...advancedIds].filter((id) => !seen.has(id));
+    if (fresh.length > 0) setDrawing((prev) => new Set([...prev, ...fresh]));
+  }, [advancedIds]);
+  const drawn = useCallback((id: string) => {
+    setDrawing((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
 
   // Measure the canvas; the SVG is sized in CSS pixels so text stays crisp at scale 1.
   useLayoutEffect(() => {
@@ -405,8 +429,11 @@ export function Bracket({ nodes, timeZone, label = "Bracket" }: BracketProps) {
                     data-to={c.toId}
                     data-slot={c.slot}
                     data-advanced={c.advanced ? "true" : "false"}
+                    data-drawing={drawing.has(c.id) ? "true" : undefined}
+                    pathLength={1}
                     fill="none"
-                    className={cx("stroke-[1.5]", c.advanced ? "stroke-surf" : "stroke-border-strong")}
+                    onAnimationEnd={() => drawn(c.id)}
+                    className={cx("stroke-[1.5]", c.advanced ? "stroke-surf" : "stroke-border-strong", drawing.has(c.id) && "path-draw")}
                   />
                 ))}
               </g>
@@ -584,7 +611,10 @@ function PinnedMatch({ node, rounds, onLocate }: { node: BracketNode; rounds: nu
     <section className="flex flex-wrap items-center gap-x-4 gap-y-3 p-3 md:p-4" aria-label="Current match">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 type-label text-text-tertiary">
-          <span className={cx(node.status === "in_progress" && "text-surf")}>{lead}</span>
+          <span className={cx("inline-flex items-center gap-2", node.status === "in_progress" && "text-surf")}>
+            {node.status === "in_progress" ? <LiveDot /> : null}
+            {lead}
+          </span>
           <span>·</span>
           <span>{bracketRoundLabel(node.round, rounds)}</span>
           {node.courtLabel ? (
@@ -627,9 +657,7 @@ function PinnedRow({ team, points, won, live }: { team: BracketTeamRef | null; p
       {points.length ? (
         <span className={cx("tabular flex shrink-0 gap-2 type-mono-stat", live && "text-surf")}>
           {points.map((p, i) => (
-            <span key={i} className="w-6 text-end">
-              {p}
-            </span>
+            <ScoreDisplay key={i} value={p} className="w-6 text-end" />
           ))}
         </span>
       ) : null}

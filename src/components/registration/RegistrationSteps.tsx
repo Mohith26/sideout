@@ -47,10 +47,10 @@ function StepCard({ number, title, tone, status, children, className }: { number
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id={`step-${number}-heading`} className="type-subheading">
+            <h3 id={`step-${number}-heading`} className="type-subheading">
               <span className="sr-only">Step {number}: </span>
               {title}
-            </h2>
+            </h3>
             {status}
           </div>
           <div className="mt-3 space-y-3">{children}</div>
@@ -156,7 +156,7 @@ export function RegistrationSteps({ slug, tournamentName, charityName, entryDona
       </StepCard>
 
       <p className="text-text-secondary">
-        <Link href="/me" className="text-text-primary hover:text-volt">
+        <Link href="/me" className="link-inline text-text-primary hover:text-volt">
           Your teams
         </Link>{" "}
         shows every event you are in and the state of each entry.

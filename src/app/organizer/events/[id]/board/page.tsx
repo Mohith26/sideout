@@ -146,7 +146,7 @@ export default async function LiveBoardPage({ params }: PageProps<"/organizer/ev
       </div>
 
       {board.courts.length === 0 ? (
-        <EmptyState icon="grid" title="No matches yet" body="The board fills when the draw is generated." />
+        <EmptyState level={2} icon="grid" title="No matches yet" body="The board fills when the draw is generated." />
       ) : (
         <div aria-live="polite" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {board.courts.map((group) => (

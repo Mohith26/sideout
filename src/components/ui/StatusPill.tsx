@@ -1,11 +1,13 @@
 import type { ConsensusState, DonationStatus, MatchStatus, TeamStatus, TournamentStatus, VerificationState } from "@/db/schema";
 import { Icons, type IconComponent } from "@/components/ui/icons";
+import { LiveDot } from "@/components/motion/LiveDot";
 import { cx } from "@/lib/cx";
 
 /**
  * Status as a label plus an icon — color is never the only carrier of meaning.
  * `surf` = live/agreed, `fault` = disputes and blocks, `ember` is reserved for
- * charity and never appears here.
+ * charity and never appears here. The `live` tone alone carries the breathing
+ * dot (spec §12.4, transition 6).
  */
 export type PillTone = "neutral" | "live" | "attention" | "muted" | "success";
 
@@ -94,7 +96,7 @@ export function StatusPill({ spec, size = "md", className }: StatusPillProps) {
         className,
       )}
     >
-      <Icon size={size === "sm" ? 12 : 14} />
+      {spec.tone === "live" ? <LiveDot className={size === "sm" ? "size-1.5" : "size-2"} /> : <Icon size={size === "sm" ? 12 : 14} />}
       {spec.label}
     </span>
   );

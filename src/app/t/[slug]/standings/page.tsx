@@ -1,4 +1,5 @@
 import { StandingsFootnote, StandingsTable } from "@/components/bracket/StandingsTable";
+import { FlipRows } from "@/components/motion/FlipRows";
 import { Container } from "@/components/shell/Container";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LiveRefresh } from "@/components/ui/LiveRefresh";
@@ -15,7 +16,8 @@ const LIVE_REFRESH_MS = 10_000;
 /**
  * Standings tab (spec §11.2): one table per pool from the same computation
  * `GET /api/tournaments/:slug/standings` serves, updated politely while live.
- * The FLIP reorder is phase 5; rows already carry stable ids for it.
+ * Rows carry stable team ids, and `FlipRows` slides any row that moved
+ * between refreshes instead of letting it jump (spec §12.4, transition 2).
  */
 export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
@@ -29,6 +31,7 @@ export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) 
     return (
       <Container className="py-6 md:py-8">
         <EmptyState
+          level={2}
           icon="table"
           title="No pools yet"
           body={
@@ -50,7 +53,7 @@ export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) 
       <SectionHeading id="standings-heading" aside={<span className="tabular">{`${played} of ${total} pool matches played`}</span>}>
         Standings
       </SectionHeading>
-      <div aria-live="polite" aria-atomic="false" className="grid gap-6 xl:grid-cols-2">
+      <FlipRows aria-live="polite" aria-atomic={false} className="grid gap-6 xl:grid-cols-2">
         {standings.map((pool) => {
           const teams = overview.pools.find((p) => p.id === pool.poolId)?.teams ?? [];
           return (
@@ -66,7 +69,7 @@ export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) 
             />
           );
         })}
-      </div>
+      </FlipRows>
       <StandingsFootnote className="mt-6" />
     </Container>
   );

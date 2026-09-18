@@ -43,7 +43,7 @@ export default async function DisputesPage() {
         </p>
       </header>
       {disputes.length === 0 ? (
-        <EmptyState icon="circleCheck" title="No open disputes" body="Every submitted result agrees. Matches show up here the moment two scorelines differ." />
+        <EmptyState level={2} icon="circleCheck" title="No open disputes" body="Every submitted result agrees. Matches show up here the moment two scorelines differ." />
       ) : (
         <div className="space-y-4">
           <p className="tabular type-label text-fault">

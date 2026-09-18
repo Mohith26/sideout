@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { LucraActionButton } from "@/components/lucra/LucraActions";
+import { MockConsoleAction } from "@/components/organizer/MockConsoleAction";
 import { ReconciliationView } from "@/components/organizer/ReconciliationView";
 import { RecheckParticipants } from "@/components/organizer/RecheckParticipants";
 import { Container } from "@/components/shell/Container";
@@ -13,6 +14,7 @@ import { formatDate, formatTime } from "@/lib/format";
 import { requestNow } from "@/lib/clock";
 import { errorMessage, log } from "@/lib/log";
 import { isLucraError, LUCRA_ERROR_MESSAGE } from "@/lucra";
+import { env } from "@/env";
 import { readLucraAlert, reconcileParticipants, type ParticipantReconciliation } from "@/server/lucra";
 import { requireOrganizerViewer } from "../../../_lib";
 
@@ -50,6 +52,8 @@ export default async function TournamentLucraPage({ params }: PageProps<"/organi
   // The reconciliation may have just verified (or dropped) the matchup: show the row as it stands now.
   const current = getTournamentSummaryById(id)?.tournament ?? summary.tournament;
   const alert = readLucraAlert(current);
+  // Mock mode stands in for Lucra's console: an event the mock has no tournament for can be created here.
+  const offerMockConsole = env.LUCRA_MODE === "mock" && current.lucraMatchupId === null && (alert?.code === "matchup_missing" || failure?.code === "matchup_not_found");
 
   return (
     <Container className="space-y-6 py-6 md:py-8">
@@ -102,11 +106,13 @@ export default async function TournamentLucraPage({ params }: PageProps<"/organi
         </Notice>
       ) : null}
 
-      {failure ? (
+      {failure && !offerMockConsole ? (
         <Notice tone="attention" title="Lucra did not answer">
           {failure.message} <span className="font-mono text-[13px] text-text-tertiary">({failure.code})</span>
         </Notice>
       ) : null}
+
+      {offerMockConsole ? <MockConsoleAction tournamentId={t.id} externalId={t.lucraExternalId} /> : null}
 
       {reconciliation ? <ReconciliationView reconciliation={reconciliation} readAtLabel={`${formatDate(readAt, t.venueTimezone)} ${formatTime(readAt, t.venueTimezone)}`} /> : null}
     </Container>
