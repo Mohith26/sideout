@@ -124,9 +124,11 @@ The public demo runs on Railway, project `sideout`, service `sideout`, environme
 
 - **URL:** https://sideout-production-7db6.up.railway.app (the Railway-provided domain,
   from `railway domain`).
-- **Deployed commit:** `3695c6c22a0bb9c8cde8be3e7062485744e9b9e3` on `fm/sideout-deploy`
-  (the `buildSha` `/health` reports; `railway up` uploads the working tree without `.git`,
-  so `BUILD_SHA` is set as a service variable before each deploy).
+- **Deployed commit:** `c57051986306cb9300d3865f4c6828fa0e96db81` on
+  `fm/sideout-demo-accounts` (the `buildSha` `/health` reports; `railway up` uploads the
+  working tree without `.git`, so `BUILD_SHA` is set as a service variable before each
+  deploy). The `sideout-demo-reset` cron service ("Public demo", below) was deployed from
+  the commit after it, which changed only the reset CLI's `SIDEOUT_URL` fallback and docs.
 - **Health check:** `GET /health` answers 200 with `lucraMode: "mock"`, `session: "env"`,
   `devLogin: false`, `demoAccounts: true`, `migrations: { applied: 6, available: 6, pending: 0 }`.
   Railway's own health check (`railway.json`) and the image `HEALTHCHECK` both point at it.
@@ -237,9 +239,9 @@ status 0 means the reset happened and the anchor and counts were logged.
 **Nightly**, the same call runs from a second Railway service, `sideout-demo-reset`, built
 from the same Dockerfile with `railway/reset.railway.json` as its config file: a cron
 service (`deploy.cronSchedule: "0 10 * * *"`, 10:00 UTC = 03:00 Pacific; no health check,
-restart policy `NEVER`) whose start command is
-`npm run demo:reset -- --url "$SIDEOUT_URL"`, so each run boots the image, POSTs the reset
-and exits (the CLI ships under `src/seed/demo-reset-cli.ts` because only `src/` and the
+restart policy `NEVER`) whose start command is `npm run demo:reset` (the CLI reads
+`SIDEOUT_URL` when `--url` is absent: Railway runs the start command without a shell, so
+nothing expands there), so each run boots the image, POSTs the reset and exits (the CLI ships under `src/seed/demo-reset-cli.ts` because only `src/` and the
 pruned dependencies exist in the runtime stage). Its variables are `SIDEOUT_URL` (the
 public URL) and `DEMO_RESET_TOKEN=${{sideout.DEMO_RESET_TOKEN}}`, a reference to the app
 service's variable, so the token exists in one place. The CLI has no cron flag and
@@ -252,7 +254,11 @@ configured through Railway's public GraphQL API with the CLI's access token
 railway up --ci --service sideout-demo-reset
 ```
 
-Redeploy the same way after a change to the CLI or the config file. Each run's output
+Redeploy the same way after a change to the CLI or the config file; the service-level
+settings (start command, cron, restart policy) live on the service, not in the file, because
+Railway's API now refuses a per-service config file. To run the reset from the cron service
+right now instead of waiting for the schedule:
+`railway restart --service sideout-demo-reset --yes`. Each run's output
 (`demo reset: done` with the anchor and counts, or the refusal) is in that service's
 logs (`railway logs --service sideout-demo-reset`), and a refused reset exits non-zero
 so the run shows as failed.

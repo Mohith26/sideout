@@ -5,12 +5,14 @@ import { errorMessage, log } from "@/lib/log";
 /**
  * `npm run demo:reset -- --url <base> [--token-env DEMO_RESET_TOKEN]` — put the
  * public demo's database back to the seed through `POST /api/admin/demo/reset`
- * (`docs/deploy.md`, "Public demo"). The token is read from the named
- * environment variable (a `.env.local` works too) and never printed; the
- * response's anchor day and row counts are. Exit status 0 only when the reset
- * happened. Lives under `src/` (beside `cli.ts`) because the nightly Railway
- * cron service runs it inside the production image, where only `src/` and the
- * pruned dependencies exist (`railway/reset.railway.json`).
+ * (`docs/deploy.md`, "Public demo"). The base URL falls back to `SIDEOUT_URL`
+ * (the cron service's start command runs with no shell, so it cannot expand
+ * a variable into the argument). The token is read from the named environment
+ * variable (a `.env.local` works too) and never printed; the response's anchor
+ * day and row counts are. Exit status 0 only when the reset happened. Lives
+ * under `src/` (beside `cli.ts`) because the nightly Railway cron service runs
+ * it inside the production image, where only `src/` and the pruned
+ * dependencies exist (`railway/reset.railway.json`).
  */
 const { values } = parseArgs({
   options: {
@@ -21,12 +23,14 @@ const { values } = parseArgs({
 });
 
 function usage(): never {
-  log.error("usage: npm run demo:reset -- --url https://<host> [--token-env DEMO_RESET_TOKEN]");
+  log.error("usage: npm run demo:reset -- --url https://<host> [--token-env DEMO_RESET_TOKEN]   (or SIDEOUT_URL in the environment)");
   process.exit(2);
 }
 
-if (values.help || !values.url) usage();
+if (values.help) usage();
 loadEnvFiles();
+const baseUrl = (values.url ?? process.env.SIDEOUT_URL ?? "").trim().replace(/\/+$/, "");
+if (!baseUrl) usage();
 const tokenEnv = values["token-env"] ?? "DEMO_RESET_TOKEN";
 const token = process.env[tokenEnv]?.trim();
 if (!token) {
@@ -42,8 +46,7 @@ interface ResetData {
 }
 
 async function main(): Promise<void> {
-  const base = values.url?.replace(/\/+$/, "") ?? "";
-  const endpoint = `${base}/api/admin/demo/reset`;
+  const endpoint = `${baseUrl}/api/admin/demo/reset`;
   const response = await fetch(endpoint, { method: "POST", headers: { authorization: `Bearer ${token}`, accept: "application/json" } });
   const text = await response.text();
   let body: { ok?: boolean; data?: ResetData; error?: { code?: string; message?: string } } = {};
