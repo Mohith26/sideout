@@ -138,6 +138,13 @@ async function callMock<A extends MockSdkAction>(body: A): Promise<Extract<MockS
   return parsed.data as Extract<MockSdkResult, { action: A["action"] }>;
 }
 
+/** A `ready` that rejects as the SDK's does when nobody is signed in, marked handled so a consumer who never awaits it sees no unhandled rejection. */
+function notLoggedIn(): Promise<void> {
+  const rejected = Promise.reject<void>(new LucraUserNotLoggedIn());
+  rejected.catch(() => undefined);
+  return rejected;
+}
+
 function storage(): Storage | null {
   try {
     return typeof window === "undefined" ? null : window.localStorage;
@@ -290,13 +297,12 @@ export class LucraClient implements SdkClient {
   private frame: HTMLElement | null = null;
   private _user: SdkUser | null = null;
   private _isInitialized = false;
-  private _ready: Promise<void> = Promise.reject(new LucraUserNotLoggedIn());
+  private _ready: Promise<void> = notLoggedIn();
   private activeDialog: (SdkDialog & { render: (next: SheetSpec) => void }) | null = null;
 
   private constructor(config: SdkClientConfig) {
     if (!config.apiKey || !config.tenantId) throw new Error("Both apiKey and tenantId must be provided to create LucraClient");
     this.config = config;
-    this._ready.catch(() => {});
   }
 
   static initialize(config: SdkClientConfig): LucraClient {
@@ -397,8 +403,7 @@ export class LucraClient implements SdkClient {
       }
     }
     this.setUser(user);
-    this._ready = user ? Promise.resolve() : Promise.reject(new LucraUserNotLoggedIn());
-    this._ready.catch(() => {});
+    this._ready = user ? Promise.resolve() : notLoggedIn();
     this.emit("initialized", { success: true });
     if (user) this.emit("loginSuccess", user);
   }
@@ -416,8 +421,7 @@ export class LucraClient implements SdkClient {
   logout(): this {
     storage()?.removeItem(MOCK_SESSION_KEY);
     this._user = null;
-    this._ready = Promise.reject(new LucraUserNotLoggedIn());
-    this._ready.catch(() => {});
+    this._ready = notLoggedIn();
     void callMock({ action: "logout" }).catch(() => undefined);
     return this;
   }
