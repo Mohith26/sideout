@@ -7,6 +7,7 @@ import { POST as devLogin } from "@/app/api/dev/login/route.dev";
 import { GET as me } from "@/app/api/me/route";
 import { authCodes, users } from "@/db/schema";
 import { okEnvelopeSchema } from "@/lib/api";
+import { env } from "@/env";
 import { CODE_TTL_MS, REQUEST_CODE_LIMITS } from "@/server/auth/codes";
 import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
 import { z } from "zod";
@@ -131,6 +132,19 @@ describe("phone sign-in", () => {
     const refused = await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: "+15550309999" }, headers: spoofed(99) });
     expectFailure(refused, 429, "rate_limited");
     expect(app.conn.db.select().from(authCodes).where(eq(authCodes.phoneE164, "+15550309999")).all()).toEqual([]);
+  });
+
+  it("charges the process-wide budget only for a code it actually issues", async () => {
+    // A phone the narrower limit already refuses must not spend the shared budget on its retries.
+    const throttled = "+15550400001";
+    for (let i = 0; i < 3; i += 1) REQUEST_CODE_LIMITS.perPhone.take(throttled);
+    for (let i = 1; i < env.AUTH_CODE_GLOBAL_CAP; i += 1) REQUEST_CODE_LIMITS.global.take("*");
+    for (let i = 0; i < 5; i += 1) {
+      expectFailure(await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: throttled } }), 429, "rate_limited");
+    }
+    // The single token left still goes to the next legitimate caller.
+    expect((await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: "+15550400002" } })).status).toBe(200);
+    expectFailure(await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: "+15550400003" } }), 429, "rate_limited");
   });
 
   it("drops consumed and expired codes whenever a new one is issued", async () => {

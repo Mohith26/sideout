@@ -30,13 +30,16 @@ const TEN_MINUTES = 10 * 60 * 1000;
 /**
  * Requests per phone and per address, refilled slowly: brute force is not an
  * option. The per-address bucket only applies when a proxy vouches for the
- * address (`TRUSTED_PROXY_HOPS`); the process-wide bucket bounds how many
- * codes, rows and texts an attacker with fresh phones can cause regardless.
+ * address (`TRUSTED_PROXY_HOPS`); the process-wide bucket
+ * (`AUTH_CODE_GLOBAL_CAP` per ten minutes) bounds how many codes, rows and
+ * texts an attacker with fresh phones can cause regardless. It is charged
+ * last, only for a code that is actually issued, so a client the narrower
+ * limits already refuse cannot drain it for everyone else.
  */
 export const REQUEST_CODE_LIMITS = {
   perPhone: createRateLimiter({ capacity: 3, refill: 3, perMs: TEN_MINUTES }),
   perAddress: createRateLimiter({ capacity: 20, refill: 20, perMs: TEN_MINUTES }),
-  global: createRateLimiter({ capacity: 300, refill: 300, perMs: TEN_MINUTES }),
+  global: createRateLimiter({ capacity: env.AUTH_CODE_GLOBAL_CAP, refill: env.AUTH_CODE_GLOBAL_CAP, perMs: TEN_MINUTES }),
 };
 export const VERIFY_CODE_LIMITS = {
   perPhone: createRateLimiter({ capacity: 10, refill: 10, perMs: TEN_MINUTES }),
@@ -71,9 +74,9 @@ export interface RequestCodeResult {
 export function requestCode(input: RequestCodeInput): RequestCodeResult {
   const clock = input.clock ?? systemClock;
   const sms = requireSmsSender();
-  takeOrThrow(REQUEST_CODE_LIMITS.global, GLOBAL_KEY);
   if (input.address !== null) takeOrThrow(REQUEST_CODE_LIMITS.perAddress, input.address);
   takeOrThrow(REQUEST_CODE_LIMITS.perPhone, input.phone);
+  takeOrThrow(REQUEST_CODE_LIMITS.global, GLOBAL_KEY);
 
   const db = getDb();
   const now = clock.now();

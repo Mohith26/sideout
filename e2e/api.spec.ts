@@ -40,6 +40,44 @@ test.describe("API", () => {
     expect(wrong.status()).toBe(401);
   });
 
+  test("a draft event is invisible to the public page and API until an organizer opens it", async ({ page, request }) => {
+    const slug = `draft-${test.info().project.name}-${Date.now()}`;
+    // The organizer creates the draft from the browser context, whose cookies page.goto shares.
+    expect((await page.request.post("/api/dev/login", { data: { phone: ORGANIZER_PHONE } })).ok()).toBe(true);
+    const open = ((await (await request.get("/api/tournaments?status=registration_open")).json()) as { data: Array<{ tournament: Record<string, unknown> }> }).data[0];
+    const created = await page.request.post("/api/admin/tournaments", {
+      data: {
+        slug,
+        name: "Secret Invitational",
+        beneficiaryId: open?.tournament.beneficiaryId,
+        venueName: "Hidden Cove",
+        venueCity: "Malibu",
+        venueState: "CA",
+        venueTimezone: "America/Los_Angeles",
+        startsAt: Date.now() + 90 * 24 * 3_600_000,
+        endsAt: Date.now() + 90 * 24 * 3_600_000 + 8 * 3_600_000,
+        format: "pool_to_bracket",
+        division: "open",
+        maxTeams: 16,
+        entryDonationCents: 5000,
+        fundraisingGoalCents: 100000,
+      },
+    });
+    expect(created.status()).toBe(201);
+
+    // Anonymous: neither the API nor the page knows the event exists.
+    expect((await request.get(`/api/tournaments/${slug}`)).status()).toBe(404);
+    const anonymousPage = await request.get(`/t/${slug}`);
+    expect(anonymousPage.status()).toBe(404);
+    expect(await anonymousPage.text()).not.toContain("Secret Invitational");
+
+    // The organizer previews it.
+    const preview = await page.goto(`/t/${slug}`);
+    expect(preview?.status()).toBe(200);
+    await expect(page.getByRole("heading", { level: 1, name: "Secret Invitational" })).toBeVisible();
+    await expect(page).toHaveTitle(/Secret Invitational/);
+  });
+
   test("dev login signs in seeded users and the session gates the organizer routes", async ({ request }) => {
     expect((await request.get("/api/me")).status()).toBe(401);
     const health = (await (await request.get("/health")).json()) as { data: { devLogin: boolean } };

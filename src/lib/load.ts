@@ -16,3 +16,12 @@ export function load<T>(fn: () => T): Loaded<T> {
     throw err;
   }
 }
+
+export async function loadAsync<T>(fn: () => Promise<T>): Promise<Loaded<T>> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch (err) {
+    if (err instanceof DatabaseNotReadyError) return { ok: false, message: err.message };
+    throw err;
+  }
+}

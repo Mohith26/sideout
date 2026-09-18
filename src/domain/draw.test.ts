@@ -377,6 +377,40 @@ describe("selectAdvancing + seedBracketSlots", () => {
     expect(selectAdvancing(pools, { perPool: 2, bestRemaining: 4 })).toEqual(["a1", "b1", "c1", "b2", "a2", "c2", "b3", "c3", "a3", "c4"]);
   });
 
+  it("ranks across pools of unequal size per match played (22 teams: 4,4,4,4,3,3)", () => {
+    const sized = (teamId: string, played: number, wins: number, setsLost: number, pointDiff: number): StandingRow => ({
+      teamId,
+      played,
+      wins,
+      losses: played - wins,
+      setsWon: wins * 2,
+      setsLost,
+      pointsFor: played * 42 + pointDiff,
+      pointsAgainst: played * 42,
+      pointDiff,
+      rank: 0,
+    });
+    const groups = snakePools(teams(22).map((t) => t.id), poolCountFor(22, 4));
+    expect(groups.map((g) => g.length).sort()).toEqual([3, 3, 4, 4, 4, 4]);
+    // Winners: four undefeated 3-0 sides from the four-team pools, two undefeated 2-0 sides from the three-team pools.
+    // Pool F's winner dropped no set at all; pool A's winner dropped two and has the biggest raw margin.
+    const four = (p: string) => [sized(`${p}1`, 3, 3, p === "a" ? 2 : 1, p === "a" ? 30 : 20), sized(`${p}2`, 3, 1, 3, -2), sized(`${p}3`, 3, 1, 4, -8), sized(`${p}4`, 3, 1, 5, -10)];
+    const three = (p: string) => [sized(`${p}1`, 2, 2, 0, 12), sized(`${p}2`, 2, 1, 2, 0), sized(`${p}3`, 2, 0, 4, -12)];
+    const pools22 = [{ rows: four("a") }, { rows: four("b") }, { rows: four("c") }, { rows: four("d") }, { rows: three("e") }, { rows: three("f") }];
+
+    const seeds = selectAdvancing(pools22, { perPool: 2, bestRemaining: 0 });
+    expect(seeds).toHaveLength(12);
+    // All six winners are undefeated; the two that never dropped a set lead, and the top four seeds (the byes
+    // in a 16-slot bracket) are not simply the four teams with three raw wins.
+    expect(seeds.slice(0, 6)).toEqual(["e1", "f1", "b1", "c1", "d1", "a1"]);
+    // Runners-up: a 1-1 record (.500) from a three-team pool outranks 1-2 (.333) from a four-team pool.
+    expect(seeds.slice(6, 8)).toEqual(["e2", "f2"]);
+
+    // Best remaining third places: 1-2 (.333) beats 0-2.
+    const withThirds = selectAdvancing(pools22, { perPool: 2, bestRemaining: 3 });
+    expect(withThirds.slice(12)).toEqual(["a3", "b3", "c3"]);
+  });
+
   it("refuses rules the pools cannot meet", () => {
     expect(() => selectAdvancing(pools, { perPool: 5, bestRemaining: 0 })).toThrow(DrawError);
     expect(() => selectAdvancing(pools, { perPool: 2, bestRemaining: 7 })).toThrow(/Not enough teams/);

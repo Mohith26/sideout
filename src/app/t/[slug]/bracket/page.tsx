@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function BracketPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
-  const { tournament } = requireTournament(slug);
+  const { tournament } = await requireTournament(slug);
   const overview = getTournamentOverview(tournament.id);
   const bracketMatches = overview.rounds.filter((r) => r.key.startsWith("bracket-")).reduce((n, r) => n + r.total, 0);
   return (

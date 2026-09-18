@@ -27,6 +27,12 @@ describe("parseServerEnv", () => {
     expect(() => parseServerEnv({ TRUSTED_PROXY_HOPS: "one" })).toThrow(/TRUSTED_PROXY_HOPS/);
   });
 
+  it("caps sign-in codes process-wide at AUTH_CODE_GLOBAL_CAP, 2000 per ten minutes by default", () => {
+    expect(parseServerEnv({}).AUTH_CODE_GLOBAL_CAP).toBe(2000);
+    expect(parseServerEnv({ AUTH_CODE_GLOBAL_CAP: "500" }).AUTH_CODE_GLOBAL_CAP).toBe(500);
+    expect(() => parseServerEnv({ AUTH_CODE_GLOBAL_CAP: "0" })).toThrow(/AUTH_CODE_GLOBAL_CAP/);
+  });
+
   it("refuses sandbox or production without a base URL and backend key", () => {
     expect(() => parseServerEnv({ LUCRA_MODE: "sandbox" })).toThrow(/LUCRA_BASE_URL is required/);
     expect(() => parseServerEnv({ LUCRA_MODE: "production", LUCRA_BASE_URL: "https://api.lucrasports.com" })).toThrow(

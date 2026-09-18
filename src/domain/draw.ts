@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BEST_OF, type BestOf, type MatchSlot, type TournamentFormat } from "@/db/schema";
-import { compareStandings, type StandingRow } from "@/domain/standings";
+import { compareAcrossPools, type StandingRow } from "@/domain/standings";
 import type { Rng } from "@/lib/rng";
 
 /**
@@ -340,8 +340,9 @@ export function seedBracketSlots(slots: readonly BracketSlot[], seedOrder: reado
  * Advancing teams in seed order: the pool winners ranked against each other,
  * then the runners-up, and so on for `perPool` places; then the best
  * `bestRemaining` of the next place across pools (then the place after, if
- * that runs out). Cross-pool ranking uses the same tiebreak order minus
- * head-to-head, since teams from different pools have not met.
+ * that runs out). Cross-pool ranking is per match played
+ * (`compareAcrossPools`), since pools can differ in size by one and teams
+ * from different pools have not met.
  */
 export function selectAdvancing(pools: ReadonlyArray<{ rows: readonly StandingRow[] }>, rule: AdvancementRule): string[] {
   validateAdvancement(rule);
@@ -357,11 +358,11 @@ export function selectAdvancing(pools: ReadonlyArray<{ rows: readonly StandingRo
     if (!group || group.length < pools.length) {
       throw new DrawError("bad_advancement", `Every pool needs at least ${rule.perPool} teams to advance ${rule.perPool} per pool.`);
     }
-    out.push(...[...group].sort((x, y) => compareStandings(x, y)).map((r) => r.teamId));
+    out.push(...[...group].sort(compareAcrossPools).map((r) => r.teamId));
   }
   let remaining = rule.bestRemaining;
   for (let place = rule.perPool; remaining > 0 && place < byPlace.length; place += 1) {
-    const group = [...(byPlace[place] ?? [])].sort((x, y) => compareStandings(x, y));
+    const group = [...(byPlace[place] ?? [])].sort(compareAcrossPools);
     const take = group.slice(0, remaining);
     out.push(...take.map((r) => r.teamId));
     remaining -= take.length;

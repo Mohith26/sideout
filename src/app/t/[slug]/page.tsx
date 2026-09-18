@@ -33,7 +33,7 @@ function RoundStatus({ round }: { round: RoundView }) {
 /** Overview tab: format, division, courts, schedule, sponsors, impact meter (spec §11.2). */
 export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
-  const summary = requireTournament(slug);
+  const summary = await requireTournament(slug);
   const { tournament: t, activeTeams, raisedCents, donorCount } = summary;
   const overview = getTournamentOverview(t.id);
   const live = t.status === "live" ? listLiveMatches(t.id) : [];

@@ -65,10 +65,6 @@ export function verifySession(token: string | undefined, secret: string, clock: 
   return result.data;
 }
 
-export function readSessionUserId(request: NextRequest, clock: Clock = systemClock): string | null {
-  return verifySession(request.cookies.get(SESSION_COOKIE)?.value, env.sessionSecret, clock)?.uid ?? null;
-}
-
 /**
  * `Secure` follows the request: a deploy behind TLS termination forwards
  * `x-forwarded-proto: https` and gets a Secure cookie; a plain-http server

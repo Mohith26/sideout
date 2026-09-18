@@ -58,7 +58,7 @@ const poolsRequestSchema = z
   .strict();
 const bracketRequestSchema = z.object({ stage: z.literal("bracket") }).strict();
 
-export const drawRequestSchema = z.union([bracketRequestSchema, poolsRequestSchema]);
+export const drawRequestSchema = z.discriminatedUnion("stage", [bracketRequestSchema, poolsRequestSchema]);
 export type DrawRequest = z.infer<typeof drawRequestSchema>;
 export type PoolsDrawRequest = z.infer<typeof poolsRequestSchema>;
 

@@ -366,6 +366,10 @@ describe("organizer routes", () => {
       expectFailure(await drawCall(ptb, { courts: 2, advance: { perPool: 5, bestRemaining: 0 } }), 400, "bad_request");
       expectFailure(await drawCall(ptb, { courts: 0 }), 400, "bad_request");
       expectFailure(await drawCall(ptb, { seeds: [{ teamId: "ghost", seed: 1 }] }), 400, "bad_request");
+      // Shape errors name the field, so the organizer console can point at it.
+      expect(expectFailure(await drawCall(ptb, { courts: "4" }), 400, "bad_request").detail).toMatchObject({ issues: [{ path: "courts", message: expect.stringMatching(/number/) }] });
+      expect(expectFailure(await drawCall(ptb, { seeds: "nope" }), 400, "bad_request").detail).toMatchObject({ issues: [{ path: "seeds", message: expect.stringMatching(/array/) }] });
+      expect(expectFailure(await drawCall(ptb, { stage: "finals" }), 400, "bad_request").detail).toMatchObject({ issues: [{ path: "stage" }] });
     });
 
     /** Resolve every pool match: the earlier-created team wins, no sets (as forfeits would). */

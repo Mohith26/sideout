@@ -3,16 +3,16 @@ import { notFound } from "next/navigation";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { TournamentHeader } from "@/components/tournament/TournamentHeader";
 import { getDb } from "@/db/client";
-import { getTournamentSummaryBySlug } from "@/db/queries/tournaments";
-import { load } from "@/lib/load";
+import { loadAsync } from "@/lib/load";
 import { requestNow } from "@/lib/clock";
 import { settleDueDonations } from "@/server/donations/stub-provider";
+import { findVisibleTournament } from "./_lib";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: LayoutProps<"/t/[slug]">): Promise<Metadata> {
   const { slug } = await params;
-  const loaded = load(() => getTournamentSummaryBySlug(slug));
+  const loaded = await loadAsync(() => findVisibleTournament(slug));
   if (!loaded.ok || !loaded.data) return { title: "Event" };
   const { tournament, charity } = loaded.data;
   return {
@@ -25,10 +25,10 @@ export async function generateMetadata({ params }: LayoutProps<"/t/[slug]">): Pr
 export default async function TournamentLayout({ params, children }: LayoutProps<"/t/[slug]">) {
   const { slug } = await params;
   const nowMs = requestNow();
-  const loaded = load(() => {
+  const loaded = await loadAsync(() => {
     // Stub donation provider: pending intents past their delay become succeeded on read.
     settleDueDonations(getDb(), nowMs);
-    return getTournamentSummaryBySlug(slug);
+    return findVisibleTournament(slug);
   });
   if (!loaded.ok) return <DatabaseNotReady message={loaded.message} />;
   if (!loaded.data) notFound();

@@ -45,6 +45,12 @@ const serverSchema = z
      * client can write the header itself, so no per-address rate limit applies.
      */
     TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(8).default(0),
+    /**
+     * Process-wide cap on sign-in codes issued per ten minutes: the backstop
+     * that bounds rows, texts and log lines when no client address can be
+     * trusted. Size it to the largest crowd expected to sign in at once.
+     */
+    AUTH_CODE_GLOBAL_CAP: z.coerce.number().int().min(1).max(1_000_000).default(2000),
   })
   .superRefine((env, ctx) => {
     // OPEN: (§17.1) sandbox credentials are issued by a Lucra representative. The
@@ -150,6 +156,7 @@ export const env: ServerEnv = parseServerEnv({
   SESSION_SECRET: process.env.SESSION_SECRET,
   SIDEOUT_DEV_LOGIN: process.env.SIDEOUT_DEV_LOGIN,
   TRUSTED_PROXY_HOPS: process.env.TRUSTED_PROXY_HOPS,
+  AUTH_CODE_GLOBAL_CAP: process.env.AUTH_CODE_GLOBAL_CAP,
 });
 
 if (env.sessionSecretSource === "ephemeral") {
@@ -157,4 +164,7 @@ if (env.sessionSecretSource === "ephemeral") {
 }
 if (env.NODE_ENV === "production" && env.devLoginEnabled) {
   log.warn("SIDEOUT_DEV_LOGIN is set: POST /api/dev/login is compiled into this production build; never do this on a public deployment");
+}
+if (env.NODE_ENV === "production" && env.TRUSTED_PROXY_HOPS === 0) {
+  log.warn("TRUSTED_PROXY_HOPS is 0: no client address is trusted, so sign-in is rate-limited per phone and process-wide only; set it to the number of proxies in front of this server (1 behind a single proxy)");
 }

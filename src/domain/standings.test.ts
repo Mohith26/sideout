@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareAcrossPools,
   compareStandingKeys,
   compareStandings,
   computeStandings,
+  CROSS_POOL_ORDER,
   headToHeadResolver,
   TIEBREAK_ORDER,
   type StandingRow,
@@ -156,6 +158,49 @@ describe("tiebreak table", () => {
     } else {
       expect(compareStandingKeys(x, y, resolver)).toBeLessThan(0);
     }
+  });
+
+  const crossPool: Array<{ name: string; key: (typeof CROSS_POOL_ORDER)[number]; x: StandingRow; y: StandingRow }> = [
+    {
+      name: "win percentage, not raw wins: 2-0 in a pool of three beats 2-1 in a pool of four",
+      key: "win_pct",
+      x: row(A, { played: 2, wins: 2, setsWon: 4, setsLost: 1, pointDiff: 10, pointsFor: 84 }),
+      y: row(B, { played: 3, wins: 2, setsWon: 6, setsLost: 0, pointDiff: 60, pointsFor: 126 }),
+    },
+    {
+      name: "equal win percentage: set ratio",
+      key: "set_ratio",
+      x: row(A, { played: 2, wins: 2, setsWon: 4, setsLost: 0, pointDiff: 10, pointsFor: 84 }),
+      y: row(B, { played: 3, wins: 3, setsWon: 6, setsLost: 1, pointDiff: 60, pointsFor: 126 }),
+    },
+    {
+      name: "point differential per match, not in total: +8 over two matches beats +9 over three",
+      key: "point_diff_per_match",
+      x: row(A, { played: 2, wins: 2, setsWon: 4, setsLost: 0, pointDiff: 8, pointsFor: 84 }),
+      y: row(B, { played: 3, wins: 3, setsWon: 6, setsLost: 0, pointDiff: 9, pointsFor: 126 }),
+    },
+    {
+      name: "points for per match",
+      key: "points_for_per_match",
+      x: row(A, { played: 2, wins: 2, setsWon: 4, setsLost: 0, pointDiff: 6, pointsFor: 86 }),
+      y: row(B, { played: 3, wins: 3, setsWon: 6, setsLost: 0, pointDiff: 9, pointsFor: 126 }),
+    },
+    {
+      name: "stable id last",
+      key: "team_id",
+      x: row(A, { played: 2, wins: 2, setsWon: 4, setsLost: 0, pointDiff: 6, pointsFor: 84 }),
+      y: row(B, { played: 3, wins: 3, setsWon: 6, setsLost: 0, pointDiff: 9, pointsFor: 126 }),
+    },
+  ];
+
+  it.each(crossPool)("across pools: $name ($key)", ({ x, y }) => {
+    expect(compareAcrossPools(x, y)).toBeLessThan(0);
+    expect(compareAcrossPools(y, x)).toBeGreaterThan(0);
+  });
+
+  it("across pools, two sides that have not played tie on the per-match keys and fall to the id", () => {
+    expect(CROSS_POOL_ORDER).toEqual(["win_pct", "set_ratio", "point_diff_per_match", "points_for_per_match", "team_id"]);
+    expect(compareAcrossPools(row(B, {}), row(A, {}))).toBeGreaterThan(0);
   });
 
   it("ignores head-to-head when the tie is not exactly two-way", () => {

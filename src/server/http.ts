@@ -1,16 +1,15 @@
 import "server-only";
-import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { ZodError, type z } from "zod";
-import { getDb } from "@/db/client";
 import { DatabaseNotReadyError } from "@/db/connection";
-import { users, type User } from "@/db/schema";
+import type { User } from "@/db/schema";
 import { BracketError } from "@/domain/bracket";
 import { DrawError } from "@/domain/draw";
 import { ApiFailure, fail, type ApiErrorCode } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
 import { errorMessage, log } from "@/lib/log";
-import { readSessionUserId } from "@/server/auth/session";
+import { SESSION_COOKIE } from "@/server/auth/session";
+import { userForSessionToken } from "@/server/auth/viewer";
 
 /**
  * The thin layer every route handler sits on: zod at the boundary, the
@@ -85,9 +84,7 @@ export function parseQuery<T extends z.ZodType>(request: NextRequest, schema: T)
 // ---------------------------------------------------------------------------
 
 export function currentUser(request: NextRequest, clock: Clock = systemClock): User | null {
-  const userId = readSessionUserId(request, clock);
-  if (!userId) return null;
-  return getDb().select().from(users).where(eq(users.id, userId)).get() ?? null;
+  return userForSessionToken(request.cookies.get(SESSION_COOKIE)?.value, clock);
 }
 
 export function requireUser(request: NextRequest, clock: Clock = systemClock): User {

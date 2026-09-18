@@ -28,7 +28,7 @@ const REWARD_STATUS_LABEL: Record<RewardStatus, string> = {
 /** Impact tab: beneficiary story, raised vs goal, donor wall, sponsor tiers (spec §11.2). */
 export default async function ImpactTab({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
-  const { tournament: t, charity } = requireTournament(slug);
+  const { tournament: t, charity } = await requireTournament(slug);
   const impact = getTournamentImpact(t);
   const { breakdown } = impact;
 

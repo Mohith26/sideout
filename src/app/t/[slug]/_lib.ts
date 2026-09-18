@@ -2,15 +2,35 @@ import "server-only";
 import { notFound } from "next/navigation";
 import { DatabaseNotReadyError } from "@/db/connection";
 import { getTournamentSummaryBySlug, type TournamentSummary } from "@/db/queries/tournaments";
+import type { User } from "@/db/schema";
+import { viewer } from "@/server/auth/viewer";
+
+/**
+ * A draft is unpublished: it does not exist for the public, exactly as the API
+ * answers, but an organizer may open it to preview what the page will show.
+ */
+export function visibleTo(summary: TournamentSummary | null, user: User | null): TournamentSummary | null {
+  if (!summary) return null;
+  if (summary.tournament.status === "draft" && user?.role !== "organizer") return null;
+  return summary;
+}
+
+/** The tournament a `/t/[slug]` render may show to the current viewer, or null. */
+export async function findVisibleTournament(slug: string): Promise<TournamentSummary | null> {
+  const summary = getTournamentSummaryBySlug(slug);
+  if (!summary) return null;
+  return visibleTo(summary, summary.tournament.status === "draft" ? await viewer() : null);
+}
 
 /** Resolve the tournament for a tab page; the layout already rendered the not-ready state. */
-export function requireTournament(slug: string): TournamentSummary {
+export async function requireTournament(slug: string): Promise<TournamentSummary> {
+  let summary: TournamentSummary | null;
   try {
-    const summary = getTournamentSummaryBySlug(slug);
-    if (!summary) notFound();
-    return summary;
+    summary = await findVisibleTournament(slug);
   } catch (err) {
     if (err instanceof DatabaseNotReadyError) notFound();
     throw err;
   }
+  if (!summary) notFound();
+  return summary;
 }

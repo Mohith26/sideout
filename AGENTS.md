@@ -51,7 +51,8 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   asserts the seeded draws equal `draw()` for the same inputs (`SEED_DRAWS`).
 - Pure rules live under `src/domain/` and are unit-tested, no I/O: `draw.ts` (pools,
   round robin, bracket, advancement rule), `bracket.ts` (advance/forfeit/bye),
-  `standings.ts` (tiebreak order in `TIEBREAK_ORDER`), `transitions.ts` (the two
+  `standings.ts` (tiebreak order in `TIEBREAK_ORDER`; per-match `CROSS_POOL_ORDER`
+  for ranking across pools of unequal size), `transitions.ts` (the two
   status matrices; `final` is only ever set by actor `system`, i.e. the consensus
   phase), `scoreline.ts`, `team.ts`. Inject the clock (`src/lib/clock.ts`) and rng
   (`src/lib/rng.ts`); never read `Date.now()` in a domain module.
@@ -63,15 +64,20 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   tests use `src/test/routes.ts` (a migrated temp SQLite file installed as the
   process connection) and cover every endpoint. Public routes serialize the
   `PublicTournament` projection (no `lucra_*` columns) and never see drafts;
-  organizer routes return the full row.
+  organizer routes return the full row; `/t/[slug]` applies the same rule and lets
+  only an organizer session open a draft.
 - `teams.seed` is the organizer's entry seed, written only from the draw request's
   `seeds` list; the pools stage stores its inputs as `tournaments.draw_config_json`
   and the bracket stage reads the advancement rule from there.
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
   production when unset — `/health` reports which). `users.role` gates `/api/admin/*`
-  via `requireOrganizer`. `POST /api/dev/login` lives in `route.dev.ts`, an extension
+  via `requireOrganizer`; server components read the same cookie through
+  `src/server/auth/viewer.ts`. `POST /api/dev/login` lives in `route.dev.ts`, an extension
   `next.config.ts` registers only outside production or with `SIDEOUT_DEV_LOGIN=true`.
+  Sign-in rate limits key on `x-forwarded-for` only when `TRUSTED_PROXY_HOPS` says how
+  many proxies vouch for it: a public deploy behind a proxy must set `1` (production
+  warns at boot while it is 0); `AUTH_CODE_GLOBAL_CAP` is the process-wide backstop.
 - Outbound SMS (sign-in codes, invites) only through `src/server/auth/sms.ts`
   (`getSmsSender()` is the log sender outside production and null in production until
   a provider exists, so request-code answers 503 `sms_unavailable` there); the
