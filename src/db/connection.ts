@@ -73,9 +73,27 @@ export function openConnection(databasePath: string, options: OpenOptions = {}):
   };
 }
 
-/** Apply every pending checked-in migration. Idempotent. */
+/**
+ * Apply every pending checked-in migration. Idempotent.
+ *
+ * SQLite cannot alter a CHECK constraint in place, so drizzle-kit rebuilds such
+ * tables (create `__new_x`, copy, drop `x`, rename). Its emitted
+ * `PRAGMA foreign_keys=OFF` is a no-op inside the transaction the migrator
+ * opens, and dropping a populated parent table with enforcement on fails. This
+ * follows SQLite's own ALTER TABLE procedure instead: enforcement off around
+ * the run, then a full `foreign_key_check` before enforcement is restored.
+ */
 export function applyMigrations(conn: Connection): MigrationState {
-  migrate(conn.db, { migrationsFolder: migrationsFolder() });
+  conn.sqlite.pragma("foreign_keys = OFF");
+  try {
+    migrate(conn.db, { migrationsFolder: migrationsFolder() });
+    const violations = conn.sqlite.pragma("foreign_key_check") as unknown[];
+    if (violations.length > 0) {
+      throw new Error(`Migrations left ${violations.length} foreign key violation(s); refusing to continue.`);
+    }
+  } finally {
+    conn.sqlite.pragma("foreign_keys = ON");
+  }
   return readMigrationState(conn.sqlite);
 }
 

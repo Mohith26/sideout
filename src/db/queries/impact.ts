@@ -1,8 +1,8 @@
 import "server-only";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { charities, donations, rewards, sponsors, teams, tournaments, users, type Charity, type Reward, type Sponsor, type Tournament } from "@/db/schema";
-import { sortSponsors } from "@/db/queries/tournaments";
+import { sortSponsors, UNPUBLISHED_STATUS } from "@/db/queries/tournaments";
 
 /**
  * Charity-side read models. Only `succeeded` donations count toward a total;
@@ -131,10 +131,11 @@ export interface GlobalImpact {
   perEvent: Array<{ tournament: Tournament; raisedCents: number; donorCount: number }>;
 }
 
+/** Site-wide totals over every published event; a draft's goal is not a public promise yet. */
 export function getGlobalImpact(): GlobalImpact {
   const db = getDb();
   const charity = db.select().from(charities).limit(1).get() ?? null;
-  const events = db.select().from(tournaments).orderBy(asc(tournaments.startsAt)).all();
+  const events = db.select().from(tournaments).where(ne(tournaments.status, UNPUBLISHED_STATUS)).orderBy(asc(tournaments.startsAt)).all();
   const agg = db
     .select({
       tournamentId: donations.tournamentId,

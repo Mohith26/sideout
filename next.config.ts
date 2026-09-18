@@ -21,8 +21,20 @@ function resolveBuildSha(): string {
   }
 }
 
+/**
+ * `POST /api/dev/login` lives in `route.dev.ts`. The `dev.ts` page extension is
+ * registered only when dev login is enabled, so a normal production build does
+ * not contain the route. Mirrors `isDevLoginEnabled` in `src/env.ts`, which
+ * cannot be imported here (it is `server-only`).
+ */
+function devLoginEnabled(): boolean {
+  const flag = (process.env.SIDEOUT_DEV_LOGIN ?? "").trim();
+  return process.env.NODE_ENV !== "production" || flag === "true" || flag === "1";
+}
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  pageExtensions: devLoginEnabled() ? ["tsx", "ts", "jsx", "js", "dev.ts"] : ["tsx", "ts", "jsx", "js"],
   poweredByHeader: false,
   // Repo guidance for agents lives in AGENTS.md under our own control; keep
   // `next dev` from rewriting it on every start.

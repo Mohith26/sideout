@@ -35,7 +35,18 @@ export const VERIFICATION_STATES = [
   "not_allowed",
   "demographics_missing",
 ] as const;
-export const TEAM_STATUSES = ["registered", "checked_in", "withdrawn"] as const;
+/**
+ * `forming` and `disbanded` are not in spec §6.1. `forming` is the state between
+ * `POST /api/teams` (captain plus a pending partner invite) and
+ * `POST /api/tournaments/:slug/register` (both members in, donation intent
+ * created); `disbanded` is a forming team its captain or partner abandoned by
+ * creating or joining another before it registered. Neither counts toward
+ * capacity or appears on a public roster; `withdrawn` stays reserved for a team
+ * that had registered. Recorded as a deviation in docs/open-questions.md.
+ */
+export const TEAM_STATUSES = ["forming", "registered", "checked_in", "withdrawn", "disbanded"] as const;
+export const USER_ROLES = ["player", "organizer"] as const;
+export const TEAM_INVITE_STATUSES = ["pending", "accepted", "revoked"] as const;
 export const TEAM_ROLES = ["captain", "player"] as const;
 export const TOURNAMENT_FORMATS = ["pool_to_bracket", "single_elim", "double_elim", "round_robin"] as const;
 export const DIVISIONS = ["open", "womens", "mens", "coed", "rec"] as const;
@@ -82,6 +93,8 @@ export const ACTOR_KINDS = ["player", "organizer", "system", "lucra_webhook"] as
 
 export type VerificationState = (typeof VERIFICATION_STATES)[number];
 export type TeamStatus = (typeof TEAM_STATUSES)[number];
+export type UserRole = (typeof USER_ROLES)[number];
+export type TeamInviteStatus = (typeof TEAM_INVITE_STATUSES)[number];
 export type TeamRole = (typeof TEAM_ROLES)[number];
 export type TournamentFormat = (typeof TOURNAMENT_FORMATS)[number];
 export type Division = (typeof DIVISIONS)[number];
@@ -136,9 +149,29 @@ export const users = sqliteTable(
     phoneE164: text("phone_e164"),
     email: text("email"),
     avatarUrl: text("avatar_url"),
+    /** Sideout's own role; `organizer` gates `/api/admin/*`. Lucra owns wallet identity. */
+    role: enumColumn("role", USER_ROLES).notNull().default("player"),
     createdAt: epochMs("created_at").notNull(),
   },
-  (t) => [uniqueIndex("users_phone_e164_unique").on(t.phoneE164)],
+  (t) => [uniqueIndex("users_phone_e164_unique").on(t.phoneE164), enumCheck("users", "role", USER_ROLES)],
+);
+
+/**
+ * One-time sign-in codes for phone auth. Only the HMAC of the code is stored;
+ * a row is consumed on success and abandoned after `MAX_AUTH_CODE_ATTEMPTS`.
+ */
+export const authCodes = sqliteTable(
+  "auth_codes",
+  {
+    id: id(),
+    phoneE164: text("phone_e164").notNull(),
+    codeHash: text("code_hash").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: epochMs("expires_at").notNull(),
+    consumedAt: epochMs("consumed_at"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [index("auth_codes_phone_idx").on(t.phoneE164, t.createdAt)],
 );
 
 export const lucraLinks = sqliteTable(
@@ -207,6 +240,13 @@ export const tournaments = sqliteTable(
     // OPEN: (§17.5) how a locationId is modelled for a travelling outdoor venue is
     // unresolved. Nullable, left null, until Lucra clarifies.
     lucraLocationId: text("lucra_location_id"),
+    /**
+     * The pools-stage draw configuration (`DrawConfig` from `@/domain/draw`, as
+     * JSON) that produced the current pools and bracket skeleton; null until a
+     * draw exists. The bracket stage reads its advancement rule from here rather
+     * than trusting the caller to resend the rule that sized the bracket.
+     */
+    drawConfigJson: text("draw_config_json"),
     createdAt: epochMs("created_at").notNull(),
   },
   (t) => [
@@ -265,6 +305,34 @@ export const teamMembers = sqliteTable(
     uniqueIndex("team_members_team_user_unique").on(t.teamId, t.userId),
     index("team_members_user_id_idx").on(t.userId),
     enumCheck("team_members", "role", TEAM_ROLES),
+  ],
+);
+
+/**
+ * A captain's invitation to a partner, by phone. Accepting it (`POST
+ * /api/teams/:id/join`) creates the `team_members` row for the signed-in user
+ * whose phone matches. One pending invite per team at a time.
+ */
+export const teamInvites = sqliteTable(
+  "team_invites",
+  {
+    id: id(),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => teams.id),
+    invitedByUserId: text("invited_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    phoneE164: text("phone_e164").notNull(),
+    status: enumColumn("status", TEAM_INVITE_STATUSES).notNull(),
+    acceptedByUserId: text("accepted_by_user_id").references(() => users.id),
+    createdAt: epochMs("created_at").notNull(),
+    respondedAt: epochMs("responded_at"),
+  },
+  (t) => [
+    index("team_invites_team_id_idx").on(t.teamId),
+    index("team_invites_phone_idx").on(t.phoneE164, t.status),
+    enumCheck("team_invites", "status", TEAM_INVITE_STATUSES),
   ],
 );
 
@@ -579,6 +647,10 @@ export const auditLog = sqliteTable(
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type AuthCode = typeof authCodes.$inferSelect;
+export type NewAuthCode = typeof authCodes.$inferInsert;
+export type TeamInvite = typeof teamInvites.$inferSelect;
+export type NewTeamInvite = typeof teamInvites.$inferInsert;
 export type LucraLink = typeof lucraLinks.$inferSelect;
 export type NewLucraLink = typeof lucraLinks.$inferInsert;
 export type Charity = typeof charities.$inferSelect;

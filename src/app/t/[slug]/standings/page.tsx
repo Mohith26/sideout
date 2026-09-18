@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /** Honest placeholder; standings with tiebreaks are phase 2 domain logic. */
 export default async function StandingsPage({ params }: PageProps<"/t/[slug]">) {
   const { slug } = await params;
-  const { tournament } = requireTournament(slug);
+  const { tournament } = await requireTournament(slug);
   const overview = getTournamentOverview(tournament.id);
   const poolMatches = overview.rounds.filter((r) => r.key.startsWith("pool-")).reduce((n, r) => n + r.total, 0);
   return (

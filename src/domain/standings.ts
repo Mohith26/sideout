@@ -1,13 +1,51 @@
 /**
- * Pool standings with point-differential tiebreaks (spec §11.2). Pure. Phase 2
- * extends this with head-to-head and the full draw engine; phase 1 needs it so
- * bracket seeding in the seed follows from pool results rather than being typed.
+ * Pool standings with the full tiebreak order (spec §11.2, phase 2). Pure.
+ *
+ * Tiebreak order, applied in sequence until one key separates the teams:
+ *
+ *   1. wins            — match wins, descending
+ *   2. head_to_head    — only when exactly two teams are tied on wins and they
+ *                        met: the winner of that meeting ranks first (with more
+ *                        than one meeting, the team that won more of them)
+ *   3. set_ratio       — sets won ÷ sets lost, descending; no sets lost ranks as
+ *                        infinite, and two infinite ratios tie and fall through
+ *   4. point_diff      — points for minus points against, descending
+ *   5. points_for      — descending
+ *   6. team_id         — ascending, so the order is total and deterministic
+ *
+ * `TIEBREAK_ORDER` names the keys in that sequence for tests and documentation.
+ * Rank is shared only when every sporting key (1–5) ties; the id tiebreak fixes
+ * the display order but never separates ranks.
+ *
+ * Head-to-head is a property of a set of matches, not of a single row, so
+ * `compareStandings` takes an optional resolver. `computeStandings` builds the
+ * resolver from the matches it is given.
+ *
+ * Across pools (bracket seeding ranks the winners of every pool against each
+ * other, then the runners-up, and picks the best remaining) the pools may
+ * differ in size by one, so raw totals are not comparable and the order is
+ * per match played instead (`CROSS_POOL_ORDER`):
+ *
+ *   1. win_pct                — wins ÷ played, descending
+ *   2. set_ratio              — as above
+ *   3. point_diff_per_match   — point differential ÷ played, descending
+ *   4. points_for_per_match   — points for ÷ played, descending
+ *   5. team_id                — ascending
+ *
+ * Head-to-head does not apply: teams from different pools have not met.
  */
+
+export const TIEBREAK_ORDER = ["wins", "head_to_head", "set_ratio", "point_diff", "points_for", "team_id"] as const;
+export type TiebreakKey = (typeof TIEBREAK_ORDER)[number];
+
+export const CROSS_POOL_ORDER = ["win_pct", "set_ratio", "point_diff_per_match", "points_for_per_match", "team_id"] as const;
+export type CrossPoolKey = (typeof CROSS_POOL_ORDER)[number];
 
 export interface StandingsMatch {
   teamAId: string;
   teamBId: string;
   winnerTeamId: string;
+  /** Empty for a forfeit: the win counts, no points or sets do. */
   sets: ReadonlyArray<{ teamAPoints: number; teamBPoints: number }>;
 }
 
@@ -23,6 +61,12 @@ export interface StandingRow {
   pointDiff: number;
   rank: number;
 }
+
+/**
+ * Answers "who ranks first between x and y on head-to-head?" for a pair, or 0
+ * when the rule does not apply (not a two-way tie, or the pair never met).
+ */
+export type HeadToHead = (xTeamId: string, yTeamId: string) => -1 | 0 | 1;
 
 function emptyRow(teamId: string): StandingRow {
   return {
@@ -40,14 +84,100 @@ function emptyRow(teamId: string): StandingRow {
 }
 
 /**
- * Order: wins desc, point differential desc, points for desc, then team id so
- * the order is total and deterministic. Ties in every key share a rank.
+ * Set ratio compared without division: x.won/x.lost > y.won/y.lost exactly when
+ * x.won·y.lost > y.won·x.lost for non-negative counts. A side with no sets lost
+ * therefore beats any side that lost one, and two such sides tie.
  */
-export function compareStandings(x: StandingRow, y: StandingRow): number {
+function compareSetRatio(x: StandingRow, y: StandingRow): number {
+  return y.setsWon * x.setsLost - x.setsWon * y.setsLost;
+}
+
+/**
+ * The sporting keys only (1–5). Returns 0 when the two rows are tied on every
+ * one of them; `computeStandings` uses this to decide shared ranks.
+ */
+export function compareStandingKeys(x: StandingRow, y: StandingRow, headToHead?: HeadToHead): number {
   if (y.wins !== x.wins) return y.wins - x.wins;
+  if (headToHead) {
+    const h2h = headToHead(x.teamId, y.teamId);
+    if (h2h !== 0) return h2h;
+  }
+  const ratio = compareSetRatio(x, y);
+  if (ratio !== 0) return ratio;
   if (y.pointDiff !== x.pointDiff) return y.pointDiff - x.pointDiff;
   if (y.pointsFor !== x.pointsFor) return y.pointsFor - x.pointsFor;
+  return 0;
+}
+
+/** Total order: the sporting keys, then team id. */
+export function compareStandings(x: StandingRow, y: StandingRow, headToHead?: HeadToHead): number {
+  const byKeys = compareStandingKeys(x, y, headToHead);
+  if (byKeys !== 0) return byKeys;
+  return compareTeamId(x, y);
+}
+
+/**
+ * `x.a/x.played` against `y.a/y.played` without division, descending: for
+ * positive `played` the ratios order as `x.a·y.played` against `y.a·x.played`.
+ * Two sides that have not played tie.
+ */
+function comparePerMatch(x: StandingRow, y: StandingRow, a: (r: StandingRow) => number): number {
+  return a(y) * x.played - a(x) * y.played;
+}
+
+/** Total order for rows from different pools (`CROSS_POOL_ORDER`). */
+export function compareAcrossPools(x: StandingRow, y: StandingRow): number {
+  const winPct = comparePerMatch(x, y, (r) => r.wins);
+  if (winPct !== 0) return winPct;
+  const ratio = compareSetRatio(x, y);
+  if (ratio !== 0) return ratio;
+  const diff = comparePerMatch(x, y, (r) => r.pointDiff);
+  if (diff !== 0) return diff;
+  const scored = comparePerMatch(x, y, (r) => r.pointsFor);
+  if (scored !== 0) return scored;
+  return compareTeamId(x, y);
+}
+
+function compareTeamId(x: StandingRow, y: StandingRow): number {
   return x.teamId < y.teamId ? -1 : x.teamId > y.teamId ? 1 : 0;
+}
+
+/**
+ * Build the head-to-head resolver for a set of rows and the matches between
+ * them. It answers only for pairs that form an exactly-two-way tie on wins.
+ */
+export function headToHeadResolver(rows: readonly StandingRow[], matches: readonly StandingsMatch[]): HeadToHead {
+  const byWins = new Map<number, string[]>();
+  for (const row of rows) {
+    const list = byWins.get(row.wins) ?? [];
+    list.push(row.teamId);
+    byWins.set(row.wins, list);
+  }
+  const twoWay = new Set<string>();
+  for (const ids of byWins.values()) {
+    if (ids.length === 2) twoWay.add(pairKey(ids[0] ?? "", ids[1] ?? ""));
+  }
+  // Net wins of the lexically smaller id over the larger, per pair.
+  const net = new Map<string, number>();
+  for (const m of matches) {
+    const key = pairKey(m.teamAId, m.teamBId);
+    const smaller = m.teamAId < m.teamBId ? m.teamAId : m.teamBId;
+    net.set(key, (net.get(key) ?? 0) + (m.winnerTeamId === smaller ? 1 : -1));
+  }
+  return (xId, yId) => {
+    const key = pairKey(xId, yId);
+    if (!twoWay.has(key)) return 0;
+    const n = net.get(key) ?? 0;
+    if (n === 0) return 0;
+    const xIsSmaller = xId < yId;
+    // Positive net means the smaller id won more meetings.
+    return (n > 0) === xIsSmaller ? -1 : 1;
+  };
+}
+
+/** Order-independent key for a pair of team ids; ids are UUIDs, so `|` never occurs in one. */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 export function computeStandings(teamIds: readonly string[], matches: readonly StandingsMatch[]): StandingRow[] {
@@ -85,17 +215,14 @@ export function computeStandings(teamIds: readonly string[], matches: readonly S
   }
 
   const out = [...rows.values()].map((r) => ({ ...r, pointDiff: r.pointsFor - r.pointsAgainst }));
-  out.sort(compareStandings);
+  const headToHead = headToHeadResolver(out, matches);
+  out.sort((x, y) => compareStandings(x, y, headToHead));
   let rank = 0;
   for (let i = 0; i < out.length; i += 1) {
     const row = out[i];
     const prev = out[i - 1];
     if (!row) continue;
-    const tied =
-      prev !== undefined &&
-      prev.wins === row.wins &&
-      prev.pointDiff === row.pointDiff &&
-      prev.pointsFor === row.pointsFor;
+    const tied = prev !== undefined && compareStandingKeys(prev, row, headToHead) === 0;
     rank = tied ? rank : i + 1;
     row.rank = rank;
   }

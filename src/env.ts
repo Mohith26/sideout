@@ -1,6 +1,8 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { parsePublicEnv, type PublicEnv } from "@/env.public";
+import { log } from "@/lib/log";
 
 /**
  * Server environment, parsed once at boot. Importing this module from client
@@ -27,6 +29,28 @@ const serverSchema = z
     FEATURE_REAL_MONEY: booleanFromEnv,
     DATABASE_PATH: z.string().trim().min(1).default("./data/sideout.db"),
     BUILD_SHA: z.string().trim().min(1).default("unknown"),
+    /** Signs the session cookie. Required in production; see `resolveSessionSecret`. */
+    SESSION_SECRET: z.string().min(16, "SESSION_SECRET must be at least 16 characters").optional(),
+    /**
+     * Compiles in `POST /api/dev/login` (sign in as a seeded user by id) for a
+     * production build that is only ever a test target, e.g. Playwright.
+     * Never set on a public deployment. Outside production the route always exists.
+     */
+    SIDEOUT_DEV_LOGIN: booleanFromEnv,
+    /**
+     * How many trusted reverse proxies sit in front of this process. Each one
+     * appends the address it saw to `x-forwarded-for`, so the client address is
+     * that many hops from the right. With 0 (the default) the header is
+     * ignored: a Next.js route handler has no socket address of its own and a
+     * client can write the header itself, so no per-address rate limit applies.
+     */
+    TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(8).default(0),
+    /**
+     * Process-wide cap on sign-in codes issued per ten minutes: the backstop
+     * that bounds rows, texts and log lines when no client address can be
+     * trusted. Size it to the largest crowd expected to sign in at once.
+     */
+    AUTH_CODE_GLOBAL_CAP: z.coerce.number().int().min(1).max(1_000_000).default(2000),
   })
   .superRefine((env, ctx) => {
     // OPEN: (§17.1) sandbox credentials are issued by a Lucra representative. The
@@ -50,7 +74,40 @@ const serverSchema = z
     }
   });
 
-export type ServerEnv = z.infer<typeof serverSchema> & PublicEnv;
+export type SessionSecretSource = "env" | "dev-default" | "ephemeral";
+
+export interface DerivedEnv {
+  /** The resolved signing secret and where it came from (reported by /health). */
+  sessionSecret: string;
+  sessionSecretSource: SessionSecretSource;
+  /** `POST /api/dev/login` exists in this process. */
+  devLoginEnabled: boolean;
+}
+
+export type ServerEnv = z.infer<typeof serverSchema> & PublicEnv & DerivedEnv;
+
+const DEV_SESSION_SECRET = "sideout-dev-session-secret-never-in-production";
+
+/**
+ * Outside production a fixed dev secret keeps local sessions valid across
+ * restarts. In production the secret must come from the environment; when it
+ * is missing the process still boots (so `next build` and a smoke deploy work)
+ * but signs with a random per-process secret and says so loudly — every
+ * session dies on restart and a multi-instance deploy cannot share them.
+ */
+export function resolveSessionSecret(env: { NODE_ENV: string; SESSION_SECRET?: string | undefined }): {
+  sessionSecret: string;
+  sessionSecretSource: SessionSecretSource;
+} {
+  if (env.SESSION_SECRET) return { sessionSecret: env.SESSION_SECRET, sessionSecretSource: "env" };
+  if (env.NODE_ENV !== "production") return { sessionSecret: DEV_SESSION_SECRET, sessionSecretSource: "dev-default" };
+  return { sessionSecret: randomBytes(32).toString("hex"), sessionSecretSource: "ephemeral" };
+}
+
+/** The dev-login route is compiled in outside production, or in production only when explicitly opted in. */
+export function isDevLoginEnabled(env: { NODE_ENV: string; SIDEOUT_DEV_LOGIN: boolean }): boolean {
+  return env.NODE_ENV !== "production" || env.SIDEOUT_DEV_LOGIN;
+}
 
 type RawEnv = Record<string, string | undefined>;
 
@@ -74,7 +131,12 @@ export function parseServerEnv(raw: RawEnv): ServerEnv {
     NEXT_PUBLIC_LUCRA_WEB_API_KEY: cleaned.NEXT_PUBLIC_LUCRA_WEB_API_KEY,
     NEXT_PUBLIC_LUCRA_TENANT_ID: cleaned.NEXT_PUBLIC_LUCRA_TENANT_ID,
   });
-  return { ...parsed.data, ...pub };
+  return {
+    ...parsed.data,
+    ...pub,
+    ...resolveSessionSecret(parsed.data),
+    devLoginEnabled: isDevLoginEnabled(parsed.data),
+  };
 }
 
 // Literal `process.env.X` reads so Next.js can inline build-time values (BUILD_SHA
@@ -91,4 +153,18 @@ export const env: ServerEnv = parseServerEnv({
   BUILD_SHA: process.env.BUILD_SHA,
   NEXT_PUBLIC_LUCRA_WEB_API_KEY: process.env.NEXT_PUBLIC_LUCRA_WEB_API_KEY,
   NEXT_PUBLIC_LUCRA_TENANT_ID: process.env.NEXT_PUBLIC_LUCRA_TENANT_ID,
+  SESSION_SECRET: process.env.SESSION_SECRET,
+  SIDEOUT_DEV_LOGIN: process.env.SIDEOUT_DEV_LOGIN,
+  TRUSTED_PROXY_HOPS: process.env.TRUSTED_PROXY_HOPS,
+  AUTH_CODE_GLOBAL_CAP: process.env.AUTH_CODE_GLOBAL_CAP,
 });
+
+if (env.sessionSecretSource === "ephemeral") {
+  log.warn("SESSION_SECRET is not set: signing sessions with a random per-process secret; every session ends when this process does");
+}
+if (env.NODE_ENV === "production" && env.devLoginEnabled) {
+  log.warn("SIDEOUT_DEV_LOGIN is set: POST /api/dev/login is compiled into this production build; never do this on a public deployment");
+}
+if (env.NODE_ENV === "production" && env.TRUSTED_PROXY_HOPS === 0) {
+  log.warn("TRUSTED_PROXY_HOPS is 0: no client address is trusted, so sign-in is rate-limited per phone and process-wide only; set it to the number of proxies in front of this server (1 behind a single proxy)");
+}

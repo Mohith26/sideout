@@ -5,6 +5,7 @@ import { getDb } from "@/db/client";
 import {
   charities,
   donations,
+  matchConsensus,
   matches,
   pools,
   poolTeams,
@@ -15,6 +16,7 @@ import {
   tournaments,
   users,
   type Charity,
+  type ConsensusState,
   type Match,
   type MatchStatus,
   type SetRow,
@@ -22,7 +24,10 @@ import {
   type SponsorTier,
   type Team,
   type Tournament,
+  type TournamentStatus,
 } from "@/db/schema";
+import { getPoolStandings, type PoolStandings } from "@/db/queries/standings";
+import { UNLISTED_TEAM_STATUSES } from "@/db/queries/teams";
 
 /**
  * Read models for the public screens. Every figure the UI shows is computed
@@ -30,10 +35,16 @@ import {
  * a count of non-withdrawn teams, and so on. Nothing is stored pre-aggregated.
  */
 
+/** A draft is unpublished: nothing public lists it, links to it, or counts its goal. */
+export const UNPUBLISHED_STATUS: TournamentStatus = "draft";
+export function isPublished(status: TournamentStatus): boolean {
+  return status !== UNPUBLISHED_STATUS;
+}
+
 export interface TournamentSummary {
   tournament: Tournament;
   charity: Charity;
-  /** Registered or checked-in teams; withdrawn teams do not count toward capacity. */
+  /** Registered or checked-in teams; forming and withdrawn teams do not count toward capacity. */
   activeTeams: number;
   raisedCents: number;
   donorCount: number;
@@ -58,7 +69,7 @@ function summarize(where: SQL | undefined): TournamentSummary[] {
   const teamCounts = db
     .select({ tournamentId: teams.tournamentId, n: sql<number>`count(*)` })
     .from(teams)
-    .where(and(inArray(teams.tournamentId, ids), sql`${teams.status} <> 'withdrawn'`))
+    .where(and(inArray(teams.tournamentId, ids), inArray(teams.status, ["registered", "checked_in"])))
     .groupBy(teams.tournamentId)
     .all();
   const donationAgg = db
@@ -101,8 +112,12 @@ function summarize(where: SQL | undefined): TournamentSummary[] {
   }));
 }
 
-export function listTournamentSummaries(): TournamentSummary[] {
-  return summarize(undefined);
+export function listTournamentSummaries(statuses?: readonly TournamentStatus[]): TournamentSummary[] {
+  return summarize(statuses && statuses.length > 0 ? inArray(tournaments.status, [...statuses]) : undefined);
+}
+
+export function getTournamentSummaryById(id: string): TournamentSummary | null {
+  return summarize(eq(tournaments.id, id))[0] ?? null;
 }
 
 /**
@@ -112,6 +127,27 @@ export function listTournamentSummaries(): TournamentSummary[] {
 export const getTournamentSummaryBySlug = cache((slug: string): TournamentSummary | null => {
   return summarize(eq(tournaments.slug, slug))[0] ?? null;
 });
+
+// ---------------------------------------------------------------------------
+// Public projection
+// ---------------------------------------------------------------------------
+
+/**
+ * The tournament row as the public routes serialize it: every Lucra identifier
+ * stays on the server (spec §9, "never leak Lucra internals"). Organizer routes
+ * return the full row.
+ */
+export type PublicTournament = Omit<Tournament, "lucraMatchupId" | "lucraExternalId" | "lucraGameId" | "lucraLocationId">;
+export type PublicTournamentSummary = Omit<TournamentSummary, "tournament"> & { tournament: PublicTournament };
+
+export function publicTournament(t: Tournament): PublicTournament {
+  const { lucraMatchupId: _matchup, lucraExternalId: _external, lucraGameId: _game, lucraLocationId: _location, ...rest } = t;
+  return rest;
+}
+
+export function publicSummary<T extends TournamentSummary>(summary: T): Omit<T, "tournament"> & { tournament: PublicTournament } {
+  return { ...summary, tournament: publicTournament(summary.tournament) };
+}
 
 // ---------------------------------------------------------------------------
 // Matches with participants
@@ -196,6 +232,49 @@ export function listMatches(tournamentId: string, statuses?: readonly MatchStatu
     teamB: match.teamBId ? (teamsById.get(match.teamBId) ?? null) : null,
     sets: setsBy.get(match.id) ?? [],
   }));
+}
+
+/** One match with everything a match screen or `GET /api/matches/:id` shows. */
+export interface MatchDetail extends MatchView {
+  tournament: Pick<Tournament, "id" | "slug" | "name" | "status" | "venueTimezone">;
+  consensusState: ConsensusState | null;
+  /** Seat this match feeds, for the bracket view. */
+  next: { matchId: string; slot: "a" | "b"; bracketPosition: number | null } | null;
+}
+
+export function getMatchDetail(matchId: string): MatchDetail | null {
+  const db = getDb();
+  const row = db
+    .select({ match: matches, tournament: tournaments, poolLabel: pools.label })
+    .from(matches)
+    .innerJoin(tournaments, eq(tournaments.id, matches.tournamentId))
+    .leftJoin(pools, eq(pools.id, matches.poolId))
+    .where(eq(matches.id, matchId))
+    .get();
+  if (!row) return null;
+  const teamsById = new Map(listTeamsWithMembers(row.tournament.id).map((t) => [t.id, t]));
+  const setRows = db.select().from(sets).where(eq(sets.matchId, matchId)).orderBy(asc(sets.setNumber)).all();
+  const consensus = db.select({ state: matchConsensus.state }).from(matchConsensus).where(eq(matchConsensus.matchId, matchId)).get();
+  const nextRow = row.match.nextMatchId
+    ? db.select({ id: matches.id, bracketPosition: matches.bracketPosition }).from(matches).where(eq(matches.id, row.match.nextMatchId)).get()
+    : undefined;
+  return {
+    match: row.match,
+    poolLabel: row.poolLabel,
+    teamA: row.match.teamAId ? (teamsById.get(row.match.teamAId) ?? null) : null,
+    teamB: row.match.teamBId ? (teamsById.get(row.match.teamBId) ?? null) : null,
+    sets: setRows,
+    tournament: {
+      id: row.tournament.id,
+      slug: row.tournament.slug,
+      name: row.tournament.name,
+      status: row.tournament.status,
+      venueTimezone: row.tournament.venueTimezone,
+    },
+    consensusState: consensus?.state ?? null,
+    next:
+      nextRow && row.match.nextMatchSlot ? { matchId: nextRow.id, slot: row.match.nextMatchSlot, bracketPosition: nextRow.bracketPosition } : null,
+  };
 }
 
 /** Number of bracket rounds a tournament has (0 before a draw exists). */
@@ -324,6 +403,58 @@ export function getTournamentOverview(tournamentId: string): TournamentOverview 
   const sponsorRows = db.select().from(sponsors).where(eq(sponsors.tournamentId, tournamentId)).all();
 
   return { pools: poolViews, courts, rounds, sponsors: sortSponsors(sponsorRows), matchCount: all.length };
+}
+
+// ---------------------------------------------------------------------------
+// Detail: everything `GET /api/tournaments/:slug` returns
+// ---------------------------------------------------------------------------
+
+export interface PoolDetail extends PoolView {
+  standings: PoolStandings["rows"];
+  played: number;
+  total: number;
+  matches: MatchView[];
+}
+
+export interface BracketDetail {
+  rounds: number;
+  /** Ordered by round then position. */
+  matches: MatchView[];
+}
+
+export interface TournamentDetail extends TournamentSummary {
+  sponsors: Sponsor[];
+  teams: TeamWithMembers[];
+  pools: PoolDetail[];
+  bracket: BracketDetail;
+}
+export type PublicTournamentDetail = Omit<TournamentDetail, "tournament"> & { tournament: PublicTournament };
+
+export function getTournamentDetail(summary: TournamentSummary): TournamentDetail {
+  const id = summary.tournament.id;
+  const overview = getTournamentOverview(id);
+  const all = listMatches(id);
+  const standings = getPoolStandings(id);
+  const poolDetails: PoolDetail[] = overview.pools.map((pool) => {
+    const st = standings.find((s) => s.poolId === pool.id);
+    return {
+      ...pool,
+      standings: st?.rows ?? [],
+      played: st?.played ?? 0,
+      total: st?.total ?? 0,
+      matches: all.filter((m) => m.match.poolId === pool.id),
+    };
+  });
+  const bracketMatches = all
+    .filter((m) => m.match.poolId === null)
+    .sort((x, y) => x.match.round - y.match.round || (x.match.bracketPosition ?? 0) - (y.match.bracketPosition ?? 0));
+  return {
+    ...summary,
+    sponsors: overview.sponsors,
+    teams: listTeamsWithMembers(id).filter((t) => !UNLISTED_TEAM_STATUSES.includes(t.status)),
+    pools: poolDetails,
+    bracket: { rounds: bracketMatches.length ? Math.max(...bracketMatches.map((m) => m.match.round)) : 0, matches: bracketMatches },
+  };
 }
 
 /** Display order of sponsor tiers, most prominent first. */

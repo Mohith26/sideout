@@ -30,7 +30,7 @@ describe("seed writes to a migrated database", () => {
       applyMigrations(conn);
       const dataset = buildSeed({ anchorMs: ANCHOR, rngSeed: DEFAULT_RNG_SEED });
       const first = writeSeed(conn, dataset);
-      expect(first.counts.users).toBe(48);
+      expect(first.counts.users).toBe(50);
       expect(first.counts.tournaments).toBe(3);
       expect(first.counts.matches).toBe(dataset.matches.length);
 
@@ -40,6 +40,8 @@ describe("seed writes to a migrated database", () => {
       const count = (table: string) =>
         (conn.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
       expect(count("team_members")).toBe(dataset.teamMembers.length);
+      expect(count("team_invites")).toBe(dataset.teamInvites.length);
+      expect(count("auth_codes")).toBe(0);
       expect(count("lucra_score_submissions")).toBe(0);
       expect(count("webhook_events")).toBe(0);
 

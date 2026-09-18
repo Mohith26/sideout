@@ -1,0 +1,1 @@
+ALTER TABLE `tournaments` ADD `draw_config_json` text;

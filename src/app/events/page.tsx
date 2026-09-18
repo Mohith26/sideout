@@ -7,6 +7,7 @@ import { listTournamentSummaries, type TournamentSummary } from "@/db/queries/to
 import type { TournamentStatus } from "@/db/schema";
 import { load } from "@/lib/load";
 import { requestNow } from "@/lib/clock";
+import { sweepDueDonations } from "@/server/donations/stub-provider";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Events" };
@@ -19,7 +20,10 @@ const GROUPS: ReadonlyArray<{ key: string; label: string; statuses: readonly Tou
 
 export default function EventsPage() {
   const nowMs = requestNow();
-  const loaded = load(() => listTournamentSummaries());
+  const loaded = load(() => {
+    sweepDueDonations(nowMs);
+    return listTournamentSummaries();
+  });
   if (!loaded.ok) return <DatabaseNotReady message={loaded.message} />;
   const all = loaded.data;
 

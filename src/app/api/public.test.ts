@@ -1,0 +1,194 @@
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { GET as getMatch } from "@/app/api/matches/[id]/route";
+import { GET as getTournament } from "@/app/api/tournaments/[slug]/route";
+import { GET as getImpact } from "@/app/api/tournaments/[slug]/impact/route";
+import { GET as getStandings } from "@/app/api/tournaments/[slug]/standings/route";
+import { GET as listTournaments } from "@/app/api/tournaments/route";
+import { tournaments } from "@/db/schema";
+import { computeStandings } from "@/domain/standings";
+import { SLUGS } from "@/seed/build";
+import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
+
+type Summary = { tournament: { id: string; slug: string; status: string; maxTeams: number }; activeTeams: number; raisedCents: number; donorCount: number; sponsorCount: number };
+type Envelope<T> = { ok: true; data: T };
+
+const lucraKeys = (row: object) => Object.keys(row).filter((k) => k.toLowerCase().startsWith("lucra"));
+
+describe("public tournament routes", () => {
+  let app: TestApp;
+  beforeEach(() => {
+    app = createTestApp();
+  });
+  afterEach(() => app.close());
+
+  const succeeded = (tournamentId: string) =>
+    app.data.donations.filter((d) => d.tournamentId === tournamentId && d.status === "succeeded").reduce((s, d) => s + d.amountCents, 0);
+  /** Every seeded pending stub intent is past its settle delay, so a public read counts it too. */
+  const settled = (tournamentId: string) =>
+    app.data.donations.filter((d) => d.tournamentId === tournamentId && (d.status === "succeeded" || d.status === "pending")).reduce((s, d) => s + d.amountCents, 0);
+
+  it("lists every event with figures derived from rows, filterable by status", async () => {
+    const res = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=10");
+    expect(res.body.ok).toBe(true);
+    expect(res.body.data.map((s) => s.tournament.status).sort()).toEqual(["live", "registration_open", "settled"]);
+    for (const s of res.body.data) {
+      expect(s.raisedCents).toBe(settled(s.tournament.id));
+      expect(s.activeTeams).toBe(app.data.teams.filter((t) => t.tournamentId === s.tournament.id && (t.status === "registered" || t.status === "checked_in")).length);
+    }
+    const upcoming = res.body.data.find((s) => s.tournament.slug === SLUGS.upcoming);
+    expect(upcoming?.activeTeams).toBe(8);
+
+    const live = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live");
+    expect(live.body.data.map((s) => s.tournament.slug)).toEqual([SLUGS.live]);
+    const two = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live,settled");
+    expect(two.body.data).toHaveLength(2);
+    expectFailure(await app.call(listTournaments, "/api/tournaments?status=bogus"), 400, "bad_request");
+  });
+
+  it("reports one figure per event whichever public read comes first", async () => {
+    const live = app.tournament(SLUGS.live);
+    expect(settled(live.id)).toBeGreaterThan(succeeded(live.id));
+    // The list is the first read on a fresh database: it already carries the settled total.
+    const list = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live");
+    const listed = list.body.data.find((s) => s.tournament.id === live.id);
+    expect(listed?.raisedCents).toBe(settled(live.id));
+    const detail = await app.call<Envelope<{ raisedCents: number; donorCount: number }>>(getTournament, `/api/tournaments/${SLUGS.live}`, { params: { slug: SLUGS.live } });
+    const impact = await app.call<Envelope<{ breakdown: { raisedCents: number; donorCount: number } }>>(getImpact, `/api/tournaments/${SLUGS.live}/impact`, { params: { slug: SLUGS.live } });
+    const again = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live");
+    expect([detail.body.data.raisedCents, impact.body.data.breakdown.raisedCents, again.body.data[0]?.raisedCents]).toEqual([settled(live.id), settled(live.id), settled(live.id)]);
+    expect([detail.body.data.donorCount, impact.body.data.breakdown.donorCount, again.body.data[0]?.donorCount]).toEqual([listed?.donorCount, listed?.donorCount, listed?.donorCount]);
+    // Sweeping is idempotent: the flip is audited exactly once per donation.
+    for (const d of app.data.donations.filter((x) => x.tournamentId === live.id && x.status === "pending")) expect(app.audits(d.id, "donation.succeeded")).toHaveLength(1);
+  });
+
+  it("keeps every Lucra identifier off the public shapes and never exposes a draft", async () => {
+    const list = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
+    expect(list.body.data).toHaveLength(3);
+    for (const s of list.body.data) expect(lucraKeys(s.tournament)).toEqual([]);
+    const detail = await app.call<Envelope<{ tournament: object }>>(getTournament, `/api/tournaments/${SLUGS.live}`, { params: { slug: SLUGS.live } });
+    expect(lucraKeys(detail.body.data.tournament)).toEqual([]);
+    expect(detail.body.data.tournament).toMatchObject({ slug: SLUGS.live, name: expect.any(String), status: "live" });
+
+    // An organizer's unpublished draft is invisible to every public read.
+    const draftSlug = "draft-only-2027";
+    app.conn.db
+      .insert(tournaments)
+      .values({ ...app.tournament(SLUGS.upcoming), id: "draft-1", slug: draftSlug, status: "draft", lucraExternalId: "sideout-draft-1", createdAt: app.anchorMs })
+      .run();
+    expect(app.conn.db.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.slug, draftSlug)).get()?.status).toBe("draft");
+    const all = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
+    expect(all.body.data.map((s) => s.tournament.slug)).not.toContain(draftSlug);
+    const drafts = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=draft");
+    expect(drafts.status).toBe(200);
+    expect(drafts.body.data).toEqual([]);
+    const mixed = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=draft,registration_open");
+    expect(mixed.body.data.map((s) => s.tournament.slug)).toEqual([SLUGS.upcoming]);
+    expectFailure(await app.call(getTournament, `/api/tournaments/${draftSlug}`, { params: { slug: draftSlug } }), 404, "not_found");
+    expectFailure(await app.call(getStandings, `/api/tournaments/${draftSlug}/standings`, { params: { slug: draftSlug } }), 404, "not_found");
+    expectFailure(await app.call(getImpact, `/api/tournaments/${draftSlug}/impact`, { params: { slug: draftSlug } }), 404, "not_found");
+  });
+
+  it("returns the full detail: teams, pools with standings, bracket", async () => {
+    const res = await app.call<
+      Envelope<{
+        tournament: { slug: string };
+        teams: Array<{ status: string; members: unknown[] }>;
+        pools: Array<{ label: string; teams: unknown[]; standings: Array<{ rank: number }>; played: number; total: number; matches: unknown[] }>;
+        bracket: { rounds: number; matches: Array<{ match: { round: number; status: string } }> };
+        sponsors: unknown[];
+      }>
+    >(getTournament, `/api/tournaments/${SLUGS.live}`, { params: { slug: SLUGS.live } });
+    expect(res.status).toBe(200);
+    const { data } = res.body;
+    expect(data.tournament.slug).toBe(SLUGS.live);
+    expect(data.teams).toHaveLength(24);
+    expect(data.teams.every((t) => t.members.length === 2)).toBe(true);
+    expect(data.pools).toHaveLength(6);
+    for (const pool of data.pools) {
+      expect(pool.teams).toHaveLength(4);
+      expect(pool.standings.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
+      expect(pool.played).toBe(6);
+      expect(pool.total).toBe(6);
+      expect(pool.matches).toHaveLength(6);
+    }
+    expect(data.bracket.rounds).toBe(4);
+    expect(data.bracket.matches).toHaveLength(15);
+    expect(data.bracket.matches[0]?.match.status).toBe("bye");
+    expect(data.sponsors).toHaveLength(3);
+
+    // The forming team in the open event is not part of the public roster.
+    const open = await app.call<Envelope<{ teams: Array<{ status: string }> }>>(getTournament, `/api/tournaments/${SLUGS.upcoming}`, { params: { slug: SLUGS.upcoming } });
+    expect(open.body.data.teams.some((t) => t.status === "forming")).toBe(false);
+    expect(open.body.data.teams).toHaveLength(9);
+
+    expectFailure(await app.call(getTournament, "/api/tournaments/nope", { params: { slug: "nope" } }), 404, "not_found");
+  });
+
+  it("computes standings from sets rows and marks them cacheable for 10 seconds", async () => {
+    const res = await app.call<Envelope<{ pools: Array<{ poolId: string; rows: Array<{ teamId: string; wins: number; pointDiff: number; rank: number }> }> }>>(
+      getStandings,
+      `/api/tournaments/${SLUGS.live}/standings`,
+      { params: { slug: SLUGS.live } },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=10, s-maxage=10");
+    expect(res.body.data.pools).toHaveLength(6);
+    for (const pool of res.body.data.pools) {
+      const ids = app.data.poolTeams.filter((pt) => pt.poolId === pool.poolId).map((pt) => pt.teamId);
+      const expected = computeStandings(
+        ids,
+        app.data.matches
+          .filter((m) => m.poolId === pool.poolId && m.status === "final")
+          .map((m) => ({
+            teamAId: m.teamAId ?? "",
+            teamBId: m.teamBId ?? "",
+            winnerTeamId: m.winnerTeamId ?? "",
+            sets: app.data.sets.filter((s) => s.matchId === m.id && s.agreed).map((s) => ({ teamAPoints: s.teamAPoints, teamBPoints: s.teamBPoints })),
+          })),
+      );
+      expect(pool.rows).toEqual(expected);
+    }
+    const none = await app.call<Envelope<{ pools: unknown[] }>>(getStandings, `/api/tournaments/${SLUGS.upcoming}/standings`, { params: { slug: SLUGS.upcoming } });
+    expect(none.body.data.pools).toEqual([]);
+  });
+
+  it("reports impact as the sum of succeeded donations against the goal", async () => {
+    const live = app.tournament(SLUGS.live);
+    const res = await app.call<Envelope<{ breakdown: { raisedCents: number; goalCents: number; donorCount: number; fraction: number }; donorWall: unknown[]; charity: { name: string } }>>(
+      getImpact,
+      `/api/tournaments/${SLUGS.live}/impact`,
+      { params: { slug: SLUGS.live } },
+    );
+    expect(res.status).toBe(200);
+    const { breakdown, donorWall, charity } = res.body.data;
+    // The stub provider settles pending donations older than its delay on read,
+    // so the seeded pending row is succeeded by now and audited as such.
+    const pendingInSeed = app.data.donations.filter((d) => d.tournamentId === live.id && d.status === "pending");
+    expect(pendingInSeed.length).toBeGreaterThan(0);
+    for (const d of pendingInSeed) expect(app.audits(d.id, "donation.succeeded")).toHaveLength(1);
+    expect(breakdown.raisedCents).toBe(succeeded(live.id) + pendingInSeed.reduce((sum, d) => sum + d.amountCents, 0));
+    expect(breakdown.goalCents).toBe(live.fundraisingGoalCents);
+    expect(breakdown.fraction).toBeCloseTo(breakdown.raisedCents / live.fundraisingGoalCents, 6);
+    expect(donorWall).toHaveLength(breakdown.donorCount);
+    expect(charity.name).toBe("Open Court Project");
+  });
+
+  it("returns a match with participants, sets, consensus state and its next seat", async () => {
+    const disputed = app.data.matches.find((m) => m.status === "disputed");
+    const res = await app.call<Envelope<{ match: { id: string; status: string }; teamA: { members: unknown[] } | null; consensusState: string | null; next: { slot: string } | null; tournament: { slug: string } }>>(
+      getMatch,
+      `/api/matches/${disputed?.id}`,
+      { params: { id: disputed?.id ?? "" } },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.match.status).toBe("disputed");
+    expect(res.body.data.consensusState).toBe("disputed");
+    expect(res.body.data.teamA?.members).toHaveLength(2);
+    expect(res.body.data.next?.slot).toMatch(/^[ab]$/);
+    expect(res.body.data.tournament.slug).toBe(SLUGS.live);
+    expectFailure(await app.call(getMatch, "/api/matches/nope", { params: { id: "nope" } }), 404, "not_found");
+  });
+});

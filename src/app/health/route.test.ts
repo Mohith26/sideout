@@ -10,6 +10,8 @@ const healthSchema = z.object({
   buildSha: z.string().min(1),
   lucraMode: z.enum(["mock", "sandbox", "production"]),
   lucraSdkVersion: z.string().min(1),
+  session: z.enum(["env", "dev-default", "ephemeral"]),
+  devLogin: z.boolean(),
   migrations: z.object({ applied: z.number(), available: z.number(), pending: z.number() }),
 });
 
@@ -59,7 +61,7 @@ describe("GET /health", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     const text = await res.text();
     const body = okEnvelopeSchema(healthSchema).parse(JSON.parse(text));
-    expect(body.data).toMatchObject({ buildSha: "abc123", lucraMode: "mock", lucraSdkVersion: "unpinned" });
+    expect(body.data).toMatchObject({ buildSha: "abc123", lucraMode: "mock", lucraSdkVersion: "unpinned", session: "dev-default", devLogin: true });
     expect(body.data.migrations.pending).toBe(0);
     expect(body.data.migrations.applied).toBe(body.data.migrations.available);
     expect(text).not.toContain("super-secret-backend-key");

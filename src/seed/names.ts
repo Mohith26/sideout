@@ -49,3 +49,9 @@ export const PLAYER_NAMES: ReadonlyArray<readonly [first: string, last: string]>
   ["June", "Park"],
   ["Ezra", "Cohen"],
 ];
+
+/** Two organizers who run the events and do not play. Surnames stay unique across both lists. */
+export const ORGANIZER_NAMES: ReadonlyArray<readonly [first: string, last: string]> = [
+  ["Carmen", "Ibarra"],
+  ["Desmond", "Achebe"],
+];
