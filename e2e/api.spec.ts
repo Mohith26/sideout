@@ -13,12 +13,14 @@ test.describe("API", () => {
   test("public reads return the envelope with numbers derived from rows", async ({ request }) => {
     const list = await request.get("/api/tournaments?status=live");
     expect(list.ok()).toBe(true);
-    const body = (await list.json()) as { ok: boolean; data: Array<{ tournament: { slug: string }; activeTeams: number; raisedCents: number }> };
+    const body = (await list.json()) as { ok: boolean; data: Array<{ tournament: { slug: string; status: string }; activeTeams: number; raisedCents: number }> };
     expect(body.ok).toBe(true);
-    expect(body.data).toHaveLength(1);
-    expect(body.data[0]?.tournament.slug).toBe("sandbar-classic-2026");
-    expect(body.data[0]?.activeTeams).toBe(24);
-    expect(body.data[0]?.raisedCents).toBeGreaterThan(0);
+    // The flows spec takes events of its own live alongside the seeded one; the filter holds for every entry.
+    expect(body.data.length).toBeGreaterThanOrEqual(1);
+    for (const entry of body.data) expect(entry.tournament.status).toBe("live");
+    const sandbar = body.data.find((s) => s.tournament.slug === "sandbar-classic-2026");
+    expect(sandbar?.activeTeams).toBe(24);
+    expect(sandbar?.raisedCents ?? 0).toBeGreaterThan(0);
 
     const standings = await request.get("/api/tournaments/sandbar-classic-2026/standings");
     expect(standings.headers()["cache-control"]).toBe("public, max-age=10, s-maxage=10");

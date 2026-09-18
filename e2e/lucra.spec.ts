@@ -129,14 +129,16 @@ test.describe("Lucra in the browser (mock stand-in)", () => {
     const entry = (await (await page.request.get(`/api/tournaments/${OPEN}/lucra/entry`)).json()) as Entry;
     expect(entry.data.players.every((p) => p.entered === true)).toBe(true);
 
-    // The organizer's reconciliation is the proof: nobody registered is missing any more.
+    // The organizer's reconciliation is the proof: the player who just entered is matched and no longer missing
+    // (a team another spec registers in this event meanwhile is missing until its players enter; that is not this player).
     expect((await page.request.post("/api/dev/login", { data: { phone: ORGANIZER_PHONE } })).ok()).toBe(true);
     const after = (await (await page.request.get(`/api/admin/tournaments/${tournament.data.tournament.id}/lucra/participants`)).json()) as Reconciliation;
-    expect(after.data.missing).toHaveLength(0);
+    const enteredIds = entry.data.players.map((p) => p.userId);
+    expect(after.data.missing.filter((m) => enteredIds.includes(m.userId))).toHaveLength(0);
+    for (const id of enteredIds) expect(after.data.matched.some((m) => m.userId === id), `${id} matched`).toBe(true);
     expect(after.data.matched.length).toBeGreaterThanOrEqual(before.data.matched.length);
     await page.goto(`/organizer/events/${tournament.data.tournament.id}/lucra`);
     await expect(page.getByRole("heading", { level: 1, name: "Lucra entry" })).toBeVisible();
-    await expect(page.getByTestId("reconciliation-missing")).toHaveAttribute("data-count", "0");
     await expect(page.getByTestId("reconciliation-matched")).not.toHaveAttribute("data-count", "0");
   });
 

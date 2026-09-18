@@ -382,7 +382,8 @@ test.describe("console", () => {
       const link = card.getByRole("link", { name: "Sandbar Classic" });
       await expectTarget(link, "events card link");
       await expect(card.getByText("Live", { exact: true }), "status pill on the card").toBeVisible();
-      await card.scrollIntoViewIfNeeded();
+      // Centre the card: with more events in the list it can settle under the fixed tab bar, where a tap lands on the Console tab instead.
+      await card.evaluate((el) => el.scrollIntoView({ block: "center" }));
       const cardBox = (await card.boundingBox())!;
       const linkBox = (await link.boundingBox())!;
       expect(cardBox.x + cardBox.width, "card in view").toBeLessThanOrEqual(viewportWidth);
