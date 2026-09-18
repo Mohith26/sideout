@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MATCH_THRESHOLD, MATCHER_INTERPRETATIONS, parseMatcherInterpretation, resolveMatchups, scoreMatch, type MatcherInterpretation } from "@/lucra/matcher";
+import { MATCH_THRESHOLD, MATCHER_INTERPRETATIONS, resolveMatchups, scoreMatch, type MatcherInterpretation } from "@/lucra/matcher";
 import type { Metadata } from "@/lucra/types";
 
 /**
@@ -198,14 +198,5 @@ describe("resolveMatchups", () => {
       ["m4", 1],
     ]);
     expect(resolveMatchups({ venue: "Sand" }, records, "literal", meta)).toEqual([]);
-  });
-});
-
-describe("parseMatcherInterpretation", () => {
-  it("defaults to literal and refuses anything unknown", () => {
-    expect(parseMatcherInterpretation(undefined)).toBe("literal");
-    expect(parseMatcherInterpretation("")).toBe("literal");
-    expect(parseMatcherInterpretation("doc-examples")).toBe("doc-examples");
-    expect(() => parseMatcherInterpretation("lenient")).toThrow(/LUCRA_MATCHER_INTERPRETATION/);
   });
 });

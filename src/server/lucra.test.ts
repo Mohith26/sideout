@@ -5,7 +5,7 @@ import { LucraWriteRefused, type SubmittedSet } from "@/domain/consensus";
 import type { SetScore } from "@/domain/scoreline";
 import { fixedClock } from "@/lib/clock";
 import { uuidv7 } from "@/lib/uuid";
-import { createLucraAdapter, installLucraAdapter, LucraError } from "@/lucra";
+import { createLucraAdapter, installLucraAdapter, LucraError, type LucraAdapter } from "@/lucra";
 import { SLUGS } from "@/seed/build";
 import { closeTournament, previewClose } from "@/server/close";
 import { resolveDispute, submitScoreline } from "@/server/consensus";
@@ -542,6 +542,155 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     await expect(settleTournament(live.id, system, clock)).rejects.toMatchObject({ detail: { code: "not_awaiting_settlement", status: "settled" } });
   });
 
+  /** The real adapter with one method replaced; a spread would drop the class's prototype methods. */
+  const wrapAdapter = (real: LucraAdapter, completeTournament: LucraAdapter["completeTournament"]): LucraAdapter => ({
+    mode: real.mode,
+    interpretation: real.interpretation,
+    mock: real.mock,
+    submitScores: (input) => real.submitScores(input),
+    queryMatchups: (input) => real.queryMatchups(input),
+    assertSingleMatchup: (target) => real.assertSingleMatchup(target),
+    getTournament: (id) => real.getTournament(id),
+    completeTournament,
+  });
+
+  /** Bring the live event to a closable state with every result written, and a projected Lucra reward for the champion. */
+  async function readyToClose(): Promise<{ champ: string }> {
+    resolveDispute({ matchId: at(11).id, organizerUserId: organizerId, sets: A_WINS }, clock);
+    const twelve = at(12);
+    const aRow = JSON.parse(app.data.scoreSubmissions.find((s) => s.matchId === twelve.id)?.payloadJson ?? "").sets as SubmittedSet[];
+    submitScoreline({ matchId: twelve.id, userId: captainOf(twelve.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock);
+    agreeThirteen();
+    for (const p of [14, 15]) {
+      const m = at(p);
+      forfeitMatch(m.id, m.teamBId ?? "", { kind: "organizer", userId: organizerId }, clock);
+    }
+    for (const p of [11, 12, 13]) await submitConsensusScores(at(p).id, system, clock);
+    const champ = previewClose(live.id).standings[0]!.teamId;
+    db().insert(rewards).values({ id: uuidv7(), tournamentId: live.id, teamId: champ, placement: 1, kind: "lucra_reward", amountCents: 100_000, currency: "USD", description: "Champions", lucraRewardRef: null, status: "projected" }).run();
+    return { champ };
+  }
+
+  it("a complete whose response was lost is not repeated: the read-back sees the matchup CLOSED and records the settlement", async () => {
+    await readyToClose();
+    const real = getLucra();
+    const matchup = mockMatchupFor(live.lucraExternalId);
+    // First attempt: Lucra processes the close but the response never arrives (the client times out after its retries).
+    let completeCalls = 0;
+    installLucraAdapter(
+      wrapAdapter(real, async (matchupId, request) => {
+        completeCalls += 1;
+        await real.completeTournament(matchupId, request);
+        throw new LucraError("transport", "Lucra request timed out (total) (after 4 tries)", { path: "/api/rest/pool-tournament/x/complete", tries: 4 });
+      }),
+    );
+    const preview = previewClose(live.id);
+    const closed = await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+    expect(closed.settlement).toMatchObject({ state: "refused", alert: { code: "settlement_refused" } });
+    expect(matchup.status).toBe("CLOSED");
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("awaiting_settlement");
+
+    // The organizer settles again: the read-back before any second complete says CLOSED, and that is success — no complete is repeated.
+    installLucraAdapter(real);
+    const again = await settleTournament(live.id, { kind: "organizer", userId: organizerId }, clock);
+    expect(again).toMatchObject({ state: "settled", matchupId: matchup.id });
+    expect(completeCalls).toBe(1);
+    const row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
+    expect(row.status).toBe("settled");
+    expect(readLucraAlert(row)).toBeNull();
+    expect(db().select().from(rewards).where(and(eq(rewards.tournamentId, live.id), eq(rewards.kind, "lucra_reward"))).get()).toMatchObject({ status: "awarded", lucraRewardRef: matchup.id });
+    const completed = app.audits(live.id, "lucra.settlement_completed");
+    expect(completed).toHaveLength(1);
+    const detail = JSON.parse(completed[0]?.detailJson ?? "{}") as { source: string; readBack: { status: string; rewardStructure: unknown[] } };
+    expect(detail.source).toBe("read_back");
+    expect(detail.readBack.status).toBe("CLOSED");
+    expect(detail.readBack.rewardStructure.length).toBeGreaterThan(0);
+    // Settled is settled: no third complete, no second settlement.
+    await expect(settleTournament(live.id, system, clock)).rejects.toMatchObject({ detail: { code: "not_awaiting_settlement", status: "settled" } });
+  });
+
+  it("a complete refused as already closed (the matchup closed between the read-back and the call) is read back again and recorded as success", async () => {
+    await readyToClose();
+    const real = getLucra();
+    const matchup = mockMatchupFor(live.lucraExternalId);
+    // The pre-complete read-back sees OPEN; Lucra's console closes the matchup just before the complete arrives.
+    let reads = 0;
+    const adapter: LucraAdapter = {
+      ...wrapAdapter(real, async (matchupId, request) => {
+        real.mock!.handle({ method: "POST", path: `/api/rest/pool-tournament/${matchupId}/complete`, headers: { "X-Lucra-Api-Key": "sideout-mock-backend-key" }, body: JSON.stringify({ object: { paymentStructure: [] } }) });
+        return real.completeTournament(matchupId, request);
+      }),
+      getTournament: async (id) => {
+        reads += 1;
+        const result = await real.getTournament(id);
+        return reads === 1 ? { ...result, matchup: { ...result.matchup, status: "OPEN" } } : result;
+      },
+    };
+    installLucraAdapter(adapter);
+    const preview = previewClose(live.id);
+    const closed = await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+    expect(closed.settlement).toMatchObject({ state: "settled", matchupId: matchup.id });
+    expect(reads).toBe(2);
+    const detail = JSON.parse(app.audits(live.id, "lucra.settlement_completed")[0]?.detailJson ?? "{}") as { source: string; readBack: { status: string }; refusal: { code: string; httpStatus: number } };
+    expect(detail).toMatchObject({ source: "read_back_after_refusal", readBack: { status: "CLOSED" }, refusal: { code: "validation", httpStatus: 400 } });
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("settled");
+  });
+
+  it("a matchup Lucra already closed (its console, or a crash after the call) settles on the read-back before any complete is sent", async () => {
+    await readyToClose();
+    const real = getLucra();
+    const matchup = mockMatchupFor(live.lucraExternalId);
+    // Close it in Lucra directly, as the console would, then close in Sideout.
+    real.mock!.handle({ method: "POST", path: `/api/rest/pool-tournament/${matchup.id}/complete`, headers: { "X-Lucra-Api-Key": "sideout-mock-backend-key" }, body: JSON.stringify({ object: { paymentStructure: [] } }) });
+    real.mock!.drainWebhooks();
+    expect(matchup.status).toBe("CLOSED");
+    let completeCalls = 0;
+    installLucraAdapter(
+      wrapAdapter(real, async (matchupId, request) => {
+        completeCalls += 1;
+        return real.completeTournament(matchupId, request);
+      }),
+    );
+    const preview = previewClose(live.id);
+    const closed = await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+    expect(closed.settlement).toMatchObject({ state: "settled", matchupId: matchup.id });
+    expect(completeCalls).toBe(0);
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("settled");
+    const detail = JSON.parse(app.audits(live.id, "lucra.settlement_completed")[0]?.detailJson ?? "{}") as { source: string; readBack: { status: string } };
+    expect(detail).toMatchObject({ source: "read_back", readBack: { status: "CLOSED" } });
+  });
+
+  it("a frozen event can be ended by forfeits: the organizer settles the remaining matches without Lucra, then closes", async () => {
+    resolveDispute({ matchId: at(11).id, organizerUserId: organizerId, sets: A_WINS }, clock);
+    const twelve = at(12);
+    const aRow = JSON.parse(app.data.scoreSubmissions.find((s) => s.matchId === twelve.id)?.payloadJson ?? "").sets as SubmittedSet[];
+    submitScoreline({ matchId: twelve.id, userId: captainOf(twelve.teamBId), scoreline: { sets: aRow.map((s) => ({ setNumber: s.setNumber, usPoints: s.themPoints, themPoints: s.usPoints })) } }, clock);
+    const thirteen = agreeThirteen();
+    // The freeze lands with the semifinal 14 and the final 15 still to play.
+    const mock = getLucra().mock!;
+    const dup = mock.addMatchup({ id: "dup-matchup", kind: "pool_tournament", title: "duplicate", metadata: { externalId: live.lucraExternalId }, participants: [] });
+    db().update(tournaments).set({ lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, live.id)).run();
+    expect(await writeAgreedConsensus(thirteen.id, clock)).toMatchObject({ state: "refused", code: "ambiguous_matchup" });
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("awaiting_settlement");
+    expect(previewClose(live.id).blockers.map((b) => b.matchId).sort()).toEqual([at(14).id, at(15).id].sort());
+    // Scores cannot be submitted, but forfeits can: the organizer ends the event.
+    const fourteen = at(14);
+    expect(() => submitScoreline({ matchId: fourteen.id, userId: captainOf(fourteen.teamAId), scoreline: { sets: typed(A_WINS, "a") } }, clock)).toThrow(/tournament is live/);
+    const forfeited = forfeitMatch(fourteen.id, fourteen.teamBId ?? "", { kind: "organizer", userId: organizerId }, clock);
+    expect(forfeited.match.status).toBe("forfeited");
+    const fifteen = at(15);
+    forfeitMatch(fifteen.id, fifteen.teamBId ?? "", { kind: "organizer", userId: organizerId }, clock);
+    expect(previewClose(live.id).blockers).toEqual([]);
+    // With the duplicate still there Lucra cannot settle; the close still commits and says so.
+    const preview = previewClose(live.id);
+    const closed = await closeTournament({ tournamentId: live.id, organizerUserId: organizerId, previewHash: preview.previewHash }, clock);
+    expect(closed.settlement.state).toBe("refused");
+    expect(db().select({ status: tournaments.status, closePreviewJson: tournaments.closePreviewJson }).from(tournaments).where(eq(tournaments.id, live.id)).get()).toMatchObject({ status: "awaiting_settlement", closePreviewJson: expect.any(String) });
+    // Once closed, forfeits are over: a closed event is not a frozen one.
+    dup.metadata.externalId = "elsewhere";
+    expect(() => forfeitMatch(fourteen.id, fourteen.teamAId ?? "", { kind: "organizer", userId: organizerId }, clock)).toThrow(/tournament is live/);
+  });
+
   it("splits a team prize in whole cents across linked players and reports the unlinked", () => {
     const rosters = new Map([
       ["t1", { id: "t1", tournamentId: "x", name: "A", seed: null, status: "checked_in" as const, createdAt: 0, members: [{ userId: "u1", displayName: "One", role: "captain" as const }, { userId: "u2", displayName: "Two", role: "player" as const }] }],
@@ -615,7 +764,7 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     const recon = await reconcileParticipants(upcoming.id, system, clock);
     expect(recon.extra.map((e) => e.externalId)).toContain(first.externalId);
     expect(linkLucraAccount(user, clock)).toMatchObject({ minted: false, lucraUserId: null });
-    expect(await syncLucraUserIds(upcoming.id, matchup.id, system, clock)).toBeGreaterThanOrEqual(1);
+    expect((await syncLucraUserIds(upcoming.id, matchup.id, system, clock)).updated).toBeGreaterThanOrEqual(1);
     expect(linkLucraAccount(user, clock)).toMatchObject({ minted: false, lucraUserId: "lucra-user-from-lucra", linkedAt: clock.now() });
     expect(app.audits(user.id).map((a) => a.action)).toEqual(["lucra.link_minted", "lucra.link_updated"]);
   });

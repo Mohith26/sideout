@@ -6,6 +6,7 @@ import { DrawPanel } from "@/components/organizer/DrawPanel";
 import { EventForm } from "@/components/organizer/EventForm";
 import { eventFormOptions } from "@/components/organizer/options";
 import { StatusActions } from "@/components/organizer/StatusActions";
+import { readLucraAlert } from "@/server/lucra";
 import { Container } from "@/components/shell/Container";
 import { Icons } from "@/components/ui/icons";
 import { SectionHeading } from "@/components/ui/SectionHeading";
@@ -105,6 +106,8 @@ export default async function EventBuilderPage({ params }: PageProps<"/organizer
           status={t.status}
           patchable={targets.filter(isPatchableTarget)}
           matchCount={allMatches.length}
+          closed={t.closePreviewJson !== null}
+          lucraAlert={readLucraAlert(t)}
         />
       </section>
 

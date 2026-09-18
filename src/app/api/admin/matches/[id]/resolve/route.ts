@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { setScoreSchema } from "@/domain/scoreline";
+import { getConsensusView } from "@/db/queries/consensus";
 import { ok } from "@/lib/api";
 import { resolveDispute } from "@/server/consensus";
 import { handle, NO_STORE, parseBody, requireOrganizer } from "@/server/http";
-import { consensusAfterWrite, writeAgreedConsensus } from "@/server/lucra";
+import { writeAgreedConsensus } from "@/server/lucra";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,6 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/admin/m
     const { sets } = await parseBody(request, bodySchema);
     const result = resolveDispute({ matchId: id, organizerUserId: organizer.id, sets });
     const lucra = await writeAgreedConsensus(id);
-    return ok({ ...result, consensus: consensusAfterWrite(id) ?? result.consensus, lucra }, { headers: NO_STORE });
+    return ok({ ...result, consensus: getConsensusView(id) ?? result.consensus, lucra }, { headers: NO_STORE });
   });
 }

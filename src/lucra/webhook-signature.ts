@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { LUCRA_SIGNATURE_HEADER, LUCRA_SIGNATURE_PREFIX } from "@/lucra/endpoints";
 
 /**
@@ -18,8 +18,36 @@ import { LUCRA_SIGNATURE_HEADER, LUCRA_SIGNATURE_PREFIX } from "@/lucra/endpoint
 
 export { LUCRA_SIGNATURE_HEADER };
 
-/** The mock signs with this when `LUCRA_WEBHOOK_SECRET` is unset; the receiver in mock mode verifies with it. Never used outside mock mode. */
-export const MOCK_WEBHOOK_SECRET = "sideout-mock-webhook-secret";
+declare global {
+  var __sideoutEphemeralWebhookSecret: string | undefined;
+}
+
+/**
+ * The secret the in-process mock signs with and the receiver verifies with
+ * when `LUCRA_WEBHOOK_SECRET` is unset in mock mode: random, minted once per
+ * process (on `globalThis`, since the server build bundles this module into
+ * every route's chunk), never a constant anyone could read out of the repo.
+ */
+export function ephemeralWebhookSecret(): string {
+  globalThis.__sideoutEphemeralWebhookSecret ??= randomBytes(32).toString("hex");
+  return globalThis.__sideoutEphemeralWebhookSecret;
+}
+
+export type WebhookSecretSource = "env" | "ephemeral" | "none";
+
+/**
+ * Which secret verifies (and, in mock mode, signs) webhook deliveries. The
+ * configured value always wins. In mock mode outside production the
+ * per-process random secret stands in, so the mock's own deliveries verify
+ * and nothing else does. In production, and in every sandbox/production
+ * mode, there is no fallback: without `LUCRA_WEBHOOK_SECRET` every delivery
+ * is refused, and the process says so at boot.
+ */
+export function resolveWebhookSecret(env: { NODE_ENV: string; LUCRA_MODE: string; LUCRA_WEBHOOK_SECRET?: string | undefined }, mint: () => string = ephemeralWebhookSecret): { secret: string | undefined; source: WebhookSecretSource } {
+  if (env.LUCRA_WEBHOOK_SECRET) return { secret: env.LUCRA_WEBHOOK_SECRET, source: "env" };
+  if (env.LUCRA_MODE === "mock" && env.NODE_ENV !== "production") return { secret: mint(), source: "ephemeral" };
+  return { secret: undefined, source: "none" };
+}
 
 export function signWebhookBody(rawBody: string | Uint8Array, secret: string): string {
   return `${LUCRA_SIGNATURE_PREFIX}${createHmac("sha256", secret).update(rawBody).digest("hex")}`;

@@ -1,9 +1,10 @@
 import type { NextRequest } from "next/server";
 import { submittedScorelineSchema } from "@/domain/consensus";
+import { getConsensusView } from "@/db/queries/consensus";
 import { ok } from "@/lib/api";
 import { submitScoreline } from "@/server/consensus";
 import { handle, NO_STORE, parseBody, requireUser } from "@/server/http";
-import { consensusAfterWrite, writeAgreedConsensus } from "@/server/lucra";
+import { writeAgreedConsensus } from "@/server/lucra";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,6 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/matches
     const result = submitScoreline({ matchId: id, userId: user.id, scoreline });
     if (result.outcome !== "agreed") return ok({ ...result, lucra: null }, { status: 201, headers: NO_STORE });
     const lucra = await writeAgreedConsensus(id);
-    return ok({ ...result, consensus: consensusAfterWrite(id) ?? result.consensus, lucra }, { status: 201, headers: NO_STORE });
+    return ok({ ...result, consensus: getConsensusView(id) ?? result.consensus, lucra }, { status: 201, headers: NO_STORE });
   });
 }

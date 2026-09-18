@@ -2,7 +2,6 @@ import "server-only";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { getConsensusView, type ConsensusView } from "@/db/queries/consensus";
 import { linksForUsers, listAllLinks, listAttemptsForKey, listLandedSubmissions } from "@/db/queries/lucra";
 import { listTeamsWithMembers, type TeamWithMembers } from "@/db/queries/tournaments";
 import {
@@ -566,10 +565,6 @@ export async function writeAgreedConsensus(matchId: string, clock: Clock = syste
   }
 }
 
-/** The consensus view after a Lucra write, for route responses. */
-export function consensusAfterWrite(matchId: string): ConsensusView | null {
-  return getConsensusView(matchId);
-}
 
 // ---------------------------------------------------------------------------
 // Recovery: attempts the process never got to finish
@@ -737,12 +732,20 @@ export async function settleTournament(tournamentId: string, actor: TransitionAc
   }
 
   // The payment structure names Lucra user ids: read the participant list back
-  // first and record the ids Lucra reports for our external ids (§7.5).
+  // first and record the ids Lucra reports for our external ids (§7.5). The
+  // same read tells whether the matchup is already CLOSED — a complete call
+  // whose response was lost (timeout, crash) or a close from Lucra's console —
+  // in which case settlement is a success to record, not a call to repeat.
+  let readBack: TournamentMatchup;
   try {
-    await syncLucraUserIds(t.id, matchupId, actor, clock);
+    ({ matchup: readBack } = await syncLucraUserIds(t.id, matchupId, actor, clock));
   } catch (err) {
     if (!isLucraError(err)) throw err;
     return refuse({ code: "settlement_refused", message: `Lucra would not return the participant list (${err.code}): ${err.message}`, detail: { lucraCode: err.code, matchupId } });
+  }
+  if (readBack.status === "CLOSED") {
+    log.info("lucra: matchup already closed on read-back; recording settlement", { tournamentId: t.id, matchupId });
+    return finalizeSettlement(t, matchupId, actor, clock, writes, { source: "read_back", matchup: readBack, paymentStructure: [], unassignedUserIds: [] });
   }
   const rosters = new Map(listTeamsWithMembers(t.id).map((team) => [team.id, team]));
   const links = linksForUsers(db, [...rosters.values()].flatMap((team) => team.members.map((m) => m.userId)));
@@ -761,19 +764,58 @@ export async function settleTournament(tournamentId: string, actor: TransitionAc
     response = await adapter.completeTournament(matchupId, request);
   } catch (err) {
     if (!isLucraError(err)) throw err;
+    // A refusal of the close itself: Lucra may already hold it as closed (the
+    // documented "already closed" answer after a lost first response). Read
+    // back before believing the refusal.
+    if (err.code === "validation") {
+      try {
+        const { matchup } = await adapter.getTournament(matchupId);
+        if (matchup.status === "CLOSED") {
+          log.info("lucra: complete refused but the matchup is closed on read-back; recording settlement", { tournamentId: t.id, matchupId, refusal: err.code });
+          return finalizeSettlement(t, matchupId, actor, clock, writes, { source: "read_back_after_refusal", matchup, paymentStructure: entries, unassignedUserIds: [], refusal: { code: err.code, httpStatus: err.detail.httpStatus ?? null, response: err.detail.body ?? null } });
+        }
+      } catch (readErr) {
+        if (!isLucraError(readErr)) throw readErr;
+        log.warn("lucra: read-back after a refused close failed", { tournamentId: t.id, matchupId, code: readErr.code });
+      }
+    }
     return refuse({
       code: "settlement_refused",
       message: `Lucra refused the close (${err.code}): ${err.message}`,
       detail: { lucraCode: err.code, httpStatus: err.detail.httpStatus ?? null, matchupId, response: err.detail.body ?? null },
     });
   }
+  return finalizeSettlement(t, matchupId, actor, clock, writes, { source: "complete", paymentStructure: entries, unassignedUserIds: response.response.unassignedUserIds, call: { request: response.record.request, response: response.record.response, tries: response.record.tries } });
+}
 
-  const settledAt = now();
+interface SettlementEvidence {
+  /** How the settlement was established: the complete call answered, or the matchup was read back as CLOSED. */
+  source: "complete" | "read_back" | "read_back_after_refusal";
+  paymentStructure: PaymentStructureEntry[];
+  unassignedUserIds: string[];
+  call?: { request: unknown; response: unknown; tries: number };
+  /** The read-back matchup, recorded with its reward structure when it is the evidence. */
+  matchup?: TournamentMatchup;
+  refusal?: { code: string; httpStatus: number | null; response: unknown };
+}
+
+/**
+ * Record a settlement that Lucra holds: `awaiting_settlement → settled` (on
+ * the row as it is now, never one read before an await), the projected
+ * rewards awarded, and an audit row carrying exactly the evidence — the
+ * complete call, or the read-back reward structure.
+ */
+function finalizeSettlement(t: Tournament, matchupId: string, actor: TransitionActor, clock: Clock, writes: LucraWriteReport[], evidence: SettlementEvidence): SettlementReport {
+  const db = getDb();
+  const settledAt = clock.now();
   db.transaction((tx) => {
-    const verdict = transitionTournament("awaiting_settlement", "settled", actor);
+    const current = tx.select().from(tournaments).where(eq(tournaments.id, t.id)).get();
+    if (!current) throw new ApiFailure("not_found", "No tournament with that id.");
+    if (current.status !== "awaiting_settlement") throw new ApiFailure("conflict", `The tournament is ${current.status}; settlement was recorded elsewhere.`, { code: "not_awaiting_settlement", status: current.status });
+    const verdict = transitionTournament(current.status, "settled", actor);
     if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);
     tx.update(tournaments).set({ status: "settled" }).where(eq(tournaments.id, t.id)).run();
-    writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: "awaiting_settlement", to: "settled", matchupId }, at: settledAt });
+    writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: current.status, to: "settled", matchupId, source: evidence.source }, at: settledAt });
     tx.update(rewards)
       .set({ status: "awarded", lucraRewardRef: matchupId })
       .where(and(eq(rewards.tournamentId, t.id), eq(rewards.status, "projected"), eq(rewards.kind, "lucra_reward")))
@@ -787,23 +829,31 @@ export async function settleTournament(tournamentId: string, actor: TransitionAc
       action: LUCRA_AUDIT.settlementCompleted,
       subjectType: "tournament",
       subjectId: t.id,
-      detail: { matchupId, paymentStructure: entries, unassignedUserIds: response.response.unassignedUserIds, request: response.record.request, response: response.record.response, tries: response.record.tries },
+      detail: {
+        matchupId,
+        source: evidence.source,
+        paymentStructure: evidence.paymentStructure,
+        unassignedUserIds: evidence.unassignedUserIds,
+        ...(evidence.call ? { request: evidence.call.request, response: evidence.call.response, tries: evidence.call.tries } : {}),
+        ...(evidence.matchup ? { readBack: { status: evidence.matchup.status, rewardStructure: evidence.matchup.rewardStructure, participants: evidence.matchup.users.length } } : {}),
+        ...(evidence.refusal ? { refusal: evidence.refusal } : {}),
+      },
       at: settledAt,
     });
     const notice: LucraAlert | null =
-      response.response.unassignedUserIds.length > 0
+      evidence.unassignedUserIds.length > 0
         ? {
             code: "settlement_partial",
             blocking: false,
             at: settledAt,
-            message: `Lucra settled the tournament but could not assign ${response.response.unassignedUserIds.length} reward${response.response.unassignedUserIds.length === 1 ? "" : "s"}: the listed Lucra users are not participants of the matchup.`,
-            detail: { unassignedUserIds: response.response.unassignedUserIds, matchupId },
+            message: `Lucra settled the tournament but could not assign ${evidence.unassignedUserIds.length} reward${evidence.unassignedUserIds.length === 1 ? "" : "s"}: the listed Lucra users are not participants of the matchup.`,
+            detail: { unassignedUserIds: evidence.unassignedUserIds, matchupId },
           }
         : null;
     setAlert(tx, t.id, notice, actor, settledAt);
   });
-  log.info("lucra: tournament settled", { tournamentId: t.id, matchupId, prizes: entries.length, unassigned: response.response.unassignedUserIds.length });
-  return { state: "settled", matchupId, unassignedUserIds: response.response.unassignedUserIds, paymentStructure: entries, writes };
+  log.info("lucra: tournament settled", { tournamentId: t.id, matchupId, source: evidence.source, prizes: evidence.paymentStructure.length, unassigned: evidence.unassignedUserIds.length });
+  return { state: "settled", matchupId, unassignedUserIds: evidence.unassignedUserIds, paymentStructure: evidence.paymentStructure, writes };
 }
 
 // ---------------------------------------------------------------------------
@@ -817,7 +867,7 @@ export async function settleTournament(tournamentId: string, actor: TransitionAc
  * a webhook or the SDK sign-in (phase 4b) reports it. An id already claimed
  * by another link is never moved. Returns how many links were updated.
  */
-export async function syncLucraUserIds(tournamentId: string, matchupId: string, actor: TransitionActor, clock: Clock = systemClock): Promise<number> {
+export async function syncLucraUserIds(tournamentId: string, matchupId: string, actor: TransitionActor, clock: Clock = systemClock): Promise<{ updated: number; matchup: TournamentMatchup }> {
   const db = getDb();
   const adapter = getLucra();
   const { matchup } = await adapter.getTournament(matchupId);
@@ -838,7 +888,7 @@ export async function syncLucraUserIds(tournamentId: string, matchupId: string, 
     }
   });
   if (updated > 0) log.info("lucra: recorded Lucra user ids from the participant list", { tournamentId, matchupId, updated });
-  return updated;
+  return { updated, matchup };
 }
 
 export interface ParticipantReconciliation {

@@ -13,7 +13,7 @@ describe("Lucra webhook receiver (spec §7.6; acceptance 11)", () => {
   let app: TestApp;
   const clock = fixedClock(1_790_000_000_000);
   let logs: ReturnType<typeof vi.spyOn>[] = [];
-  const secret = () => mockWebhookSecret();
+  const secret = () => mockWebhookSecret() ?? "";
   const deliver = (payload: unknown, options: { signature?: string | null; raw?: string } = {}) => {
     const rawBody = options.raw ?? JSON.stringify(payload);
     return receiveLucraWebhook({ rawBody, signatureHeader: options.signature === undefined ? signWebhookBody(rawBody, secret()) : options.signature }, clock);

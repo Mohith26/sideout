@@ -2,11 +2,11 @@ import { env, type LucraMode } from "@/env";
 import { systemClock, type Clock } from "@/lib/clock";
 import { log } from "@/lib/log";
 import { createLucraClient, type CallRecord, type FetchLike, type LucraClient, type LucraClientOptions } from "@/lucra/client";
-import { LUCRA_BASE_URLS, LUCRA_PATHS } from "@/lucra/endpoints";
+import { LUCRA_PATHS } from "@/lucra/endpoints";
 import { isLucraError, LucraError, type LucraErrorCode } from "@/lucra/errors";
 import type { MatcherInterpretation } from "@/lucra/matcher";
 import { createLucraMock, MOCK_API_KEY, MOCK_BASE_URL, type LucraMock } from "@/lucra/mock";
-import { MOCK_WEBHOOK_SECRET } from "@/lucra/webhook-signature";
+import { resolveWebhookSecret } from "@/lucra/webhook-signature";
 import {
   strictMatchupTargetSchema,
   type CompleteTournamentRequest,
@@ -250,9 +250,14 @@ declare global {
   var __sideoutLucraAdapter: LucraAdapter | undefined;
 }
 
-/** The secret the mock signs webhooks with: the configured one, else the mock default. Only ever consulted in mock mode. */
-export function mockWebhookSecret(): string {
-  return env.LUCRA_WEBHOOK_SECRET ?? MOCK_WEBHOOK_SECRET;
+/**
+ * The secret the mock signs webhooks with and the receiver verifies with in
+ * mock mode: the configured one, else the per-process random one, else — in
+ * production without `LUCRA_WEBHOOK_SECRET` — nothing, so every delivery
+ * (the mock's own included) is refused until one is configured.
+ */
+export function mockWebhookSecret(): string | undefined {
+  return resolveWebhookSecret(env).secret;
 }
 
 /**
@@ -266,7 +271,7 @@ export function getLucraAdapter(): LucraAdapter {
     interpretation: env.LUCRA_MATCHER_INTERPRETATION,
     baseUrl: env.LUCRA_BASE_URL,
     apiKey: env.LUCRA_BACKEND_API_KEY,
-    webhookSecret: mockWebhookSecret(),
+    webhookSecret: mockWebhookSecret() ?? "",
   });
   return globalThis.__sideoutLucraAdapter;
 }
@@ -276,4 +281,3 @@ export function installLucraAdapter(adapter: LucraAdapter | undefined): void {
   globalThis.__sideoutLucraAdapter = adapter;
 }
 
-export { LUCRA_BASE_URLS };

@@ -66,7 +66,7 @@ export interface WebhookReceipt {
   message: string;
 }
 
-/** The secret the receiver verifies with: the configured one, or in mock mode the mock's default. */
+/** The secret the receiver verifies with: the configured one, or in mock mode outside production the per-process one the mock signs with. */
 export function webhookSecretForMode(): string | undefined {
   if (env.LUCRA_MODE === "mock") return mockWebhookSecret();
   return env.LUCRA_WEBHOOK_SECRET;

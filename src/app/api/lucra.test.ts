@@ -110,26 +110,26 @@ describe("Lucra routes (spec §9)", () => {
   describe("POST /api/webhooks/lucra", () => {
     it("reads the raw body, verifies the signature, deduplicates, and never leaks a secret", async () => {
       const body = JSON.stringify({ event: "UserKYCVerified", userId: "lucra-nobody" });
-      const signed = await app.call<Envelope<{ eventId: string; duplicate: boolean; processingState: string }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(body, mockWebhookSecret()) } });
+      const signed = await app.call<Envelope<{ eventId: string; duplicate: boolean; processingState: string }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(body, mockWebhookSecret() ?? "") } });
       expect(signed.status).toBe(200);
       if (!signed.body.ok) throw new Error("expected ok");
       expect(signed.body.data).toMatchObject({ eventId: "UserKYCVerified:lucra-nobody", duplicate: false, processingState: "ignored" });
-      const replay = await app.call<Envelope<{ duplicate: boolean }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(body, mockWebhookSecret()) } });
+      const replay = await app.call<Envelope<{ duplicate: boolean }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(body, mockWebhookSecret() ?? "") } });
       expect(replay.status).toBe(200);
       if (!replay.body.ok) throw new Error("expected ok");
       expect(replay.body.data.duplicate).toBe(true);
       const forged = await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body, headers: { [LUCRA_SIGNATURE_HEADER]: "sha256=" + "f".repeat(64) } });
       expectFailure(forged, 401, "unauthorized");
-      expect(JSON.stringify(forged.body)).not.toContain(mockWebhookSecret());
+      expect(JSON.stringify(forged.body)).not.toContain(mockWebhookSecret() ?? "unset");
       expectFailure(await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: body }), 401, "unauthorized");
       const garbage = "{{{";
-      expectFailure(await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: garbage, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(garbage, mockWebhookSecret()) } }), 400, "bad_request");
+      expectFailure(await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: garbage, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(garbage, mockWebhookSecret() ?? "") } }), 400, "bad_request");
       expect(app.conn.db.select().from(webhookEvents).all()).toHaveLength(1);
     });
 
     it("caps the body before reading it: an oversized delivery is 413 whether or not it declares its length, signed or not", async () => {
       const oversized = JSON.stringify({ event: "UserKYCVerified", userId: "lucra-nobody", padding: "x".repeat(WEBHOOK_BODY_LIMIT_BYTES) });
-      const declared = await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: oversized, headers: { "content-length": String(oversized.length), [LUCRA_SIGNATURE_HEADER]: signWebhookBody(oversized, mockWebhookSecret()) } });
+      const declared = await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: oversized, headers: { "content-length": String(oversized.length), [LUCRA_SIGNATURE_HEADER]: signWebhookBody(oversized, mockWebhookSecret() ?? "") } });
       expect(expectFailure(declared, 413, "payload_too_large").detail).toEqual({ limitBytes: WEBHOOK_BODY_LIMIT_BYTES });
       const streamed = await app.call(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: oversized });
       expectFailure(streamed, 413, "payload_too_large");
@@ -137,7 +137,7 @@ describe("Lucra routes (spec §9)", () => {
       expect(app.conn.db.select().from(webhookEvents).all()).toEqual([]);
       // Just under the cap goes through to verification as usual.
       const fitting = JSON.stringify({ event: "UserKYCVerified", userId: "lucra-nobody", padding: "x".repeat(WEBHOOK_BODY_LIMIT_BYTES - 200) });
-      const accepted = await app.call<Envelope<{ processingState: string }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: fitting, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(fitting, mockWebhookSecret()) } });
+      const accepted = await app.call<Envelope<{ processingState: string }>>(webhookRoute, "/api/webhooks/lucra", { method: "POST", rawBody: fitting, headers: { [LUCRA_SIGNATURE_HEADER]: signWebhookBody(fitting, mockWebhookSecret() ?? "") } });
       expect(accepted.status).toBe(200);
     });
   });

@@ -129,6 +129,11 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   `external_id` only; Lucra user ids come from the read-back and webhooks, never the
   client). The score and resolve routes call `writeAgreedConsensus` after the consensus
   commits (inline; it never throws; player-facing messages come from `LUCRA_ERROR_MESSAGE`).
+  In mock mode outside production the webhook secret is a random per-process value
+  shared by the mock signer and the receiver (`resolveWebhookSecret`); production never
+  falls back. A frozen event (`awaiting_settlement`, no close preview) still takes
+  organizer forfeits, so it can be ended without Lucra. Settlement reads the matchup
+  back before and after a refused complete: `CLOSED` on read-back is the settlement.
   `src/server/lucra-webhooks.ts` is the receiver (capped raw body → signature → derived
   event id → dedupe → persist → transaction; an unverified delivery is never persisted,
   and no webhook changes a tournament status or a reward) and `deliverPendingMockWebhooks` hands the mock's

@@ -17,11 +17,6 @@
 /** Documented "Last Updated 2026-03-03, Version 1.1" on the score ingestion pages. */
 export const LUCRA_API_VERSION = "legacy-rest/1.1" as const;
 
-export const LUCRA_BASE_URLS = {
-  sandbox: "https://api.sandbox.lucrasports.com",
-  production: "https://api.lucrasports.com",
-} as const;
-
 /** The BACKEND key travels in this header and nowhere else (never a query parameter). */
 export const LUCRA_API_KEY_HEADER = "X-Lucra-Api-Key" as const;
 /** What replaces the key in every log line and persisted request. */

@@ -148,9 +148,3 @@ export function resolveMatchups<T>(criteria: Metadata, records: readonly T[], in
   });
   return scored.sort((x, y) => y.score - x.score);
 }
-
-export function parseMatcherInterpretation(raw: string | undefined): MatcherInterpretation {
-  if (raw === undefined || raw.trim() === "") return "literal";
-  if ((MATCHER_INTERPRETATIONS as readonly string[]).includes(raw)) return raw as MatcherInterpretation;
-  throw new Error(`LUCRA_MATCHER_INTERPRETATION must be one of ${MATCHER_INTERPRETATIONS.join(", ")}; got ${JSON.stringify(raw)}`);
-}

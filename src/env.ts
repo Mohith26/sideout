@@ -201,9 +201,10 @@ if (env.sessionSecretSource === "ephemeral") {
 if (env.NODE_ENV === "production" && env.devLoginEnabled) {
   log.warn("SIDEOUT_DEV_LOGIN is set: POST /api/dev/login is compiled into this production build; never do this on a public deployment");
 }
-if (env.LUCRA_MODE !== "mock" && !env.LUCRA_WEBHOOK_SECRET) {
+if (!env.LUCRA_WEBHOOK_SECRET && (env.LUCRA_MODE !== "mock" || env.NODE_ENV === "production")) {
   // OPEN: (§17.3) without a shared secret no delivery can be verified; the receiver refuses every event until one is configured.
-  log.warn("LUCRA_WEBHOOK_SECRET is not set: POST /api/webhooks/lucra cannot verify any signature and will answer 401 to every delivery until it is", { lucraMode: env.LUCRA_MODE });
+  // In mock mode outside production a per-process random secret stands in (`resolveWebhookSecret`); production never falls back.
+  log.warn("LUCRA_WEBHOOK_SECRET is not set: POST /api/webhooks/lucra cannot verify any signature and will answer 401 to every delivery until it is", { lucraMode: env.LUCRA_MODE, nodeEnv: env.NODE_ENV });
 }
 if (env.NODE_ENV === "production" && env.TRUSTED_PROXY_HOPS === 0) {
   log.warn("TRUSTED_PROXY_HOPS is 0: no client address is trusted, so sign-in is rate-limited per phone and process-wide only; set it to the number of proxies in front of this server (1 behind a single proxy)");

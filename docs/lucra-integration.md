@@ -49,8 +49,12 @@ Settlement: tournaments never settle on their own. The organizer's two-step clos
 `lucraSettlementHook` runs `settleTournament`: stale attempts are swept, any consensus
 still `agreed` is written,
 anything not `accepted` refuses settlement with a blocking alert, the participant list
-is read back to learn Lucra user ids, and `POST /pool-tournament/:matchupId/complete`
-is sent with the frozen preview's rewards as a per-player `paymentStructure`. Success
+is read back to learn Lucra user ids — and, if that read shows the matchup already
+`CLOSED` (a complete whose response was lost, or a close from Lucra's console), that is
+the settlement, recorded with the read-back reward structure and never repeated — then
+`POST /pool-tournament/:matchupId/complete` is sent with the frozen preview's rewards
+as a per-player `paymentStructure`; a complete refused as already closed is read back
+once more before the refusal is believed. Success
 is `awaiting_settlement → settled` and `rewards.projected → awarded`; a refusal leaves
 the tournament where it is with the alert on `/admin/lucra`, where "Settle again"
 re-runs it. The mock emits `TournamentCompleted`, which the app's own receiver
@@ -62,7 +66,7 @@ processes in-process, so the webhook path runs on every close in mock mode.
 |---|---|---|
 | A write targets `matchupId` or a metadata object whose only key is `externalId` (7.3.1, 7.3.2) | `StrictMatchupTarget` (type) and `assertStrictTarget` (zod `.strict()`) in `src/lucra/adapter.ts`, before any request object exists | `adapter.test.ts` spies on fetch: zero calls |
 | `tournaments.lucra_external_id` is globally unique and namespaced (7.3.3) | unique index; `sideout-{slug}-{short id}` from the seed and `createTournament` | schema, seed tests |
-| Before the first write to a tournament, `/pool-tournament/query` must return exactly one matchup (7.3.4) | `ensureMatchupTarget` in `src/server/lucra.ts`: caches `lucra_matchup_id` + `lucra_matchup_verified_at`; on a count other than one raises a blocking `LucraAlert`, moves a live tournament to `awaiting_settlement` and refuses the write (the organizer's "Verify targeting" thaws it to `live`, or the close runs from the frozen state); a query that did not answer leaves the consensus `agreed` under a non-blocking alert | `lucra.test.ts` (duplicate matchup in the mock; 503 on the query) |
+| Before the first write to a tournament, `/pool-tournament/query` must return exactly one matchup (7.3.4) | `ensureMatchupTarget` in `src/server/lucra.ts`: caches `lucra_matchup_id` + `lucra_matchup_verified_at`; on a count other than one raises a blocking `LucraAlert`, moves a live tournament to `awaiting_settlement` and refuses the write (the organizer's "Verify targeting" thaws it to `live`, or the organizer forfeits the remaining matches and the close runs from the frozen state); a query that did not answer leaves the consensus `agreed` under a non-blocking alert | `lucra.test.ts` (duplicate matchup in the mock; 503 on the query) |
 | The type-specific endpoint is the default; the generic one only behind `endpoint: "generic"` (7.2) | `adapter.submitScores` | `adapter.test.ts` |
 | Non-empty `failedMatchupIds` under `status: "success"` is `partial` (7.2) | `classifyWrite` in `src/lucra/adapter.ts` | `adapter.test.ts`, `lucra.test.ts` |
 | 4xx is never retried; 5xx and transport errors are, three times with jittered backoff; 5s to headers, 10s total (8.1) | `src/lucra/client.ts` | `client.test.ts` with a scripted fake server |
@@ -147,7 +151,10 @@ only settlement trigger), `TournamentCanceled` (alert), `TournamentUserJoined` a
 `UserSignedUp` (record the Lucra user id on the matching link), `UserKYCVerified`
 (`verification_state` only — never identity data). Everything else well-formed is
 `ignored` with a 2xx. An invalid signature is refused with 401 and nothing about it
-is persisted.
+is persisted. The secret is `LUCRA_WEBHOOK_SECRET`; in mock mode outside production a
+random per-process secret shared by the in-process mock signer and the receiver stands
+in, and in production there is no fallback in any mode (boot warns, every delivery is
+refused until the secret is configured).
 
 ## Not built here (phase 4b and later)
 

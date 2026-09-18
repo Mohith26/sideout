@@ -17,9 +17,17 @@ import type { PatchableTarget } from "@/server/tournaments";
  * Status transitions as the validator allows them (`allowedTournamentTargets`,
  * filtered to what `PATCH /api/admin/tournaments/:id` will take). Closing
  * (`live → awaiting_settlement`) is the close flow's job and is a plain link
- * to it; settlement (`→ settled`) is Lucra's outcome in phase 4 and has no
- * control here; cancelling asks first.
+ * to it; settlement (`→ settled`) runs at close through Lucra and, when Lucra
+ * refuses, is retried from `/admin/lucra`; a rule-7.3.4 freeze is also
+ * `awaiting_settlement`, without a close, and leaves through "Verify
+ * targeting" there or by forfeiting and closing here; cancelling asks first.
  */
+export interface LucraStatusAlert {
+  code: string;
+  message: string;
+  blocking: boolean;
+}
+
 export interface StatusActionsProps {
   tournamentId: string;
   status: TournamentStatus;
@@ -27,6 +35,30 @@ export interface StatusActionsProps {
   patchable: readonly PatchableTarget[];
   /** `live` needs a draw; explain instead of failing. */
   matchCount: number;
+  /** Whether a close preview is frozen: `awaiting_settlement` without one is a rule-7.3.4 freeze, not a closed event. */
+  closed?: boolean;
+  /** The Lucra layer's alert on the tournament, if any (`readLucraAlert`). */
+  lucraAlert?: LucraStatusAlert | null;
+}
+
+/** What an `awaiting_settlement` or `settled` event needs from the organizer, in plain words. */
+export function settlementCopy(status: TournamentStatus, closed: boolean, alert: LucraStatusAlert | null): { text: string; needsLucraPage: boolean } | null {
+  if (status === "awaiting_settlement" && !closed) {
+    return {
+      text: `Play is paused: Lucra did not return exactly one matchup for this event, so no score is written until it does${alert ? ` (${alert.message})` : ""}. Fix the matchups in Lucra and verify targeting to resume play, or forfeit the remaining matches and close from the close flow.`,
+      needsLucraPage: true,
+    };
+  }
+  if (status === "awaiting_settlement" && alert?.blocking) {
+    return { text: `Closed. Lucra settlement was refused: ${alert.message} Fix the cause, then settle again.`, needsLucraPage: true };
+  }
+  if (status === "awaiting_settlement") {
+    return { text: "Closed. Lucra settlement has not completed; settle again if it was interrupted.", needsLucraPage: true };
+  }
+  if (status === "settled") {
+    return { text: alert ? `Settled through Lucra. ${alert.message}` : "Settled through Lucra.", needsLucraPage: alert !== null };
+  }
+  return null;
 }
 
 const ACTION: Record<PatchableTarget, { label: string; confirm: string | null; destructive: boolean }> = {
@@ -36,7 +68,7 @@ const ACTION: Record<PatchableTarget, { label: string; confirm: string | null; d
   cancelled: { label: "Cancel event", confirm: "Cancel this event? This cannot be undone. Teams keep their record; donations are not refunded automatically.", destructive: true },
 };
 
-export function StatusActions({ tournamentId, status, patchable, matchCount }: StatusActionsProps) {
+export function StatusActions({ tournamentId, status, patchable, matchCount, closed = false, lucraAlert = null }: StatusActionsProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [pending, setPending] = useState<PatchableTarget | null>(null);
@@ -59,6 +91,7 @@ export function StatusActions({ tournamentId, status, patchable, matchCount }: S
 
   const targets = patchable.filter((t) => t !== status);
   const pendingAction = pending ? ACTION[pending] : null;
+  const settlement = settlementCopy(status, closed, lucraAlert);
 
   return (
     <div className="space-y-3">
@@ -97,11 +130,19 @@ export function StatusActions({ tournamentId, status, patchable, matchCount }: S
           </Link>
         ) : null}
       </div>
-      {status === "awaiting_settlement" || status === "settled" ? (
-        <p className="text-text-tertiary">
-          {status === "awaiting_settlement" ? "Closed. Settlement is Lucra’s outcome and arrives with phase 4; there is nothing to do here. " : null}
+      {settlement ? (
+        <p className="text-text-tertiary" data-testid="settlement-copy">
+          {settlement.text}{" "}
+          {settlement.needsLucraPage ? (
+            <>
+              <Link href="/admin/lucra" className="text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">
+                Open the Lucra page
+              </Link>
+              {" · "}
+            </>
+          ) : null}
           <Link href={`/organizer/events/${tournamentId}/close`} className="text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">
-            See the frozen close preview
+            {closed ? "See the frozen close preview" : "Open the close flow"}
           </Link>
         </p>
       ) : null}
