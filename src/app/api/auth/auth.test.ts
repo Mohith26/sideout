@@ -67,6 +67,7 @@ describe("phone sign-in", () => {
     expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/SameSite=Lax/i);
     expect(setCookie).toMatch(/Path=\//);
+    expect(setCookie).not.toMatch(/Secure/i);
     expect(res.headers.get("cache-control")).toBe("no-store");
 
     expect(app.conn.db.select().from(users).where(eq(users.id, data.user.id)).get()?.role).toBe("player");
@@ -93,6 +94,17 @@ describe("phone sign-in", () => {
     expect(data).toMatchObject({ created: false, user: { id: player.id } });
     expect(app.conn.db.select().from(users).all()).toHaveLength(app.data.users.length);
     expect(app.audits(player.id, "user.signed_in")).toHaveLength(1);
+  });
+
+  it("marks the cookie Secure when the request arrived over https", async () => {
+    const code = await issue("+15550200006");
+    const res = await app.call(verify, "/api/auth/verify", {
+      method: "POST",
+      body: { phone: "+15550200006", code, displayName: "Secure Sam" },
+      headers: { "x-forwarded-proto": "https" },
+    });
+    expect(res.status).toBe(201);
+    expect(res.headers.get("set-cookie")).toMatch(/; Secure/i);
   });
 
   it("rate-limits code requests per phone", async () => {
@@ -125,6 +137,11 @@ describe("phone sign-in", () => {
     const profile = await app.call(me, "/api/me", { cookie: `sideout_session=${res.sessionCookie}` });
     expect((profile.body as { data: { user: { role: string } } }).data.user.role).toBe("organizer");
     expectFailure(await app.call(devLogin, "/api/dev/login", { method: "POST", body: { userId: "nope" } }), 404, "not_found");
+    expectFailure(await app.call(devLogin, "/api/dev/login", { method: "POST", body: {} }), 400, "bad_request");
+    expectFailure(await app.call(devLogin, "/api/dev/login", { method: "POST", body: { userId: organizer.id, phone: organizer.phoneE164 } }), 400, "bad_request");
+    const byPhone = await app.call(devLogin, "/api/dev/login", { method: "POST", body: { phone: organizer.phoneE164 } });
+    expect(byPhone.status).toBe(200);
+    expect((byPhone.body as { data: { user: { id: string } } }).data.user.id).toBe(organizer.id);
     expect(app.audits(organizer.id, "user.signed_in")[0]?.detailJson).toContain("dev_login");
   });
 });

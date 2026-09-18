@@ -23,6 +23,22 @@ owns it. Later phases append to this file rather than resolving anything silentl
   SDK package is installed until phase 4. `src/lucra/version.ts` holds the single constant
   and reports `"unpinned"` with an `// OPEN:` marker until the real pin lands.
 
+## Phase 2 additions
+
+| Question | Fallback implemented | Owner phase | Code marker |
+|---|---|---|---|
+| **SMS delivery provider.** The brief leaves Sideout's own sign-in unspecified and names no provider for delivering one-time codes or partner invites. | Codes and invites go through one `SmsSender` seam. The only implementation writes the message through `src/lib/log.ts` (the phone number masked, the code in clear so a developer can complete the flow); in production it also warns on every send that no provider is configured. Outside production the code is additionally returned by `POST /api/auth/request-code` as `devCode`. A real provider implements `SmsSender` and is returned from `getSmsSender()`; callers do not change. | 2 (seam), later (provider) | `src/server/auth/sms.ts` |
+
+## Follow-ups (not OPEN, just not built yet)
+
+| Item | Status | Where |
+|---|---|---|
+| **Double elimination.** `double_elim` is in the `tournaments.format` enum (§6.2) but the phase-2 draw engine does not build it: `draw()` refuses it with `DrawError("unsupported_format")` and the route answers `409 conflict` with `detail.code = "unsupported_format"`. The bracket module (`advanceWinner`, `next_match_id`/`next_match_slot`) is shaped so a losers' bracket can hang off the same links. | Not built; refused honestly | `src/domain/draw.ts` (`draw`), `docs/build-spec.md` §6.2 |
+| **Reopening registration.** The status machine is exactly the chain in the brief (`draft → registration_open → registration_closed → live → awaiting_settlement → settled`, `cancelled` from any pre-live state). There is no `registration_closed → registration_open` edge; add one in `src/domain/transitions.ts` if organizers need it. | Not built | `src/domain/transitions.ts` |
+| **Closing and settlement edges.** `live → awaiting_settlement → settled` exist in the machine but `PATCH /api/admin/tournaments/:id` refuses them: they belong to the close flow with its blocking checks (§10.7), which is phase 4. | Phase 4 | `src/server/tournaments.ts` (`PATCHABLE_TARGETS`) |
+| **Bracket seeding trigger.** For `pool_to_bracket`, round 1 is seeded from pool standings by `seedBracketFromPools` (`POST …/draw` with `{ stage: "bracket" }`). The consensus phase should call the same service when the last pool match finalizes so organizers do not have to. | Phase 3 wires the trigger | `src/server/draw.ts` |
+| **Lucra tournament entry at registration.** `registerTeam` calls `lucraEntryHook`, which returns `{ state: "not_available" }` rather than pretending to enrol anyone. | Phase 4 | `src/server/registration.ts` |
+
 ## Spec deviations
 
 Places where the spec is followed in intent but not to the letter, each with the reason
@@ -31,3 +47,9 @@ the spec's "deviate only with a stated reason" rule asks for.
 | Where | Spec says | Implemented | Reason |
 |---|---|---|---|
 | `--text-tertiary` in `src/styles/tokens.css` | `#646C79` (§12.1) | `#7C8491` | The spec value measures 3.76:1 on `--bg-base` and 3.29:1 on `--bg-overlay`, below the 4.5:1 that §12.6 and acceptance #21 require for every text tier. Lightened to the nearest value in the same hue that clears 4.5:1 on all four surfaces (4.62:1 on `--bg-overlay`); `src/styles/tokens.test.ts` asserts it. |
+| `teams.status` in `src/db/schema.ts` | `enum(registered, checked_in, withdrawn)` (§6.1) | adds `forming` first | `POST /api/teams` (captain plus a pending partner invite) happens before `POST /api/tournaments/:slug/register` (both members in, donation intent created), and the spec's enum has no state for a team in between. `forming` teams never count toward capacity and are not listed publicly. Migration `0001` rebuilds the CHECK constraint. |
+| `users.role` in `src/db/schema.ts` | not in §6.1 | `enum(player, organizer)`, default `player` | The organizer routes are "role-gated" (§9) and the spec's `users` table has no role. Lucra still owns wallet identity; this is only Sideout's thin account. Seeded organizers do not play. |
+| `team_invites`, `auth_codes` tables | not in §6 | added in migration `0001` | Partner invites by phone (§11.4) and one-time sign-in codes need a home; neither is identity data (§4.6): an invite holds a phone, a code row holds only an HMAC. |
+| `POST /api/admin/matches/:id/forfeit` | not in §9 | added | The bracket-advancement forfeit path is the one organizer action that exists before the consensus phase; it is the only route that resolves a match in phase 2 and it never sets `final`. |
+| `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/logout`, `POST /api/dev/login` | not in §9 | added | The spec leaves Sideout's own session unspecified. Phone + one-time code is the minimum that fits the invite-by-phone flow; the dev login exists only outside production or with `SIDEOUT_DEV_LOGIN=true` (a page-extension gate, asserted by `npm run test:bundle`). |
+| Seed users | 48 (§13) | 48 players + 2 organizers | Organizer accounts are needed to exercise `/api/admin/*`; they hold no Lucra link and no team, so the 48-player, every-verification-state requirement is untouched. |

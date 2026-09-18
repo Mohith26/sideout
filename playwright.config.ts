@@ -28,6 +28,9 @@ export default defineConfig({
       LUCRA_MODE: "mock",
       DATABASE_PATH: "./data/sideout.e2e.db",
       PORT: String(PORT),
+      // The flows sign in as seeded users through POST /api/dev/login, which a
+      // production build only contains when this is set (see next.config.ts).
+      SIDEOUT_DEV_LOGIN: "true",
     },
   },
 });

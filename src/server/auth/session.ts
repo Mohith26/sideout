@@ -4,6 +4,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { env } from "@/env";
 import { systemClock, type Clock } from "@/lib/clock";
+import { log } from "@/lib/log";
 
 /**
  * Sideout's own session: a signed, HttpOnly, SameSite=Lax cookie carrying the
@@ -68,21 +69,39 @@ export function readSessionUserId(request: NextRequest, clock: Clock = systemClo
   return verifySession(request.cookies.get(SESSION_COOKIE)?.value, env.sessionSecret, clock)?.uid ?? null;
 }
 
-export function setSessionCookie(response: NextResponse, userId: string, clock: Clock = systemClock): void {
+/**
+ * `Secure` follows the request: a deploy behind TLS termination forwards
+ * `x-forwarded-proto: https` and gets a Secure cookie; a plain-http server
+ * (the Playwright run of a production build) cannot use one at all. A
+ * production request over http is logged, once per process, because it means
+ * the deploy is not what it should be.
+ */
+let warnedInsecure = false;
+export function isSecureRequest(request: Pick<NextRequest, "headers" | "nextUrl">): boolean {
+  const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const secure = forwarded ? forwarded === "https" : request.nextUrl.protocol === "https:";
+  if (!secure && env.NODE_ENV === "production" && !warnedInsecure) {
+    warnedInsecure = true;
+    log.warn("session: issuing a cookie over plain http in production; put the server behind TLS");
+  }
+  return secure;
+}
+
+export function setSessionCookie(response: NextResponse, request: Pick<NextRequest, "headers" | "nextUrl">, userId: string, clock: Clock = systemClock): void {
   response.cookies.set(SESSION_COOKIE, signSession(userId, env.sessionSecret, clock), {
     httpOnly: true,
     sameSite: "lax",
-    secure: env.NODE_ENV === "production",
+    secure: isSecureRequest(request),
     path: "/",
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
   });
 }
 
-export function clearSessionCookie(response: NextResponse): void {
+export function clearSessionCookie(response: NextResponse, request: Pick<NextRequest, "headers" | "nextUrl">): void {
   response.cookies.set(SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: env.NODE_ENV === "production",
+    secure: isSecureRequest(request),
     path: "/",
     maxAge: 0,
   });

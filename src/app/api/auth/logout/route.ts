@@ -7,10 +7,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** POST /api/auth/logout — clear the session cookie. Idempotent. */
-export async function POST(_request: NextRequest) {
+export async function POST(request: NextRequest) {
   return handle(() => {
     const response = ok({ signedOut: true }, { headers: NO_STORE });
-    clearSessionCookie(response);
+    clearSessionCookie(response, request);
     return response;
   });
 }

@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       { user: { id: user.id, displayName: user.displayName, phoneE164: user.phoneE164, role: user.role }, created },
       { status: created ? 201 : 200, headers: NO_STORE },
     );
-    setSessionCookie(response, user.id);
+    setSessionCookie(response, request, user.id);
     return response;
   });
 }

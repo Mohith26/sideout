@@ -315,7 +315,7 @@ class SeedBuilder {
       return {
         id: this.id(createdAt),
         displayName: `${first} ${last}`,
-        phoneE164: `+1555010${String(90 + i).padStart(2, "0")}`,
+        phoneE164: `+1555010${String(9000 + i)}`,
         email: `${first}.${last}`.toLowerCase() + "@example.com",
         avatarUrl: null,
         role: "organizer",
