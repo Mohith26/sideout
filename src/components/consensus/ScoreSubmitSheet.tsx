@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { detailCode, postJson } from "@/components/consensus/client";
+import { detailCode } from "@/components/consensus/client";
+import { useConnectivity } from "@/components/offline/useConnectivity";
 import { ScorelineCompare, ScorelineTable } from "@/components/consensus/ScorelineCompare";
 import { enteredRows, judgeRows, ScorelineEditor, toSetScores, visibleRows, type EditorSet } from "@/components/consensus/ScorelineEditor";
 import { Button } from "@/components/ui/Button";
@@ -11,7 +12,9 @@ import type { BestOf } from "@/db/schema";
 import type { SubmittedSet } from "@/domain/consensus";
 import type { SetScore, Side } from "@/domain/scoreline";
 import type { ApiEnvelope } from "@/lib/api";
+import { api } from "@/lib/api-client";
 import { cx } from "@/lib/cx";
+import { queueScore } from "@/lib/offline/client";
 
 /**
  * The score submission bottom sheet (spec §11.3): thumb-reachable, one set
@@ -25,6 +28,9 @@ import { cx } from "@/lib/cx";
  * - second, agreeing   → one decisive surf check, then "Final"
  * - second, differing  → both scorelines side by side, the differing set marked,
  *                        and a neutral note that the organizer settles it
+ * - no connection      → the scoreline is saved in the outbox on this phone
+ *                        (`src/lib/offline`) and sent, unchanged, when it is
+ *                        back online; the sheet says so plainly
  *
  * The sheet rises on translateY with --ease-out-expo behind a blurred,
  * fading backdrop and slides back down on close (spec §12.4, transition 5);
@@ -58,8 +64,8 @@ export interface ScoreSubmitSheetProps {
   existing: readonly SubmittedSet[] | null;
   /** Whether the opponent has a standing submission. */
   opponentSubmitted: boolean;
-  /** Test hook: the request to make instead of `POST /api/matches/:id/scores`. */
-  submit?: (matchId: string, sets: SubmittedSet[]) => Promise<ApiEnvelope<SubmitResponse>>;
+  /** Test hook: the request to make instead of `POST /api/matches/:id/scores`; `status` 0 or 5xx means the phone should queue it. */
+  submit?: (matchId: string, sets: SubmittedSet[]) => Promise<ApiEnvelope<SubmitResponse> & { status?: number }>;
 }
 
 type Phase =
@@ -67,7 +73,8 @@ type Phase =
   | { kind: "editing"; error: string | null; busy: boolean }
   | { kind: "waiting"; sets: SetScore[] }
   | { kind: "agreed"; sets: SetScore[]; weWon: boolean }
-  | { kind: "disputed"; ours: SetScore[]; theirs: SetScore[]; differing: number[] };
+  | { kind: "disputed"; ours: SetScore[]; theirs: SetScore[]; differing: number[] }
+  | { kind: "queued"; sets: SetScore[] };
 
 function toEditor(sets: readonly SubmittedSet[]): EditorSet[] {
   return sets.map((s) => ({ setNumber: s.setNumber, left: s.usPoints, right: s.themPoints }));
@@ -78,8 +85,16 @@ function orient(sets: readonly SetScore[], perspective: Side): SetScore[] {
   return sets.map((s) => (perspective === "a" ? s : { setNumber: s.setNumber, teamAPoints: s.teamBPoints, teamBPoints: s.teamAPoints }));
 }
 
+/** A reply that says nothing about the submission (no connection, or a server that could not answer): queue it rather than lose it. */
+function shouldQueue(res: ApiEnvelope<unknown> & { status?: number }): boolean {
+  if (res.ok) return false;
+  if (typeof res.status === "number") return res.status === 0 || res.status >= 500;
+  return res.error.code === "unavailable";
+}
+
 export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, existing, opponentSubmitted, submit }: ScoreSubmitSheetProps) {
   const router = useRouter();
+  const { offline } = useConnectivity();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -102,7 +117,7 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
 
   const visible = visibleRows(rows, bestOf);
   const verdict = judgeRows(visible, bestOf);
-  const send = submit ?? ((id: string, sets: SubmittedSet[]) => postJson<SubmitResponse>(`/api/matches/${id}/scores`, { sets }));
+  const send = submit ?? ((id: string, sets: SubmittedSet[]) => api<SubmitResponse>(`/api/matches/${id}/scores`, { body: { sets } }));
 
   const finishClose = useCallback(() => {
     setClosing(false);
@@ -137,7 +152,20 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
     setPhase({ kind: "editing", error: null, busy: true });
     const entered = enteredRows(visible);
     const sets: SubmittedSet[] = entered.map((r) => ({ setNumber: r.setNumber, usPoints: r.left, themPoints: r.right }));
+    const ours = orient(toSetScores(entered), perspective);
+    const queue = async () => {
+      await queueScore(matchId, sets);
+      setPhase({ kind: "queued", sets: ours });
+    };
+    if (offline) {
+      await queue();
+      return;
+    }
     const res = await send(matchId, sets);
+    if (shouldQueue(res)) {
+      await queue();
+      return;
+    }
     if (!res.ok) {
       const code = detailCode(res);
       const message =
@@ -146,7 +174,6 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
       return;
     }
     const data = res.data;
-    const ours = orient(toSetScores(entered), perspective);
     if (data.outcome === "awaiting_second") {
       setPhase({ kind: "waiting", sets: ours });
     } else if (data.outcome === "agreed") {
@@ -185,7 +212,7 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
             <div className="flex items-start justify-between gap-3 px-5 pt-3">
               <div className="min-w-0">
                 <h2 id={titleId} className="type-subheading">
-                  {phase.kind === "editing" ? "Your result" : phase.kind === "waiting" ? `Waiting on ${them.name}` : phase.kind === "agreed" ? "Final" : "Scorelines differ"}
+                  {phase.kind === "editing" ? "Your result" : phase.kind === "waiting" ? `Waiting on ${them.name}` : phase.kind === "agreed" ? "Final" : phase.kind === "queued" ? "Saved on this phone" : "Scorelines differ"}
                 </h2>
                 <p className="mt-0.5 truncate type-label text-text-tertiary">
                   {us.name} vs {them.name} · best of {bestOf}
@@ -235,6 +262,18 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
                     </p>
                   </div>
                   <ScorelineTable teamA={teamA} teamB={teamB} sets={phase.sets} winner={phase.weWon ? perspective : perspective === "a" ? "b" : "a"} />
+                </div>
+              ) : null}
+
+              {phase.kind === "queued" ? (
+                <div className="space-y-4" data-testid="queued-notice">
+                  <div className="flex items-start gap-3 rounded-md border border-border-subtle bg-bg-raised p-4">
+                    <Icons.wifiOff size={20} className="mt-0.5 shrink-0 text-text-secondary" />
+                    <p className="text-text-secondary">
+                      No connection right now. Your scoreline is saved on this phone and will be sent, with the same checks, as soon as you are back online. Nothing is final until <span className="text-text-primary">{them.name}</span> submits the same result.
+                    </p>
+                  </div>
+                  <ScorelineTable teamA={teamA} teamB={teamB} sets={phase.sets} winner={null} />
                 </div>
               ) : null}
 

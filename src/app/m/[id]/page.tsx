@@ -6,6 +6,7 @@ import { ScoreSubmitSheet } from "@/components/consensus/ScoreSubmitSheet";
 import { ScorelineCompare, ScorelineTable } from "@/components/consensus/ScorelineCompare";
 import { LiveDot } from "@/components/motion/LiveDot";
 import { ScoreDisplay } from "@/components/motion/ScoreDisplay";
+import { QueuedScoreNotice } from "@/components/offline/QueuedScoreNotice";
 import { Container } from "@/components/shell/Container";
 import { DatabaseNotReady } from "@/components/shell/DatabaseNotReady";
 import { Button } from "@/components/ui/Button";
@@ -228,6 +229,9 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
               <ScorelineTable teamA={teamA?.name ?? "Team A"} teamB={teamB?.name ?? "Team B"} sets={ours.sets} winner={null} />
             </div>
           ) : null}
+          <div className="mt-4 empty:hidden">
+            <QueuedScoreNotice matchId={match.id} teamA={teamA?.name ?? "Team A"} teamB={teamB?.name ?? "Team B"} perspective={viewerSide} timeZone={tz} />
+          </div>
           <div className="mt-4">
             <ScoreSubmitSheet
               matchId={match.id}

@@ -147,6 +147,18 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // The service worker is plain JavaScript served from public/ with the
+    // worker's globals and nothing else; a typo in a global is an error.
+    files: ["public/sw.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { self: "readonly", caches: "readonly", fetch: "readonly", URL: "readonly", Promise: "readonly", setTimeout: "readonly", Set: "readonly", Boolean: "readonly" },
+    },
+    rules: {
+      "no-undef": "error",
+    },
+  },
+  {
     // The single place console output is permitted (warn/error only).
     files: ["src/lib/log.ts"],
     rules: {

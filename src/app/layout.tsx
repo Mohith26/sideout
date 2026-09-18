@@ -30,7 +30,8 @@ export const metadata: Metadata = {
   },
   description: "Charity beach volleyball tournaments: live play, standings, and what every event raises.",
   applicationName: "Sideout",
-  icons: { icon: "/icon.svg" },
+  icons: { icon: "/icon.svg", apple: "/icons/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "Sideout", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

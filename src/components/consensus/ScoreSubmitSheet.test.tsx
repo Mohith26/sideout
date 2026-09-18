@@ -4,6 +4,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScoreSubmitSheet, type SubmitResponse } from "@/components/consensus/ScoreSubmitSheet";
 import type { SubmittedSet } from "@/domain/consensus";
 import type { ApiEnvelope } from "@/lib/api";
+import { useOutboxStoreForTests } from "@/lib/offline/client";
+import { MemoryOutbox } from "@/lib/offline/outbox";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
@@ -218,5 +220,57 @@ describe("ScoreSubmitSheet", () => {
     });
     expect(screen.queryByTestId("score-sheet")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { hidden: true })).not.toHaveAttribute("open");
+  });
+
+  it("with no connection, saves the scoreline in the outbox exactly as it would have been sent and says so plainly", async () => {
+    const store = new MemoryOutbox();
+    useOutboxStoreForTests(store);
+    try {
+      const submit = vi.fn(async () => ({ ok: false as const, error: { code: "unavailable" as const, message: "Could not reach Sideout." }, status: 0 }));
+      const sheet = openSheet(submit);
+      enterSet(0, 21, 12);
+      enterSet(1, 21, 15);
+      await act(async () => {
+        fireEvent.click(within(sheet).getByRole("button", { name: "Submit scoreline" }));
+      });
+      expect(within(sheet).getByRole("heading", { name: "Saved on this phone" })).toBeInTheDocument();
+      expect(within(sheet).getByTestId("queued-notice")).toHaveTextContent("No connection right now. Your scoreline is saved on this phone and will be sent, with the same checks, as soon as you are back online.");
+      expect(within(sheet).getByTestId("queued-notice")).toHaveTextContent(`Nothing is final until ${them.name} submits the same result.`);
+      const queued = await store.list();
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({
+        matchId: "m1",
+        path: "/api/matches/m1/scores",
+        status: "queued",
+        body: {
+          sets: [
+            { setNumber: 1, usPoints: 21, themPoints: 12 },
+            { setNumber: 2, usPoints: 21, themPoints: 15 },
+          ],
+        },
+      });
+      // A server error is queued too; a definitive refusal is not.
+      expect(within(sheet).getByRole("button", { name: "Done" })).toBeInTheDocument();
+    } finally {
+      useOutboxStoreForTests(null);
+    }
+  });
+
+  it("a definitive refusal is shown inline, never queued", async () => {
+    const store = new MemoryOutbox();
+    useOutboxStoreForTests(store);
+    try {
+      const submit = vi.fn(async () => ({ ok: false as const, error: { code: "conflict" as const, message: "That team already submitted.", detail: { code: "already_submitted_by_team" } }, status: 409 }));
+      const sheet = openSheet(submit);
+      enterSet(0, 21, 12);
+      enterSet(1, 21, 15);
+      await act(async () => {
+        fireEvent.click(within(sheet).getByRole("button", { name: "Submit scoreline" }));
+      });
+      expect(within(sheet).getByRole("alert")).toHaveTextContent("That team already submitted.");
+      expect(await store.list()).toEqual([]);
+    } finally {
+      useOutboxStoreForTests(null);
+    }
   });
 });
