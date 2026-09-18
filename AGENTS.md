@@ -68,9 +68,10 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   → `src/db/queries/*` for reads. Routes never touch the database directly. Route
   tests use `src/test/routes.ts` (a migrated temp SQLite file installed as the
   process connection) and cover every endpoint. Public routes serialize the
-  `PublicTournament` projection (no `lucra_*` columns) and never see drafts;
-  organizer routes return the full row; `/t/[slug]` applies the same rule and lets
-  only an organizer session open a draft.
+  `PublicTournament` projection (no `lucra_*`, `draw_config_json` or
+  `close_preview_json` columns) and never see drafts; organizer routes return the
+  full row; `/t/[slug]` applies the same rule and lets only an organizer session
+  open a draft.
 - `teams.seed` is the organizer's entry seed, written only from the draw request's
   `seeds` list; the pools stage stores its inputs as `tournaments.draw_config_json`
   and the bracket stage reads the advancement rule from there.
