@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { NewMatch, NewScoreSubmission, NewSetRow } from "@/db/schema";
 import { judgeMatch, judgeSet, setTarget, type SetScore } from "@/domain/scoreline";
-import { draw, seedBracketSlots, selectAdvancing } from "@/domain/draw";
+import { draw, drawConfigSchema, seedBracketSlots, selectAdvancing } from "@/domain/draw";
 import { computeStandings, type StandingsMatch } from "@/domain/standings";
 import { isUuidV7 } from "@/lib/uuid";
-import { buildSeed, DEFAULT_RNG_SEED, SEED_DRAWS, seedDrawOptions, SLUGS, startOfTodayIn, VENUE_TIMEZONE, type SeedDataset } from "@/seed/build";
+import { buildSeed, DEFAULT_RNG_SEED, SEED_DRAWS, seedDrawConfig, seedDrawOptions, SLUGS, startOfTodayIn, VENUE_TIMEZONE, type SeedDataset } from "@/seed/build";
 
 // Fixed anchor: a Saturday midnight in Los Angeles. Tests never depend on today.
 const ANCHOR = Date.UTC(2026, 8, 19, 7, 0, 0); // 2026-09-19 00:00 PDT
@@ -165,13 +165,12 @@ describe("seed dataset (spec §13)", () => {
       });
       const expected = selectAdvancing(poolStandings, SEED_DRAWS.live.advance);
       expect(expected).toHaveLength(15);
+      // The advancement rule that sized the bracket is the one stored on the event.
+      expect(drawConfigSchema.parse(JSON.parse(live.drawConfigJson ?? "null"))).toEqual(seedDrawConfig(live, SEED_DRAWS.live));
+      // Entry seeds are the organizer's and the seed assigns none; the bracket order lives on the slots.
+      expect(teams.every((t) => t.seed === null)).toBe(true);
 
-      const seeded = teams.filter((t) => t.seed !== null).sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0));
-      expect(seeded.map((t) => t.id)).toEqual(expected);
-      expect(seeded.map((t) => t.seed)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
-      expect(teams.filter((t) => t.seed === null)).toHaveLength(9);
-
-      const seedOf = (teamId: string | null | undefined) => teams.find((t) => t.id === teamId)?.seed ?? null;
+      const seedOf = (teamId: string | null | undefined) => (teamId && expected.includes(teamId) ? expected.indexOf(teamId) + 1 : null);
       const firstRound = bracket.filter((m) => m.round === 1);
       expect(firstRound.map((m) => [seedOf(m.teamAId), seedOf(m.teamBId)])).toEqual([
         [1, null],
@@ -371,6 +370,10 @@ describe("seed dataset (spec §13)", () => {
       const invites = data.teamInvites.filter((i) => i.teamId === forming[0]?.id);
       expect(invites).toHaveLength(1);
       expect(invites[0]?.status).toBe("pending");
+      // The audit row records that the invitee is a known player, never the phone itself.
+      const inviteAudit = data.auditLog.filter((a) => a.subjectId === forming[0]?.id && a.action === "team.invite_sent");
+      expect(inviteAudit.map((a) => JSON.parse(a.detailJson ?? "null"))).toEqual([{ knownPlayer: true }]);
+      expect(data.auditLog.some((a) => (a.detailJson ?? "").includes(invites[0]?.phoneE164 ?? "+"))).toBe(false);
       // The invitee is a real seeded player with no team in this event yet.
       const invitee = data.users.find((u) => u.phoneE164 === invites[0]?.phoneE164);
       expect(invitee?.role).toBe("player");
@@ -401,7 +404,10 @@ describe("seed dataset (spec §13)", () => {
       );
       expect(plan.bracket).toEqual({ size: 8, rounds: 3, advancing: 8 });
       expect(data.pools.filter((p) => p.tournamentId === settled.id).map((p) => p.label)).toEqual(plan.pools.map((p) => p.label));
-      expect(teamsOf(settled.id).filter((t) => t.seed !== null)).toHaveLength(8);
+      expect(drawConfigSchema.parse(JSON.parse(settled.drawConfigJson ?? "null")).advance).toEqual(SEED_DRAWS.settled.advance);
+      const firstRoundTeams = bracket.filter((m) => m.round === 1).flatMap((m) => [m.teamAId, m.teamBId]);
+      expect(new Set(firstRoundTeams).size).toBe(8);
+      expect(teamsOf(settled.id).every((t) => t.seed === null)).toBe(true);
     });
 
     it("awards rewards that follow from the bracket and are funded by sponsors, not donations", () => {

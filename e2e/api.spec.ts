@@ -31,12 +31,11 @@ test.describe("API", () => {
     expect(await missing.json()).toMatchObject({ ok: false, error: { code: "not_found" } });
   });
 
-  test("a production build keeps the sign-in code out of the response", async ({ request }) => {
+  test("a production build with no SMS provider issues no sign-in code at all", async ({ request }) => {
+    // The log-based sender is a development stand-in; production never writes a live code to its log.
     const code = await request.post("/api/auth/request-code", { data: { phone: PLAYER_PHONE } });
-    expect(code.ok()).toBe(true);
-    const codeBody = (await code.json()) as { ok: boolean; data: { expiresAt: number; devCode?: string } };
-    expect(codeBody.data.expiresAt).toBeGreaterThan(Date.now());
-    expect(codeBody.data.devCode).toBeUndefined();
+    expect(code.status()).toBe(503);
+    expect(await code.json()).toMatchObject({ ok: false, error: { code: "unavailable", detail: { code: "sms_unavailable" } } });
     const wrong = await request.post("/api/auth/verify", { data: { phone: PLAYER_PHONE, code: "000000" } });
     expect(wrong.status()).toBe(401);
   });

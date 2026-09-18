@@ -122,6 +122,27 @@ export const getTournamentSummaryBySlug = cache((slug: string): TournamentSummar
 });
 
 // ---------------------------------------------------------------------------
+// Public projection
+// ---------------------------------------------------------------------------
+
+/**
+ * The tournament row as the public routes serialize it: every Lucra identifier
+ * stays on the server (spec §9, "never leak Lucra internals"). Organizer routes
+ * return the full row.
+ */
+export type PublicTournament = Omit<Tournament, "lucraMatchupId" | "lucraExternalId" | "lucraGameId" | "lucraLocationId">;
+export type PublicTournamentSummary = Omit<TournamentSummary, "tournament"> & { tournament: PublicTournament };
+
+export function publicTournament(t: Tournament): PublicTournament {
+  const { lucraMatchupId: _matchup, lucraExternalId: _external, lucraGameId: _game, lucraLocationId: _location, ...rest } = t;
+  return rest;
+}
+
+export function publicSummary<T extends TournamentSummary>(summary: T): Omit<T, "tournament"> & { tournament: PublicTournament } {
+  return { ...summary, tournament: publicTournament(summary.tournament) };
+}
+
+// ---------------------------------------------------------------------------
 // Matches with participants
 // ---------------------------------------------------------------------------
 
@@ -400,6 +421,7 @@ export interface TournamentDetail extends TournamentSummary {
   pools: PoolDetail[];
   bracket: BracketDetail;
 }
+export type PublicTournamentDetail = Omit<TournamentDetail, "tournament"> & { tournament: PublicTournament };
 
 export function getTournamentDetail(summary: TournamentSummary): TournamentDetail {
   const id = summary.tournament.id;

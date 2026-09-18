@@ -61,13 +61,20 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   domain, writes `audit_log` through `src/server/audit.ts` in the same transaction)
   → `src/db/queries/*` for reads. Routes never touch the database directly. Route
   tests use `src/test/routes.ts` (a migrated temp SQLite file installed as the
-  process connection) and cover every endpoint.
+  process connection) and cover every endpoint. Public routes serialize the
+  `PublicTournament` projection (no `lucra_*` columns) and never see drafts;
+  organizer routes return the full row.
+- `teams.seed` is the organizer's entry seed, written only from the draw request's
+  `seeds` list; the pools stage stores its inputs as `tournaments.draw_config_json`
+  and the bracket stage reads the advancement rule from there.
 - Session and roles: a signed HttpOnly SameSite=Lax cookie (`src/server/auth/session.ts`,
   secret `SESSION_SECRET`, dev default only outside production, ephemeral + warned in
   production when unset — `/health` reports which). `users.role` gates `/api/admin/*`
   via `requireOrganizer`. `POST /api/dev/login` lives in `route.dev.ts`, an extension
   `next.config.ts` registers only outside production or with `SIDEOUT_DEV_LOGIN=true`.
-- Outbound SMS (sign-in codes, invites) only through `src/server/auth/sms.ts`; the
+- Outbound SMS (sign-in codes, invites) only through `src/server/auth/sms.ts`
+  (`getSmsSender()` is the log sender outside production and null in production until
+  a provider exists, so request-code answers 503 `sms_unavailable` there); the
   charitable donation provider only through `src/server/donations/stub-provider.ts`
   (pending → succeeded after `STUB_SETTLE_DELAY_MS` on the injected clock, swept on
   read). Lucra entry at registration is `lucraEntryHook` in

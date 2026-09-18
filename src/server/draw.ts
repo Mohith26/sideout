@@ -5,8 +5,8 @@ import { z } from "zod";
 import { getDb } from "@/db/client";
 import { getPoolStandings } from "@/db/queries/standings";
 import { getTournamentDetail, type TournamentDetail } from "@/db/queries/tournaments";
-import { matchConsensus, matches, pools, poolTeams, scoreSubmissions, sets, teams, type Match, type NewMatch, type Tournament } from "@/db/schema";
-import { draw, seedBracketSlots, selectAdvancing, type AdvancementRule, type DrawPlan, type DrawTeam } from "@/domain/draw";
+import { matchConsensus, matches, pools, poolTeams, scoreSubmissions, sets, teams, tournaments, type Match, type NewMatch, type Tournament } from "@/db/schema";
+import { draw, drawConfigSchema, seedBracketSlots, selectAdvancing, type DrawConfig, type DrawPlan, type DrawTeam } from "@/domain/draw";
 import { DRAWABLE_STATUSES, TERMINAL_MATCH_STATUSES, transitionMatch, type TransitionActor } from "@/domain/transitions";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
@@ -20,18 +20,24 @@ import { requireTournamentById } from "@/server/tournaments";
  *
  * Stage `pools` (the default) runs the engine for the tournament's format and,
  * unless `preview` is set, writes pools, pool_teams and matches in one
- * transaction. It is allowed only in `registration_closed`; a re-draw replaces
- * an existing draw only while no match has started.
+ * transaction and stores the configuration it used as
+ * `tournaments.draw_config_json`. It is allowed only in `registration_closed`;
+ * a re-draw replaces an existing draw only while no match has started.
+ *
+ * `teams.seed` is the organizer's entry seed. It is written only from the
+ * request's `seeds` list and survives a re-draw; the bracket order a draw
+ * produces lives on the bracket slots and is never copied back to it.
  *
  * Stage `bracket` applies to `pool_to_bracket` once every pool match is
- * terminal: it ranks the pools, selects the advancing teams by the rule, seeds
- * round 1 (byes auto-advance) and writes `teams.seed`. The consensus phase can
- * call `seedBracketFromPools` itself when the last pool match finalizes.
+ * terminal: it ranks the pools, selects the advancing teams by the stored
+ * advancement rule and seeds round 1 (byes auto-advance). The request carries
+ * nothing but the stage. The consensus phase can call `seedBracketFromPools`
+ * itself when the last pool match finalizes.
  */
 
-export const drawRequestSchema = z
+const poolsRequestSchema = z
   .object({
-    stage: z.enum(["pools", "bracket"]).default("pools"),
+    stage: z.literal("pools").default("pools"),
     courts: z.number().int().min(1).max(64).default(4),
     poolSize: z.number().int().min(2).max(12).default(4),
     advance: z
@@ -44,19 +50,24 @@ export const drawRequestSchema = z
     poolMatchMinutes: z.number().int().min(5).max(240).default(30),
     bracketMatchMinutes: z.number().int().min(5).max(240).default(50),
     restMinutes: z.number().int().min(0).max(240).default(15),
-    /** Entry seeds to use instead of `teams.seed`; null clears a stored seed. */
+    /** Entry seeds to store on `teams.seed` before drawing; null clears a stored seed. Teams left out keep theirs. */
     seeds: z.array(z.object({ teamId: z.string().min(1), seed: z.number().int().min(1).nullable() })).max(256).optional(),
     /** Reproduces a previewed draw; omitted means a fresh random draw. */
     rngSeed: z.number().int().min(0).max(0xffffffff).optional(),
   })
   .strict();
+const bracketRequestSchema = z.object({ stage: z.literal("bracket") }).strict();
+
+export const drawRequestSchema = z.union([bracketRequestSchema, poolsRequestSchema]);
 export type DrawRequest = z.infer<typeof drawRequestSchema>;
+export type PoolsDrawRequest = z.infer<typeof poolsRequestSchema>;
 
 export interface DrawPreview {
   stage: "pools" | "bracket";
   /** The rng seed a pools-stage draw used; null for the bracket stage, which has no randomness. */
   rngSeed: number | null;
   plan: DrawPlan;
+  /** Every entrant with the entry seed the draw saw. */
   teams: Record<string, { name: string; seed: number | null }>;
   /** Bracket stage: the advancing team ids in seed order. */
   advancing?: string[];
@@ -67,7 +78,7 @@ export interface DrawOutcome {
   detail: TournamentDetail | null;
 }
 
-function entryTeams(tournamentId: string, overrides: DrawRequest["seeds"]): { drawTeams: DrawTeam[]; names: Record<string, { name: string; seed: number | null }> } {
+function entryTeams(tournamentId: string, overrides: PoolsDrawRequest["seeds"]): { drawTeams: DrawTeam[]; names: Record<string, { name: string; seed: number | null }> } {
   const rows = getDb()
     .select()
     .from(teams)
@@ -80,7 +91,7 @@ function entryTeams(tournamentId: string, overrides: DrawRequest["seeds"]): { dr
   }
   const drawTeams: DrawTeam[] = rows.map((r) => ({ id: r.id, seed: override.has(r.id) ? (override.get(r.id) ?? null) : r.seed }));
   const names: Record<string, { name: string; seed: number | null }> = {};
-  for (const r of rows) names[r.id] = { name: r.name, seed: r.seed };
+  for (const r of rows) names[r.id] = { name: r.name, seed: override.has(r.id) ? (override.get(r.id) ?? null) : r.seed };
   return { drawTeams, names };
 }
 
@@ -95,7 +106,7 @@ function assertDrawable(t: Tournament, existing: Match[]): void {
 }
 
 export function runDraw(tournamentId: string, request: DrawRequest, actor: TransitionActor, options: { preview: boolean; clock?: Clock }): DrawOutcome {
-  if (request.stage === "bracket") return seedBracketFromPools(tournamentId, request.advance, actor, options);
+  if (request.stage === "bracket") return seedBracketFromPools(tournamentId, actor, options);
   const clock = options.clock ?? systemClock;
   const db = getDb();
   const t = requireTournamentById(tournamentId).tournament;
@@ -103,10 +114,7 @@ export function runDraw(tournamentId: string, request: DrawRequest, actor: Trans
   assertDrawable(t, existing);
 
   const { drawTeams, names } = entryTeams(tournamentId, request.seeds);
-  const rngSeed = request.rngSeed ?? randomInt(0, 0x100000000);
-  const plan = draw({
-    format: t.format,
-    teams: drawTeams,
+  const config: DrawConfig = {
     courts: request.courts,
     poolSize: request.poolSize,
     advance: request.advance,
@@ -118,14 +126,30 @@ export function runDraw(tournamentId: string, request: DrawRequest, actor: Trans
       bracketMatchMinutes: request.bracketMatchMinutes,
       restMinutes: request.restMinutes,
     },
-    rng: createRng(rngSeed),
-  });
-  const preview: DrawPreview = { stage: "pools", rngSeed, plan, teams: names };
+    rngSeed: request.rngSeed ?? randomInt(0, 0x100000000),
+  };
+  const plan = draw({ ...config, format: t.format, teams: drawTeams, rng: createRng(config.rngSeed) });
+  const preview: DrawPreview = { stage: "pools", rngSeed: config.rngSeed, plan, teams: names };
   if (options.preview) return { preview, detail: null };
 
   const now = clock.now();
   db.transaction((tx) => {
     clearDraw(tx, tournamentId, existing);
+    // Entry seeds: clear the overridden teams first so two of them can swap seeds under the unique index.
+    const overrides = request.seeds ?? [];
+    if (overrides.length > 0) {
+      tx.update(teams)
+        .set({ seed: null })
+        .where(
+          inArray(
+            teams.id,
+            overrides.map((s) => s.teamId),
+          ),
+        )
+        .run();
+      for (const s of overrides) if (s.seed !== null) tx.update(teams).set({ seed: s.seed }).where(eq(teams.id, s.teamId)).run();
+    }
+    tx.update(tournaments).set({ drawConfigJson: JSON.stringify(config) }).where(eq(tournaments.id, tournamentId)).run();
 
     const poolIds = new Map<string, string>();
     for (const pool of plan.pools) {
@@ -157,10 +181,6 @@ export function runDraw(tournamentId: string, request: DrawRequest, actor: Trans
     // Self-referencing next_match_id: insert later rounds first so every target exists.
     for (const row of [...rows].sort((x, y) => y.round - x.round)) tx.insert(matches).values(row).run();
 
-    // Seeds: single elimination assigns them now; pool play assigns them at the bracket stage.
-    tx.update(teams).set({ seed: null }).where(eq(teams.tournamentId, tournamentId)).run();
-    for (const s of plan.seeds) tx.update(teams).set({ seed: s.seed }).where(eq(teams.id, s.teamId)).run();
-
     for (const row of rows) {
       if (row.status !== "bye") continue;
       writeAudit(tx, {
@@ -179,10 +199,10 @@ export function runDraw(tournamentId: string, request: DrawRequest, actor: Trans
       subjectId: tournamentId,
       detail: {
         format: plan.format,
-        rngSeed,
-        courts: request.courts,
-        poolSize: request.poolSize,
-        advance: request.advance,
+        rngSeed: config.rngSeed,
+        courts: config.courts,
+        poolSize: config.poolSize,
+        advance: config.advance,
         pools: plan.pools.length,
         matches: plan.matches.length,
         bracket: plan.bracket,
@@ -215,12 +235,22 @@ function clearDraw(tx: Tx, tournamentId: string, existing: Match[]): void {
 // Bracket stage
 // ---------------------------------------------------------------------------
 
-export function seedBracketFromPools(tournamentId: string, rule: AdvancementRule, actor: TransitionActor, options: { preview: boolean; clock?: Clock }): DrawOutcome {
+/** The configuration the current draw was generated with; a draw without one cannot be carried into a bracket. */
+function requireDrawConfig(t: Tournament): DrawConfig {
+  const parsed = t.drawConfigJson === null ? null : drawConfigSchema.safeParse(JSON.parse(t.drawConfigJson));
+  if (!parsed?.success) {
+    throw new ApiFailure("conflict", "This draw has no stored configuration; generate the draw again before seeding the bracket.", { code: "draw_config_missing" });
+  }
+  return parsed.data;
+}
+
+export function seedBracketFromPools(tournamentId: string, actor: TransitionActor, options: { preview: boolean; clock?: Clock }): DrawOutcome {
   const clock = options.clock ?? systemClock;
   const db = getDb();
   const t = requireTournamentById(tournamentId).tournament;
   if (t.format !== "pool_to_bracket") throw new ApiFailure("conflict", `Only pool_to_bracket tournaments seed a bracket from pools; this one is ${t.format}.`);
   if (t.status !== "live") throw new ApiFailure("conflict", `The bracket is seeded during play; the tournament is ${t.status}.`);
+  const rule = requireDrawConfig(t).advance;
 
   const poolMatches = db
     .select()
@@ -260,7 +290,7 @@ export function seedBracketFromPools(tournamentId: string, rule: AdvancementRule
 
   const nameRows = db.select({ id: teams.id, name: teams.name, seed: teams.seed }).from(teams).where(eq(teams.tournamentId, tournamentId)).all();
   const names: Record<string, { name: string; seed: number | null }> = {};
-  for (const r of nameRows) names[r.id] = { name: r.name, seed: advancing.indexOf(r.id) === -1 ? null : advancing.indexOf(r.id) + 1 };
+  for (const r of nameRows) names[r.id] = { name: r.name, seed: r.seed };
   const plan: DrawPlan = {
     format: t.format,
     order: advancing,
@@ -291,10 +321,6 @@ export function seedBracketFromPools(tournamentId: string, rule: AdvancementRule
 
   const now = clock.now();
   db.transaction((tx) => {
-    tx.update(teams).set({ seed: null }).where(eq(teams.tournamentId, tournamentId)).run();
-    advancing.forEach((teamId, i) => {
-      tx.update(teams).set({ seed: i + 1 }).where(eq(teams.id, teamId)).run();
-    });
     for (const patch of patches) {
       const current = bracket.find((m) => m.id === patch.key);
       if (!current) continue;

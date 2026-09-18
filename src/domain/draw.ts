@@ -1,4 +1,5 @@
-import type { BestOf, MatchSlot, TournamentFormat } from "@/db/schema";
+import { z } from "zod";
+import { BEST_OF, type BestOf, type MatchSlot, type TournamentFormat } from "@/db/schema";
 import { compareStandings, type StandingRow } from "@/domain/standings";
 import type { Rng } from "@/lib/rng";
 
@@ -49,33 +50,43 @@ export interface DrawTeam {
   seed: number | null;
 }
 
-export interface DrawSchedule {
-  /** When the first round (pool play, or the bracket for single_elim) starts. */
-  startsAt: number;
-  /** Court slot length for a pool match, including changeover. */
-  poolMatchMinutes: number;
-  /** Court slot length for a bracket match. */
-  bracketMatchMinutes: number;
-  /** Rest between pool play and the bracket, and between bracket rounds. */
-  restMinutes: number;
-}
-
 /** Top `perPool` from each pool, then the `bestRemaining` next-placed teams by standings. */
 export interface AdvancementRule {
   perPool: number;
   bestRemaining: number;
 }
 
-export interface DrawOptions {
+/**
+ * Everything a pools-stage draw was configured with, minus the entrants and the
+ * format (which live on their own rows). Persisted as
+ * `tournaments.draw_config_json` so the bracket stage applies the advancement
+ * rule that sized the bracket and a preview can be reproduced from `rngSeed`.
+ */
+export const drawConfigSchema = z.object({
+  courts: z.number().int().min(1),
+  /** Target pool size for pool_to_bracket; pools differ in size by at most one. */
+  poolSize: z.number().int().min(2),
+  advance: z.object({ perPool: z.number().int().min(0), bestRemaining: z.number().int().min(0) }),
+  poolBestOf: z.enum(BEST_OF),
+  bracketBestOf: z.enum(BEST_OF),
+  schedule: z.object({
+    /** When the first round (pool play, or the bracket for single_elim) starts. */
+    startsAt: z.number().int(),
+    /** Court slot length for a pool match, including changeover. */
+    poolMatchMinutes: z.number().int().min(1),
+    /** Court slot length for a bracket match. */
+    bracketMatchMinutes: z.number().int().min(1),
+    /** Rest between pool play and the bracket, and between bracket rounds. */
+    restMinutes: z.number().int().min(0),
+  }),
+  rngSeed: z.number().int().min(0),
+});
+export type DrawConfig = z.infer<typeof drawConfigSchema>;
+export type DrawSchedule = DrawConfig["schedule"];
+
+export interface DrawOptions extends Omit<DrawConfig, "rngSeed"> {
   format: TournamentFormat;
   teams: readonly DrawTeam[];
-  courts: number;
-  /** Target pool size for pool_to_bracket; pools differ in size by at most one. */
-  poolSize: number;
-  advance: AdvancementRule;
-  poolBestOf: BestOf;
-  bracketBestOf: BestOf;
-  schedule: DrawSchedule;
   rng: Rng;
 }
 
@@ -116,7 +127,11 @@ export interface DrawPlan {
   order: string[];
   pools: DrawPool[];
   matches: DrawMatch[];
-  /** Bracket seeds assigned by this draw (single_elim). Empty until pools are done otherwise. */
+  /**
+   * Bracket order this draw placed into round 1 (single_elim: the entry order;
+   * pool_to_bracket: empty until the bracket stage ranks the pools). Recorded
+   * on the bracket slots only; `teams.seed` stays the organizer's entry seed.
+   */
   seeds: Array<{ teamId: string; seed: number }>;
   bracket: BracketShape | null;
 }

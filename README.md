@@ -14,7 +14,7 @@ npm run dev      # http://localhost:3000
 
 `LUCRA_MODE=mock` is the default, so no `.env` file is needed; `.env.example` lists every variable for later phases. `GET /health` reports the build sha, Lucra mode, pinned SDK version, migration state, where the session-signing secret came from, and whether the dev sign-in route is compiled in.
 
-Two variables matter once this runs anywhere public: `SESSION_SECRET` (signs the session cookie; without it a production process signs with a random per-process secret and warns) and `SIDEOUT_DEV_LOGIN` (must stay unset; it compiles `POST /api/dev/login` into a production build for test targets only).
+Three variables matter once this runs anywhere public: `SESSION_SECRET` (signs the session cookie; without it a production process signs with a random per-process secret and warns), `SIDEOUT_DEV_LOGIN` (must stay unset; it compiles `POST /api/dev/login` into a production build for test targets only) and `TRUSTED_PROXY_HOPS` (how many reverse proxies sit in front of the process; the per-address rate limit on sign-in reads `x-forwarded-for` that many hops from the right and is off at the default `0`). Phone sign-in needs an SMS provider, which no phase has chosen yet: in production `POST /api/auth/request-code` answers `503` with `detail.code = "sms_unavailable"` until one implements `SmsSender`.
 
 The seed is deterministic and idempotent. It loads one beneficiary, 48 players, and three events — one live (24 teams, pool play complete, a semifinal in progress, a disputed quarterfinal, a quarterfinal awaiting scores, and a first-round bye), one open for registration, and one settled with rewards — and every number on screen is derived from those rows.
 
@@ -49,8 +49,8 @@ Every route validates with zod and answers `{ ok: true, data }` or `{ ok: false,
 | `POST /api/tournaments/:slug/register` | player | register a complete team; creates the charitable donation intent (stub provider) |
 | `GET /api/me` | player | profile, Lucra link state, teams and history, invites, rewards |
 | `POST /api/admin/tournaments`, `PATCH /api/admin/tournaments/:id` | organizer | create; edit fields, sponsors, and status through the state machine |
-| `POST /api/admin/tournaments/:id/draw[?preview=1]` | organizer | pools + bracket in one transaction; `{ stage: "bracket" }` seeds the bracket from finished pools |
+| `POST /api/admin/tournaments/:id/draw[?preview=1]` | organizer | pools + bracket in one transaction, configuration stored on the tournament; `{ stage: "bracket" }` seeds the bracket from finished pools with the stored advancement rule |
 | `POST /api/admin/matches/:id/forfeit` | organizer | forfeit one side; the other advances |
 | `POST /api/dev/login` | non-production only | sign in as a seeded user by id or phone |
 
-Draw formats: `pool_to_bracket` (snake-seeded pools, round robin per pool, single-elimination bracket sized by "top N per pool plus best remaining"), `single_elim`, `round_robin`. `double_elim` is refused until it is built. Standings tiebreaks, in order: wins, head-to-head (two-way ties only), set ratio, point differential, points for, team id.
+Draw formats: `pool_to_bracket` (snake-seeded pools, round robin per pool, single-elimination bracket sized by "top N per pool plus best remaining"), `single_elim`, `round_robin`. `double_elim` is refused until it is built. `teams.seed` is the organizer's entry seed (set through the draw request's `seeds` list, kept across re-draws); the order a bracket is seeded in lives on its round-1 slots. Standings tiebreaks, in order: wins, head-to-head (two-way ties only), set ratio, point differential, points for, team id.

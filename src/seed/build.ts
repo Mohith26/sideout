@@ -26,6 +26,7 @@ import {
   selectAdvancing,
   type AdvancementRule,
   type DrawMatch,
+  type DrawConfig,
   type DrawOptions,
   type DrawPlan,
   type DrawTeam,
@@ -150,11 +151,9 @@ export const SEED_DRAWS: Record<"live" | "settled", SeedDrawSpec> = {
   },
 };
 
-/** The exact `DrawOptions` the seed hands the engine for a tournament. */
-export function seedDrawOptions(t: Pick<NewTournament, "format" | "startsAt">, teams: readonly DrawTeam[], spec: SeedDrawSpec): DrawOptions {
+/** The `DrawConfig` a seeded event stores as `tournaments.draw_config_json`, exactly as the draw service would. */
+export function seedDrawConfig(t: Pick<NewTournament, "startsAt">, spec: SeedDrawSpec): DrawConfig {
   return {
-    format: t.format,
-    teams,
     courts: spec.courts,
     poolSize: spec.poolSize,
     advance: spec.advance,
@@ -166,8 +165,14 @@ export function seedDrawOptions(t: Pick<NewTournament, "format" | "startsAt">, t
       bracketMatchMinutes: spec.bracketMatchMinutes,
       restMinutes: spec.restMinutes,
     },
-    rng: createRng(spec.rngSeed),
+    rngSeed: spec.rngSeed,
   };
+}
+
+/** The exact `DrawOptions` the seed hands the engine for a tournament. */
+export function seedDrawOptions(t: Pick<NewTournament, "format" | "startsAt">, teams: readonly DrawTeam[], spec: SeedDrawSpec): DrawOptions {
+  const config = seedDrawConfig(t, spec);
+  return { ...config, format: t.format, teams, rng: createRng(config.rngSeed) };
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +456,7 @@ class SeedBuilder {
       action: "team.invite_sent",
       subjectType: "team",
       subjectId: row.id,
-      detailJson: JSON.stringify({ phoneE164: phone }),
+      detailJson: JSON.stringify({ knownPlayer: true }),
       createdAt: createdAt + 2,
     });
     return row;
@@ -602,18 +607,15 @@ class SeedBuilder {
 
   /**
    * Run the draw engine for a tournament and mint its pool and match rows,
-   * exactly as `POST /api/admin/tournaments/:id/draw` would. Team order is
-   * creation order; every entry seed is null, so pool placement follows the
-   * engine's rng for `spec.rngSeed`.
+   * exactly as `POST /api/admin/tournaments/:id/draw` would, storing the
+   * configuration on the tournament row. Team order is creation order; every
+   * entry seed is null, so pool placement follows the engine's rng for
+   * `spec.rngSeed`.
    */
   drawEvent(t: NewTournament, organizer: NewUser, teams: readonly SeedTeam[], spec: SeedDrawSpec, drawnAt: number): DrawnEvent {
-    const plan = draw(
-      seedDrawOptions(
-        t,
-        teams.map((team) => ({ id: team.row.id, seed: null })),
-        spec,
-      ),
-    );
+    const config = seedDrawConfig(t, spec);
+    const plan = draw({ ...config, format: t.format, teams: teams.map((team) => ({ id: team.row.id, seed: null })), rng: createRng(config.rngSeed) });
+    t.drawConfigJson = JSON.stringify(config);
     const poolRows = new Map<string, NewPool>();
     plan.pools.forEach((pool, p) => {
       const row: NewPool = { id: this.id(t.createdAt + p), tournamentId: t.id, label: pool.label, courtLabel: pool.courtLabel };
@@ -654,7 +656,16 @@ class SeedBuilder {
       action: "tournament.draw_generated",
       subjectType: "tournament",
       subjectId: t.id,
-      detailJson: JSON.stringify({ format: plan.format, pools: plan.pools.length, matches: plan.matches.length, bracket: plan.bracket }),
+      detailJson: JSON.stringify({
+        format: plan.format,
+        rngSeed: config.rngSeed,
+        courts: config.courts,
+        poolSize: config.poolSize,
+        advance: config.advance,
+        pools: plan.pools.length,
+        matches: plan.matches.length,
+        bracket: plan.bracket,
+      }),
       createdAt: drawnAt,
     });
     return { plan, poolRows, matchRows };
@@ -687,20 +698,16 @@ class SeedBuilder {
   }
 
   /**
-   * Seed the bracket from pool results through the engine's advancement rule,
-   * write `teams.seed`, and resolve round-1 byes (the present team advances).
+   * Seed the bracket from pool results through the engine's advancement rule
+   * and resolve round-1 byes (the present team advances). The order lives on
+   * the round-1 slots; `teams.seed` stays the (null) entry seed.
    */
-  seedBracketFromPools(t: NewTournament, drawn: DrawnEvent, results: readonly PoolResult[], spec: SeedDrawSpec, teamsById: Map<string, SeedTeam>, at: number): SeedTeam[] {
+  seedBracketFromPools(t: NewTournament, drawn: DrawnEvent, results: readonly PoolResult[], spec: SeedDrawSpec, teamsById: Map<string, SeedTeam>, at: number): void {
     const advancing = selectAdvancing(
       results.map((r) => ({ rows: r.standings })),
       spec.advance,
     );
-    const seeds = advancing.map((teamId, i) => {
-      const team = teamsById.get(teamId);
-      if (!team) throw new Error("seed: advancing team is unknown");
-      team.row.seed = i + 1;
-      return team;
-    });
+    for (const teamId of advancing) if (!teamsById.has(teamId)) throw new Error("seed: advancing team is unknown");
     const bracket = drawn.plan.matches.filter((m): m is DrawMatch & { bracketPosition: number } => m.bracketPosition !== null);
     const patches = seedBracketSlots(bracket, advancing);
     for (const patch of patches) {
@@ -729,10 +736,9 @@ class SeedBuilder {
       action: "tournament.bracket_seeded",
       subjectType: "tournament",
       subjectId: t.id,
-      detailJson: JSON.stringify({ seeds: advancing }),
+      detailJson: JSON.stringify({ advance: spec.advance, seeds: advancing }),
       createdAt: at,
     });
-    return seeds;
   }
 
   // -- bracket --------------------------------------------------------------

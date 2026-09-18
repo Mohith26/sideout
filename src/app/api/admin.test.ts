@@ -5,8 +5,9 @@ import { POST as drawRoute } from "@/app/api/admin/tournaments/[id]/draw/route";
 import { PATCH as patchTournament } from "@/app/api/admin/tournaments/[id]/route";
 import { POST as createTournament } from "@/app/api/admin/tournaments/route";
 import { matches, pools, poolTeams, sponsors, teamMembers, teams, tournaments, type Match, type NewTournament } from "@/db/schema";
+import { drawConfigSchema } from "@/domain/draw";
 import { uuidv7 } from "@/lib/uuid";
-import { SLUGS } from "@/seed/build";
+import { SEED_DRAWS, SLUGS } from "@/seed/build";
 import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
 
 type Envelope<T> = { ok: true; data: T };
@@ -18,7 +19,13 @@ type Detail = {
   activeTeams: number;
 };
 type DrawOutcome = {
-  preview: { stage: string; rngSeed: number | null; plan: { pools: Array<{ teamIds: string[] }>; matches: Array<{ status: string; round: number }>; bracket: { size: number; advancing: number } | null }; advancing?: string[] };
+  preview: {
+    stage: string;
+    rngSeed: number | null;
+    plan: { order: string[]; pools: Array<{ teamIds: string[] }>; matches: Array<{ status: string; round: number }>; bracket: { size: number; advancing: number } | null };
+    teams: Record<string, { name: string; seed: number | null }>;
+    advancing?: string[];
+  };
   detail: Detail | null;
 };
 
@@ -254,10 +261,76 @@ describe("organizer routes", () => {
       expect(second).toHaveLength(first.length);
       expect(second.map((m) => m.id).some((x) => first.some((f) => f.id === x))).toBe(false);
       expect(app.audits(id, "tournament.redrawn")).toHaveLength(1);
+      const stored = app.conn.db.select({ drawConfigJson: tournaments.drawConfigJson }).from(tournaments).where(eq(tournaments.id, id)).get()?.drawConfigJson;
+      expect(drawConfigSchema.parse(JSON.parse(stored ?? "null"))).toMatchObject({ courts: 2, rngSeed: 2, advance: { perPool: 2, bestRemaining: 0 } });
 
       const started = second.find((m) => m.poolId !== null);
       app.conn.db.update(matches).set({ status: "in_progress" }).where(eq(matches.id, started?.id ?? "")).run();
       expect(expectFailure(await drawCall(id, { courts: 2 }), 409, "conflict").message).toMatch(/already started/);
+    });
+
+    it("keeps entry seeds across a pool_to_bracket re-draw with new courts, and never writes bracket order to teams.seed", async () => {
+      const id = await readyTournament(8);
+      const [a, b] = app.conn.db.select({ id: teams.id }).from(teams).where(eq(teams.tournamentId, id)).all().map((t) => t.id);
+      if (!a || !b) throw new Error("expected two teams");
+      const poolOf = (teamId: string, detail: Detail | null) => detail?.pools.findIndex((p) => (p.teams as Array<{ id: string }>).some((t) => t.id === teamId));
+
+      const seeded = await drawCall(id, { courts: 2, poolSize: 4, seeds: [{ teamId: a, seed: 1 }, { teamId: b, seed: 2 }], rngSeed: 7 });
+      expect(seeded.status).toBe(201);
+      expect(seeded.body.data.preview.plan.order.slice(0, 2)).toEqual([a, b]);
+      expect(seeded.body.data.preview.teams[a]?.seed).toBe(1);
+      expect(poolOf(a, seeded.body.data.detail)).not.toBe(poolOf(b, seeded.body.data.detail));
+      const entrySeeds = () =>
+        app.conn.db
+          .select({ id: teams.id, seed: teams.seed })
+          .from(teams)
+          .where(and(eq(teams.tournamentId, id), isNotNull(teams.seed)))
+          .all()
+          .sort((x, y) => (x.seed ?? 0) - (y.seed ?? 0));
+      expect(entrySeeds()).toEqual([
+        { id: a, seed: 1 },
+        { id: b, seed: 2 },
+      ]);
+
+      // Re-draw for a different court count, without resending seeds: the stored entry seeds still lead the order.
+      const redrawn = await drawCall(id, { courts: 4, poolSize: 4, rngSeed: 8 });
+      expect(redrawn.status).toBe(201);
+      expect(redrawn.body.data.preview.plan.order.slice(0, 2)).toEqual([a, b]);
+      expect(poolOf(a, redrawn.body.data.detail)).not.toBe(poolOf(b, redrawn.body.data.detail));
+      expect(entrySeeds()).toEqual([
+        { id: a, seed: 1 },
+        { id: b, seed: 2 },
+      ]);
+
+      // Seeds can be swapped and cleared; teams left out keep theirs.
+      const swapped = await drawCall(id, { courts: 4, seeds: [{ teamId: a, seed: 2 }, { teamId: b, seed: 1 }], rngSeed: 8 });
+      expect(swapped.status).toBe(201);
+      expect(swapped.body.data.preview.plan.order.slice(0, 2)).toEqual([b, a]);
+      const cleared = await drawCall(id, { courts: 4, seeds: [{ teamId: b, seed: null }], rngSeed: 8 });
+      expect(cleared.status).toBe(201);
+      expect(entrySeeds()).toEqual([{ id: a, seed: 2 }]);
+      expect(cleared.body.data.preview.plan.order[0]).toBe(a);
+      expectFailure(await drawCall(id, { courts: 4, seeds: [{ teamId: b, seed: 2 }] }), 400, "bad_request");
+    });
+
+    it("keeps single_elim entry seeds across a re-draw and reshuffles the unseeded teams", async () => {
+      const id = await readyTournament(8, { format: "single_elim" });
+      const [top] = app.conn.db.select({ id: teams.id }).from(teams).where(eq(teams.tournamentId, id)).all().map((t) => t.id);
+      if (!top) throw new Error("expected a team");
+      const first = await drawCall(id, { courts: 2, seeds: [{ teamId: top, seed: 1 }], rngSeed: 1 });
+      expect(first.status).toBe(201);
+      const seedsOf = () => app.conn.db.select({ id: teams.id, seed: teams.seed }).from(teams).where(eq(teams.tournamentId, id)).all();
+      // The draw placed eight teams into round 1 but wrote no bracket seeds back: only the entry seed exists.
+      expect(seedsOf().filter((t) => t.seed !== null)).toEqual([{ id: top, seed: 1 }]);
+      expect(first.body.data.preview.plan.order[0]).toBe(top);
+      expect(first.body.data.detail?.bracket.matches[0]?.match.teamAId).toBe(top);
+
+      const second = await drawCall(id, { courts: 4, rngSeed: 2 });
+      expect(second.status).toBe(201);
+      expect(seedsOf().filter((t) => t.seed !== null)).toEqual([{ id: top, seed: 1 }]);
+      expect(second.body.data.preview.plan.order[0]).toBe(top);
+      expect(second.body.data.detail?.bracket.matches[0]?.match.teamAId).toBe(top);
+      expect(second.body.data.preview.plan.order).not.toEqual(first.body.data.preview.plan.order);
     });
 
     it("draws single elimination straight from seeds, with byes only in round 1, and refuses double elimination", async () => {
@@ -295,45 +368,81 @@ describe("organizer routes", () => {
       expectFailure(await drawCall(ptb, { seeds: [{ teamId: "ghost", seed: 1 }] }), 400, "bad_request");
     });
 
-    it("seeds the bracket from finished pools at the bracket stage, byes auto-advancing", async () => {
-      const id = await readyTournament(12);
-      expect((await drawCall(id, { courts: 3, poolSize: 4, advance: { perPool: 2, bestRemaining: 1 } })).status).toBe(201);
-      await patch(id, { status: "live" });
-      expectFailure(await drawCall(id, { stage: "bracket", advance: { perPool: 2, bestRemaining: 1 } }), 409, "conflict");
-
-      // Play the pools: the earlier-created team wins every match, no sets (as forfeits would).
+    /** Resolve every pool match: the earlier-created team wins, no sets (as forfeits would). */
+    function playPools(id: string): Match[] {
       const poolMatches = app.conn.db
         .select()
         .from(matches)
         .where(and(eq(matches.tournamentId, id), isNotNull(matches.poolId)))
         .all();
-      expect(poolMatches).toHaveLength(18);
       for (const m of poolMatches) {
         const winner = [m.teamAId, m.teamBId].filter((x): x is string => Boolean(x)).sort()[0] ?? null;
         app.conn.db.update(matches).set({ status: "forfeited", winnerTeamId: winner, finalizedAt: app.anchorMs }).where(eq(matches.id, m.id)).run();
       }
+      return poolMatches;
+    }
 
-      const preview = await drawCall(id, { stage: "bracket", advance: { perPool: 2, bestRemaining: 1 } }, true);
+    it("seeds the bracket from finished pools at the bracket stage, byes auto-advancing", async () => {
+      const id = await readyTournament(12);
+      expect((await drawCall(id, { courts: 3, poolSize: 4, advance: { perPool: 2, bestRemaining: 1 } })).status).toBe(201);
+      await patch(id, { status: "live" });
+      expectFailure(await drawCall(id, { stage: "bracket" }), 409, "conflict");
+      expect(playPools(id)).toHaveLength(18);
+
+      const preview = await drawCall(id, { stage: "bracket" }, true);
       expect(preview.status).toBe(200);
       expect(preview.body.data.preview.advancing).toHaveLength(7);
-      expect(app.conn.db.select().from(teams).where(and(eq(teams.tournamentId, id), isNotNull(teams.seed))).all()).toEqual([]);
 
-      const res = await drawCall(id, { stage: "bracket", advance: { perPool: 2, bestRemaining: 1 } });
+      const res = await drawCall(id, { stage: "bracket" });
       expect(res.status).toBe(201);
       const bracket = res.body.data.detail?.bracket.matches.map((m) => m.match) ?? [];
       expect(bracket).toHaveLength(7);
       const round1 = bracket.filter((m) => m.round === 1);
       expect(round1.filter((m) => m.status === "bye")).toHaveLength(1);
       expect(round1.flatMap((m) => [m.teamAId, m.teamBId]).filter(Boolean)).toHaveLength(7);
-      const seeded = app.conn.db.select().from(teams).where(and(eq(teams.tournamentId, id), isNotNull(teams.seed))).all();
-      expect(seeded.map((t) => t.seed).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([1, 2, 3, 4, 5, 6, 7]);
+      // The bracket order lives on the slots; nothing was written to teams.seed.
+      expect(app.conn.db.select().from(teams).where(and(eq(teams.tournamentId, id), isNotNull(teams.seed))).all()).toEqual([]);
       const bye = round1.find((m) => m.status === "bye");
       const next = bracket.find((m) => m.id === bye?.nextMatchId);
       expect(bye?.nextMatchSlot === "a" ? next?.teamAId : next?.teamBId).toBe(bye?.teamAId);
       expect(app.audits(id, "tournament.bracket_seeded")).toHaveLength(1);
+      expect(JSON.parse(app.audits(id, "tournament.bracket_seeded")[0]?.detailJson ?? "{}")).toMatchObject({ advance: { perPool: 2, bestRemaining: 1 } });
       expect(app.audits(bye?.id ?? "", "match.status_changed")).toHaveLength(1);
       // Seeding twice is refused: round 1 is no longer empty.
-      expectFailure(await drawCall(id, { stage: "bracket", advance: { perPool: 2, bestRemaining: 1 } }), 409, "conflict");
+      expectFailure(await drawCall(id, { stage: "bracket" }), 409, "conflict");
+    });
+
+    it("carries the seed's 24-team configuration through both stages with the stored rule, refusing a resent one", async () => {
+      const id = await readyTournament(24, { maxTeams: 24 });
+      const { courts, poolSize, advance } = SEED_DRAWS.live;
+      const pools = await drawCall(id, { courts, poolSize, advance, rngSeed: 3 });
+      expect(pools.status).toBe(201);
+      expect(pools.body.data.preview.plan.bracket).toEqual({ size: 16, rounds: 4, advancing: 15 });
+      await patch(id, { status: "live" });
+      expect(playPools(id)).toHaveLength(36);
+
+      // The bracket stage takes no rule: the one that sized the bracket is on the tournament.
+      expectFailure(await drawCall(id, { stage: "bracket", advance: { perPool: 2, bestRemaining: 0 } }), 400, "bad_request");
+      expectFailure(await drawCall(id, { stage: "bracket", courts: 6 }), 400, "bad_request");
+      const res = await drawCall(id, { stage: "bracket" });
+      expect(res.status).toBe(201);
+      expect(res.body.data.preview.advancing).toHaveLength(15);
+      const round1 = (res.body.data.detail?.bracket.matches.map((m) => m.match) ?? []).filter((m) => m.round === 1);
+      expect(round1).toHaveLength(8);
+      expect(round1.filter((m) => m.status === "bye")).toHaveLength(1);
+      expect(new Set(round1.flatMap((m) => [m.teamAId, m.teamBId]).filter(Boolean)).size).toBe(15);
+      expect(round1[0]?.teamAId).toBe(res.body.data.preview.advancing?.[0]);
+    });
+
+    it("refuses the bracket stage when the draw has no stored configuration", async () => {
+      const id = await readyTournament(8);
+      expect((await drawCall(id, { courts: 2 })).status).toBe(201);
+      await patch(id, { status: "live" });
+      playPools(id);
+      app.conn.db.update(tournaments).set({ drawConfigJson: null }).where(eq(tournaments.id, id)).run();
+      const refused = expectFailure(await drawCall(id, { stage: "bracket" }), 409, "conflict");
+      expect(refused.detail).toEqual({ code: "draw_config_missing" });
+      expect(app.conn.db.select().from(matches).where(and(eq(matches.tournamentId, id), isNull(matches.poolId), isNotNull(matches.teamAId))).all()).toEqual([]);
     });
   });
 

@@ -55,7 +55,8 @@ export function createTeam(input: CreateTeamInput, captain: User, clock: Clock =
     writeAudit(tx, { actor, action: "team.created", subjectType: "team", subjectId: teamId, detail: { tournamentId: tournament.id, name: input.name }, at: now });
     writeAudit(tx, { actor, action: "team.invite_sent", subjectType: "team", subjectId: teamId, detail: { knownPlayer: Boolean(partner) }, at: now });
   });
-  getSmsSender().send(input.partnerPhone, `${captain.displayName} invited you to play ${tournament.name} as "${input.name}" on Sideout. Sign in with this number to accept.`);
+  // Best-effort: the invite also waits under the partner's profile, so no sender is not a failure.
+  getSmsSender()?.send(input.partnerPhone, `${captain.displayName} invited you to play ${tournament.name} as "${input.name}" on Sideout. Sign in with this number to accept.`);
 
   const detail = getTeamDetail(teamId);
   if (!detail) throw new ApiFailure("internal", "Team was not created.");

@@ -19,6 +19,14 @@ describe("parseServerEnv", () => {
     expect(env.DATABASE_PATH).toBe("./data/sideout.db");
   });
 
+  it("trusts no proxy hop unless TRUSTED_PROXY_HOPS says how many there are", () => {
+    expect(parseServerEnv({}).TRUSTED_PROXY_HOPS).toBe(0);
+    expect(parseServerEnv({ TRUSTED_PROXY_HOPS: "" }).TRUSTED_PROXY_HOPS).toBe(0);
+    expect(parseServerEnv({ TRUSTED_PROXY_HOPS: "2" }).TRUSTED_PROXY_HOPS).toBe(2);
+    expect(() => parseServerEnv({ TRUSTED_PROXY_HOPS: "-1" })).toThrow(/TRUSTED_PROXY_HOPS/);
+    expect(() => parseServerEnv({ TRUSTED_PROXY_HOPS: "one" })).toThrow(/TRUSTED_PROXY_HOPS/);
+  });
+
   it("refuses sandbox or production without a base URL and backend key", () => {
     expect(() => parseServerEnv({ LUCRA_MODE: "sandbox" })).toThrow(/LUCRA_BASE_URL is required/);
     expect(() => parseServerEnv({ LUCRA_MODE: "production", LUCRA_BASE_URL: "https://api.lucrasports.com" })).toThrow(

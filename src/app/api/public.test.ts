@@ -1,15 +1,19 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as getMatch } from "@/app/api/matches/[id]/route";
 import { GET as getTournament } from "@/app/api/tournaments/[slug]/route";
 import { GET as getImpact } from "@/app/api/tournaments/[slug]/impact/route";
 import { GET as getStandings } from "@/app/api/tournaments/[slug]/standings/route";
 import { GET as listTournaments } from "@/app/api/tournaments/route";
+import { tournaments } from "@/db/schema";
 import { computeStandings } from "@/domain/standings";
 import { SLUGS } from "@/seed/build";
 import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
 
 type Summary = { tournament: { id: string; slug: string; status: string; maxTeams: number }; activeTeams: number; raisedCents: number; donorCount: number; sponsorCount: number };
 type Envelope<T> = { ok: true; data: T };
+
+const lucraKeys = (row: object) => Object.keys(row).filter((k) => k.toLowerCase().startsWith("lucra"));
 
 describe("public tournament routes", () => {
   let app: TestApp;
@@ -39,6 +43,33 @@ describe("public tournament routes", () => {
     const two = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=live,settled");
     expect(two.body.data).toHaveLength(2);
     expectFailure(await app.call(listTournaments, "/api/tournaments?status=bogus"), 400, "bad_request");
+  });
+
+  it("keeps every Lucra identifier off the public shapes and never exposes a draft", async () => {
+    const list = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
+    expect(list.body.data).toHaveLength(3);
+    for (const s of list.body.data) expect(lucraKeys(s.tournament)).toEqual([]);
+    const detail = await app.call<Envelope<{ tournament: object }>>(getTournament, `/api/tournaments/${SLUGS.live}`, { params: { slug: SLUGS.live } });
+    expect(lucraKeys(detail.body.data.tournament)).toEqual([]);
+    expect(detail.body.data.tournament).toMatchObject({ slug: SLUGS.live, name: expect.any(String), status: "live" });
+
+    // An organizer's unpublished draft is invisible to every public read.
+    const draftSlug = "draft-only-2027";
+    app.conn.db
+      .insert(tournaments)
+      .values({ ...app.tournament(SLUGS.upcoming), id: "draft-1", slug: draftSlug, status: "draft", lucraExternalId: "sideout-draft-1", createdAt: app.anchorMs })
+      .run();
+    expect(app.conn.db.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.slug, draftSlug)).get()?.status).toBe("draft");
+    const all = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
+    expect(all.body.data.map((s) => s.tournament.slug)).not.toContain(draftSlug);
+    const drafts = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=draft");
+    expect(drafts.status).toBe(200);
+    expect(drafts.body.data).toEqual([]);
+    const mixed = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments?status=draft,registration_open");
+    expect(mixed.body.data.map((s) => s.tournament.slug)).toEqual([SLUGS.upcoming]);
+    expectFailure(await app.call(getTournament, `/api/tournaments/${draftSlug}`, { params: { slug: draftSlug } }), 404, "not_found");
+    expectFailure(await app.call(getStandings, `/api/tournaments/${draftSlug}/standings`, { params: { slug: draftSlug } }), 404, "not_found");
+    expectFailure(await app.call(getImpact, `/api/tournaments/${draftSlug}/impact`, { params: { slug: draftSlug } }), 404, "not_found");
   });
 
   it("returns the full detail: teams, pools with standings, bracket", async () => {

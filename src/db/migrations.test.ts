@@ -19,7 +19,7 @@ function applyRaw(sqlite: ReturnType<typeof openConnection>["sqlite"], tag: stri
 }
 
 describe("migrations on a populated phase-1 database", () => {
-  it("adds users.role and the forming team status without losing rows or foreign keys", () => {
+  it("adds users.role, the forming team status and tournaments.draw_config_json without losing rows or foreign keys", () => {
     const conn = openConnection(":memory:", { create: true });
     try {
       const journal = readJournal();
@@ -79,6 +79,9 @@ describe("migrations on a populated phase-1 database", () => {
           .run(),
       ).toThrow(/FOREIGN KEY constraint failed/);
       expect(() => conn.sqlite.prepare("INSERT INTO auth_codes (id, phone_e164, code_hash, expires_at, created_at) VALUES ('a1', '+15550100003', 'h', 2, 1)").run()).not.toThrow();
+      // 0002: the draw configuration column exists, is empty for a pre-existing event, and takes JSON text.
+      expect(conn.sqlite.prepare("SELECT draw_config_json FROM tournaments WHERE id = 't1'").get()).toEqual({ draw_config_json: null });
+      expect(() => conn.sqlite.prepare("UPDATE tournaments SET draw_config_json = '{\"courts\":4}' WHERE id = 't1'").run()).not.toThrow();
     } finally {
       conn.close();
     }

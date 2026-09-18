@@ -7,6 +7,7 @@ import { POST as devLogin } from "@/app/api/dev/login/route.dev";
 import { GET as me } from "@/app/api/me/route";
 import { authCodes, users } from "@/db/schema";
 import { okEnvelopeSchema } from "@/lib/api";
+import { CODE_TTL_MS, REQUEST_CODE_LIMITS } from "@/server/auth/codes";
 import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
 import { z } from "zod";
 
@@ -113,6 +114,39 @@ describe("phone sign-in", () => {
     const error = expectFailure(res, 429, "rate_limited");
     expect(error.detail).toMatchObject({ retryAfterMs: expect.any(Number) });
     expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
+  it("caps issuance process-wide, so a spoofed x-forwarded-for and a fresh phone per request buy nothing", async () => {
+    // No proxy is declared in the test environment, so the header is not evidence of an address
+    // and never opens a per-address bucket; the global bucket is what stops the flood.
+    const spoofed = (i: number) => ({ "x-forwarded-for": `198.51.100.${i % 250}, 10.0.0.1` });
+    for (let i = 0; i < 5; i += 1) {
+      const res = await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: `+1555030${String(i).padStart(4, "0")}` }, headers: spoofed(i) });
+      expect(res.status).toBe(200);
+    }
+    expect(REQUEST_CODE_LIMITS.perAddress.size()).toBe(0);
+    while (REQUEST_CODE_LIMITS.global.take("*").allowed) {
+      // Drain what the flood would have spent.
+    }
+    const refused = await app.call(requestCode, "/api/auth/request-code", { method: "POST", body: { phone: "+15550309999" }, headers: spoofed(99) });
+    expectFailure(refused, 429, "rate_limited");
+    expect(app.conn.db.select().from(authCodes).where(eq(authCodes.phoneE164, "+15550309999")).all()).toEqual([]);
+  });
+
+  it("drops consumed and expired codes whenever a new one is issued", async () => {
+    const phone = "+15550200007";
+    const code = await issue(phone);
+    await app.call(verify, "/api/auth/verify", { method: "POST", body: { phone, code, displayName: "Tidy Tess" } });
+    expect(app.conn.db.select().from(authCodes).where(eq(authCodes.phoneE164, phone)).get()?.consumedAt).not.toBeNull();
+    // Issuing for anyone sweeps the consumed row.
+    await issue("+15550200008");
+    expect(app.conn.db.select({ phone: authCodes.phoneE164 }).from(authCodes).all()).toEqual([{ phone: "+15550200008" }]);
+    // ...and an expired one.
+    app.conn.db.update(authCodes).set({ expiresAt: 1 }).where(eq(authCodes.phoneE164, "+15550200008")).run();
+    await issue("+15550200009");
+    const remaining = app.conn.db.select().from(authCodes).all();
+    expect(remaining.map((r) => r.phoneE164)).toEqual(["+15550200009"]);
+    expect(remaining[0]?.expiresAt).toBeGreaterThan(Date.now() + CODE_TTL_MS - 60_000);
   });
 
   it("rejects a tampered or foreign cookie", async () => {

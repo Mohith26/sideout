@@ -37,6 +37,14 @@ const serverSchema = z
      * Never set on a public deployment. Outside production the route always exists.
      */
     SIDEOUT_DEV_LOGIN: booleanFromEnv,
+    /**
+     * How many trusted reverse proxies sit in front of this process. Each one
+     * appends the address it saw to `x-forwarded-for`, so the client address is
+     * that many hops from the right. With 0 (the default) the header is
+     * ignored: a Next.js route handler has no socket address of its own and a
+     * client can write the header itself, so no per-address rate limit applies.
+     */
+    TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(8).default(0),
   })
   .superRefine((env, ctx) => {
     // OPEN: (§17.1) sandbox credentials are issued by a Lucra representative. The
@@ -141,6 +149,7 @@ export const env: ServerEnv = parseServerEnv({
   NEXT_PUBLIC_LUCRA_TENANT_ID: process.env.NEXT_PUBLIC_LUCRA_TENANT_ID,
   SESSION_SECRET: process.env.SESSION_SECRET,
   SIDEOUT_DEV_LOGIN: process.env.SIDEOUT_DEV_LOGIN,
+  TRUSTED_PROXY_HOPS: process.env.TRUSTED_PROXY_HOPS,
 });
 
 if (env.sessionSecretSource === "ephemeral") {

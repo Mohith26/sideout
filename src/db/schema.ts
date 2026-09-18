@@ -237,6 +237,13 @@ export const tournaments = sqliteTable(
     // OPEN: (§17.5) how a locationId is modelled for a travelling outdoor venue is
     // unresolved. Nullable, left null, until Lucra clarifies.
     lucraLocationId: text("lucra_location_id"),
+    /**
+     * The pools-stage draw configuration (`DrawConfig` from `@/domain/draw`, as
+     * JSON) that produced the current pools and bracket skeleton; null until a
+     * draw exists. The bracket stage reads its advancement rule from here rather
+     * than trusting the caller to resend the rule that sized the bracket.
+     */
+    drawConfigJson: text("draw_config_json"),
     createdAt: epochMs("created_at").notNull(),
   },
   (t) => [

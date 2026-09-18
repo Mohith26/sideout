@@ -1,4 +1,5 @@
 import "server-only";
+import { env } from "@/env";
 import { systemClock, type Clock } from "@/lib/clock";
 
 /**
@@ -9,6 +10,10 @@ import { systemClock, type Clock } from "@/lib/clock";
  * acceptable for a single-node deployment and for the demo; a multi-instance
  * deployment swaps this for a shared store behind the same `RateLimiter`
  * interface.
+ *
+ * Memory is bounded: a bucket that has had time to refill completely is
+ * indistinguishable from a missing one, so every `take` sweeps such buckets
+ * once per refill window.
  */
 
 export interface RateLimitRule {
@@ -34,9 +39,12 @@ interface Bucket {
   updatedAt: number;
 }
 
-export function createRateLimiter(rule: RateLimitRule, clock: Clock = systemClock): RateLimiter & { reset(): void } {
+export function createRateLimiter(rule: RateLimitRule, clock: Clock = systemClock): RateLimiter & { reset(): void; size(): number } {
   const buckets = new Map<string, Bucket>();
   const ratePerMs = rule.refill / rule.perMs;
+  /** Time for an empty bucket to fill: after this long untouched, a bucket carries no information. */
+  const fullAfterMs = rule.capacity / ratePerMs;
+  let sweptAt = Number.NEGATIVE_INFINITY;
 
   const refill = (bucket: Bucket, now: number) => {
     const elapsed = Math.max(0, now - bucket.updatedAt);
@@ -44,9 +52,18 @@ export function createRateLimiter(rule: RateLimitRule, clock: Clock = systemCloc
     bucket.updatedAt = now;
   };
 
+  const sweep = (now: number) => {
+    if (now - sweptAt < fullAfterMs) return;
+    sweptAt = now;
+    for (const [key, bucket] of buckets) {
+      if (now - bucket.updatedAt >= fullAfterMs) buckets.delete(key);
+    }
+  };
+
   return {
     take(key) {
       const now = clock.now();
+      sweep(now);
       let bucket = buckets.get(key);
       if (!bucket) {
         bucket = { tokens: rule.capacity, updatedAt: now };
@@ -61,13 +78,29 @@ export function createRateLimiter(rule: RateLimitRule, clock: Clock = systemCloc
     },
     reset() {
       buckets.clear();
+      sweptAt = Number.NEGATIVE_INFINITY;
+    },
+    size() {
+      return buckets.size;
     },
   };
 }
 
-/** Best-effort client address for keying; behind a proxy this is the first forwarded hop. */
-export function clientAddress(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
-  return request.headers.get("x-real-ip")?.trim() || "unknown";
+/**
+ * The client address to key a limiter on, or null when none can be trusted.
+ *
+ * Each trusted reverse proxy appends the address it accepted the connection
+ * from to `x-forwarded-for`, so with `hops` trusted proxies the client is the
+ * `hops`-th entry from the right; everything left of it was written by the
+ * client or by someone upstream and is not evidence of anything. A route
+ * handler never sees the socket itself, so with no trusted proxy there is no
+ * address to key on at all.
+ */
+export function clientAddress(request: Request, hops: number = env.TRUSTED_PROXY_HOPS): string | null {
+  if (hops < 1) return null;
+  const forwarded = (request.headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return forwarded[forwarded.length - hops] ?? null;
 }

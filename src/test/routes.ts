@@ -68,10 +68,7 @@ export function createTestApp(options: { seed?: boolean } = {}): TestApp {
   if (options.seed !== false) writeSeed(conn, data);
   globalThis.__sideoutDb?.close();
   globalThis.__sideoutDb = conn;
-  REQUEST_CODE_LIMITS.perAddress.reset();
-  REQUEST_CODE_LIMITS.perPhone.reset();
-  VERIFY_CODE_LIMITS.perAddress.reset();
-  VERIFY_CODE_LIMITS.perPhone.reset();
+  for (const limiter of [...Object.values(REQUEST_CODE_LIMITS), ...Object.values(VERIFY_CODE_LIMITS)]) limiter.reset();
 
   const cookieFor = (userId: string) => `${SESSION_COOKIE}=${signSession(userId, env.sessionSecret)}`;
 

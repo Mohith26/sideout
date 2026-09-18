@@ -2,7 +2,17 @@ import "server-only";
 import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { getTournamentDetail, getTournamentSummaryById, getTournamentSummaryBySlug, type TournamentDetail, type TournamentSummary } from "@/db/queries/tournaments";
+import {
+  getTournamentDetail,
+  getTournamentSummaryById,
+  getTournamentSummaryBySlug,
+  listTournamentSummaries,
+  publicSummary,
+  type PublicTournamentDetail,
+  type PublicTournamentSummary,
+  type TournamentDetail,
+  type TournamentSummary,
+} from "@/db/queries/tournaments";
 import {
   charities,
   DIVISIONS,
@@ -123,9 +133,10 @@ export type UpdateTournamentInput = z.infer<typeof updateTournamentSchema>;
 // Lookups
 // ---------------------------------------------------------------------------
 
+/** A draft is unpublished: slug lookups, which serve the public and player routes, do not see it. */
 export function requireTournamentBySlug(slug: string): TournamentSummary {
   const summary = getTournamentSummaryBySlug(slug);
-  if (!summary) throw new ApiFailure("not_found", "No tournament with that slug.");
+  if (!summary || summary.tournament.status === "draft") throw new ApiFailure("not_found", "No tournament with that slug.");
   return summary;
 }
 
@@ -135,8 +146,14 @@ export function requireTournamentById(id: string): TournamentSummary {
   return summary;
 }
 
-export function getDetailBySlug(slug: string): TournamentDetail {
-  return getTournamentDetail(requireTournamentBySlug(slug));
+export function listPublicTournaments(statuses?: readonly TournamentStatus[]): PublicTournamentSummary[] {
+  const wanted = (statuses ?? TOURNAMENT_STATUSES).filter((s) => s !== "draft");
+  if (wanted.length === 0) return [];
+  return listTournamentSummaries(wanted).map(publicSummary);
+}
+
+export function getPublicDetailBySlug(slug: string): PublicTournamentDetail {
+  return publicSummary(getTournamentDetail(requireTournamentBySlug(slug)));
 }
 
 export function getDetailById(id: string): TournamentDetail {
