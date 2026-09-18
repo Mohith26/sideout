@@ -195,7 +195,7 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   `DemoPill`), and `POST /api/admin/demo/reset` (bearer `DEMO_RESET_TOKEN`,
   `src/server/demo-reset.ts`) reseed the live database in place. Both routes 404 while
   the switch is off. `docs/deploy.md` "Public demo" has the accounts, the reset one-liner
-  and the nightly Railway Function (`railway/demo-reset.function.ts`).
+  and the nightly cron service (`railway/reset.railway.json`, `src/seed/demo-reset-cli.ts`).
   Sign-in rate limits key on `x-forwarded-for` only when `TRUSTED_PROXY_HOPS` says how
   many proxies vouch for it: a public deploy behind a proxy must set `1` (production
   warns at boot while it is 0); `AUTH_CODE_GLOBAL_CAP` is the process-wide backstop.

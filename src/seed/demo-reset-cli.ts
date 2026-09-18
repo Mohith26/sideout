@@ -8,8 +8,9 @@ import { errorMessage, log } from "@/lib/log";
  * (`docs/deploy.md`, "Public demo"). The token is read from the named
  * environment variable (a `.env.local` works too) and never printed; the
  * response's anchor day and row counts are. Exit status 0 only when the reset
- * happened. The nightly Railway job (`railway/demo-reset.function.ts`) does
- * the same call.
+ * happened. Lives under `src/` (beside `cli.ts`) because the nightly Railway
+ * cron service runs it inside the production image, where only `src/` and the
+ * pruned dependencies exist (`railway/reset.railway.json`).
  */
 const { values } = parseArgs({
   options: {

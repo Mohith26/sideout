@@ -65,6 +65,18 @@ describe("Dockerfile", () => {
     expect(railway.deploy.healthcheckPath).toBe("/health");
   });
 
+  it("declares the nightly demo reset as a cron service on the same image, running the CLI that ships under src/", () => {
+    const reset = JSON.parse(read("railway/reset.railway.json")) as { build: { dockerfilePath: string }; deploy: { startCommand: string; cronSchedule: string; restartPolicyType: string; healthcheckPath?: string } };
+    expect(reset.build.dockerfilePath).toBe("Dockerfile");
+    expect(reset.deploy.startCommand).toContain("npm run demo:reset");
+    expect(reset.deploy.cronSchedule).toMatch(/^(\S+\s+){4}\S+$/);
+    expect(reset.deploy.restartPolicyType).toBe("NEVER");
+    expect(reset.deploy.healthcheckPath).toBeUndefined();
+    const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+    expect(pkg.scripts["demo:reset"]).toMatch(/^tsx src\//);
+    expect(runtime).toContain("COPY --from=build --chown=node:node /app/src ./src");
+  });
+
   it("has tsx as a production dependency, because the start command's CLIs run on it", () => {
     const pkg = JSON.parse(read("package.json")) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
     expect(pkg.dependencies.tsx).toBeDefined();

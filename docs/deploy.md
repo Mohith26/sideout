@@ -234,21 +234,28 @@ DEMO_RESET_TOKEN=<token> npm run demo:reset -- --url https://sideout-production-
 `--token-env NAME` reads a differently named variable; the token is never printed. Exit
 status 0 means the reset happened and the anchor and counts were logged.
 
-**Nightly**, the same call runs from a Railway Function (a single-file service with a
-cron schedule, no repository and no volume): `railway/demo-reset.function.ts`, service
-`sideout-demo-reset`, schedule `0 10 * * *` (10:00 UTC, 03:00 Pacific), with the
-variables `SIDEOUT_URL` (the public URL) and `DEMO_RESET_TOKEN` (the same token as the
-app). Created and updated with the CLI from the repository root:
+**Nightly**, the same call runs from a second Railway service, `sideout-demo-reset`, built
+from the same Dockerfile with `railway/reset.railway.json` as its config file: a cron
+service (`deploy.cronSchedule: "0 10 * * *"`, 10:00 UTC = 03:00 Pacific; no health check,
+restart policy `NEVER`) whose start command is
+`npm run demo:reset -- --url "$SIDEOUT_URL"`, so each run boots the image, POSTs the reset
+and exits (the CLI ships under `src/seed/demo-reset-cli.ts` because only `src/` and the
+pruned dependencies exist in the runtime stage). Its variables are `SIDEOUT_URL` (the
+public URL) and `DEMO_RESET_TOKEN=${{sideout.DEMO_RESET_TOKEN}}`, a reference to the app
+service's variable, so the token exists in one place. The CLI has no cron flag and
+`railway functions` refused the CLI's session, so the service was created and
+configured through Railway's public GraphQL API with the CLI's access token
+(`serviceCreate`, `serviceInstanceUpdate` with `railwayConfigFile` and `cronSchedule`,
+`variableCollectionUpsert`) and then deployed from the repository root with:
 
 ```sh
-railway functions new --path railway/demo-reset.function.ts --name sideout-demo-reset --cron "0 10 * * *"
-railway variable set --service sideout-demo-reset SIDEOUT_URL=https://sideout-production-7db6.up.railway.app --skip-deploys
-<token> | railway variable set --service sideout-demo-reset DEMO_RESET_TOKEN --stdin --skip-deploys
-railway functions push --path railway/demo-reset.function.ts       # after editing the file
+railway up --ci --service sideout-demo-reset
 ```
 
-Each run's output (`demo-reset: done anchor=… users=… matches=…`, or the refusal) is in
-that service's logs, and a refused reset exits non-zero so the run shows as failed.
+Redeploy the same way after a change to the CLI or the config file. Each run's output
+(`demo reset: done` with the anchor and counts, or the refusal) is in that service's
+logs (`railway logs --service sideout-demo-reset`), and a refused reset exits non-zero
+so the run shows as failed.
 
 Custom domains, Lucra sandbox credentials and a second database engine are not part of
 the deployment; neither is an SMS provider (`getSmsSender()` in `src/server/auth/sms.ts`
