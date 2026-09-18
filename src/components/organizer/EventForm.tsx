@@ -141,9 +141,8 @@ function initialValues(props: EventFormProps): Values {
   };
 }
 
-function initialSponsors(props: EventFormProps): SponsorDraft[] {
-  if (props.mode === "create") return [];
-  return props.sponsors.map((s) => ({ key: s.id, id: s.id, name: s.name, tier: s.tier, contribution: centsToAmountString(s.prizeContributionCents), logoUrl: s.logoUrl ?? "" }));
+function sponsorDrafts(rows: readonly Sponsor[]): SponsorDraft[] {
+  return rows.map((s) => ({ key: s.id, id: s.id, name: s.name, tier: s.tier, contribution: centsToAmountString(s.prizeContributionCents), logoUrl: s.logoUrl ?? "" }));
 }
 
 interface SponsorPayload {
@@ -223,7 +222,9 @@ export function EventForm(props: EventFormProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [values, setValues] = useState<Values>(() => initialValues(props));
-  const [sponsors, setSponsors] = useState<SponsorDraft[]>(() => initialSponsors(props));
+  /** The sponsor rows as the server last confirmed them; a save only sends the list when the drafts differ. */
+  const [savedSponsors, setSavedSponsors] = useState<readonly Sponsor[]>(() => (props.mode === "edit" ? props.sponsors : []));
+  const [sponsors, setSponsors] = useState<SponsorDraft[]>(() => sponsorDrafts(savedSponsors));
   const [slugTouched, setSlugTouched] = useState(props.mode === "edit");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -268,7 +269,7 @@ export function EventForm(props: EventFormProps) {
       logoUrl: s.logoUrl === "" ? null : s.logoUrl,
       currency: v.currency,
     }));
-    const sponsorsChanged = props.mode === "create" || sponsorRows.map(sponsorKey).join() !== props.sponsors.map(sponsorKey).join();
+    const sponsorsChanged = props.mode === "create" || sponsorRows.map(sponsorKey).join() !== savedSponsors.map(sponsorKey).join();
     const payload = {
       slug: v.slug,
       name: v.name,
@@ -294,8 +295,8 @@ export function EventForm(props: EventFormProps) {
     setBusy(true);
     const result =
       props.mode === "create"
-        ? await api<{ tournament: { id: string; name: string } }>("/api/admin/tournaments", { body: payload })
-        : await api<{ tournament: { id: string; name: string } }>(`/api/admin/tournaments/${props.tournament.id}`, { method: "PATCH", body: payload });
+        ? await api<{ tournament: { id: string; name: string }; sponsors: Sponsor[] }>("/api/admin/tournaments", { body: payload })
+        : await api<{ tournament: { id: string; name: string }; sponsors: Sponsor[] }>(`/api/admin/tournaments/${props.tournament.id}`, { method: "PATCH", body: payload });
     setBusy(false);
     if (!result.ok) {
       const issues = result.error.code === "bad_request" ? fieldIssues(result.error) : {};
@@ -315,6 +316,8 @@ export function EventForm(props: EventFormProps) {
     }
     toast({ tone: "success", title: "Saved", body: `${result.data.tournament.name} is up to date.` });
     setSlugTouched(true);
+    setSavedSponsors(result.data.sponsors);
+    setSponsors(sponsorDrafts(result.data.sponsors));
     router.refresh();
   }
 

@@ -230,4 +230,37 @@ describe("Bracket", () => {
     expect(canvasTransform().y).toBe(start.y + 50);
     fireEvent.pointerUp(svg, { pointerId: 1, pointerType: "mouse", clientX: 10, clientY: 60 });
   });
+
+  /** The click a browser dispatches for the gesture, or for Enter on the focused link. */
+  const clickAllowed = (target: Element) => {
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    act(() => {
+      target.dispatchEvent(click);
+    });
+    return !click.defaultPrevented;
+  };
+
+  it("swallows only the click that follows a mouse drag, never one after a touch pan or a cancelled swipe", () => {
+    const { container } = render(<Bracket nodes={sixTeamBracket()} timeZone={TZ} />);
+    const svg = canvas();
+    const link = container.querySelector('[data-node-id="m4"]') as HTMLElement;
+
+    fireEvent.pointerDown(svg, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 1, pointerType: "mouse", clientX: 10, clientY: 60 });
+    fireEvent.pointerUp(svg, { pointerId: 1, pointerType: "mouse", clientX: 10, clientY: 60 });
+    expect(clickAllowed(link)).toBe(false);
+    expect(clickAllowed(link)).toBe(true);
+
+    // A touch pan ends without a click, so the next one (Enter on the focused match) must open it.
+    fireEvent.pointerDown(svg, { pointerId: 2, pointerType: "touch", clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    fireEvent.pointerUp(svg, { pointerId: 2, pointerType: "touch", clientX: 60, clientY: 10 });
+    expect(clickAllowed(link)).toBe(true);
+
+    // Under touch-action: pan-y the browser cancels a swipe it turns into a page scroll.
+    fireEvent.pointerDown(svg, { pointerId: 3, pointerType: "touch", clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 3, pointerType: "touch", clientX: 20, clientY: 40 });
+    fireEvent.pointerCancel(svg, { pointerId: 3, pointerType: "touch" });
+    expect(clickAllowed(link)).toBe(true);
+  });
 });

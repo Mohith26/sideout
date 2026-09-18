@@ -31,6 +31,10 @@ const props: DrawPanelProps = {
 
 type Sent = { url: string; body: Record<string, unknown> };
 const sent: Sent[] = [];
+/** Set by a test to hold every response until it resolves the promise. */
+let gate: Promise<void> | null = null;
+
+const envelope = () => new Response(JSON.stringify({ ok: true, data: { preview } }), { status: 200, headers: { "content-type": "application/json" } });
 
 beforeAll(() => {
   // jsdom does not implement <dialog>'s modal API.
@@ -44,11 +48,13 @@ beforeAll(() => {
 
 beforeEach(() => {
   sent.length = 0;
+  gate = null;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
       sent.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
-      return new Response(JSON.stringify({ ok: true, data: { preview } }), { status: 200, headers: { "content-type": "application/json" } });
+      if (gate) await gate;
+      return envelope();
     }),
   );
 });
@@ -95,5 +101,28 @@ describe("DrawPanel", () => {
     await waitFor(() => expect(sent).toHaveLength(4));
     expect(sent[3]?.url).toBe("/api/admin/tournaments/tour-1/draw");
     expect(sent[3]?.body).toMatchObject({ courts: 6, seeds: [{ teamId: "t1", seed: 1 }], rngSeed: 4242 });
+  });
+
+  it("ignores a preview that lands after the inputs it answered were edited", async () => {
+    let release = () => {};
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview draw" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.body.courts).toBe(4);
+    expect(screen.getByRole("button", { name: "Drawing…" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Courts"), { target: { value: "6" } });
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview draw" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "Commit this draw" })).not.toBeInTheDocument();
+
+    gate = null;
+    fireEvent.click(screen.getByRole("button", { name: "Preview draw" }));
+    await screen.findByRole("button", { name: "Commit this draw" });
+    expect(sent[1]?.body.courts).toBe(6);
   });
 });

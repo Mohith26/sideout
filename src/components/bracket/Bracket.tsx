@@ -302,7 +302,7 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
     pointers.current.delete(e.pointerId);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     if (pointers.current.size === 0) {
-      suppressClick.current = gesture.current?.moved ?? false;
+      suppressClick.current = e.type === "pointerup" && e.pointerType === "mouse" && (gesture.current?.moved ?? false);
       gesture.current = null;
     } else {
       // One finger lifted mid-pinch: restart the gesture from the remaining pointer.

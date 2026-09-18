@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
 import { Bracket } from "@/components/bracket/Bracket";
 import { nodesFromPlan } from "@/components/bracket/model";
@@ -130,16 +130,20 @@ export function DrawPanel(props: DrawPanelProps) {
   const [preview, setPreview] = useState<DrawPreview | null>(null);
   const [busy, setBusy] = useState<"preview" | "commit" | null>(null);
   const [confirming, setConfirming] = useState(false);
+  /** Bumped on every input edit, so a preview that answers older inputs is dropped when it lands. */
+  const edits = useRef(0);
 
   const poolsStage = status === "registration_closed";
   const bracketStage = status === "live" && format === "pool_to_bracket" && !existing.bracketSeeded && existing.matchCount > 0;
   if (!poolsStage && !bracketStage) return null;
 
   const set = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
+    edits.current += 1;
     setForm((f) => ({ ...f, [key]: value }));
     setPreview(null);
   };
   const setSeed = (teamId: string, value: string) => {
+    edits.current += 1;
     setSeeds((s) => ({ ...s, [teamId]: value }));
     setPreview(null);
   };
@@ -204,6 +208,7 @@ export function DrawPanel(props: DrawPanelProps) {
       if (!body) return;
       if (mode === "commit" && preview?.rngSeed !== null && preview?.rngSeed !== undefined) body.rngSeed = preview.rngSeed;
     }
+    const editsAtSend = edits.current;
     setBusy(mode);
     const result = await api<{ preview: DrawPreview }>(`/api/admin/tournaments/${tournamentId}/draw${mode === "preview" ? "?preview=1" : ""}`, { body });
     setBusy(null);
@@ -215,7 +220,7 @@ export function DrawPanel(props: DrawPanelProps) {
       return;
     }
     if (mode === "preview") {
-      setPreview(result.data.preview);
+      if (editsAtSend === edits.current) setPreview(result.data.preview);
       return;
     }
     setPreview(null);

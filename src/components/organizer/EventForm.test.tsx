@@ -27,14 +27,24 @@ const options: EventFormOptions = {
 };
 
 const sent: Array<{ method: string; body: Record<string, unknown> }> = [];
+type SponsorInput = Omit<Sponsor, "id" | "tournamentId"> & { id?: string };
+
+/** The rows `replaceSponsors` would leave behind: known ids kept, new sponsors given one. */
+function storedSponsors(inputs: SponsorInput[] | undefined, previous: Sponsor[]): Sponsor[] {
+  if (!inputs) return previous;
+  return inputs.map((s, i) => ({ ...s, id: s.id ?? `new-sponsor-${i}`, tournamentId: tournament.id }));
+}
 
 beforeEach(() => {
   sent.length = 0;
+  let stored = sponsors;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: string, init: RequestInit) => {
-      sent.push({ method: String(init.method), body: JSON.parse(String(init.body)) as Record<string, unknown> });
-      return new Response(JSON.stringify({ ok: true, data: { tournament: { id: tournament.id, name: tournament.name } } }), { status: 200 });
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      sent.push({ method: String(init.method), body });
+      stored = storedSponsors(body.sponsors as SponsorInput[] | undefined, stored);
+      return new Response(JSON.stringify({ ok: true, data: { tournament: { id: tournament.id, name: tournament.name }, sponsors: stored } }), { status: 200 });
     }),
   );
 });
@@ -82,5 +92,27 @@ describe("EventForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(sent).toHaveLength(3));
     expect((sent[2]?.body.sponsors as unknown[]).length).toBe(sponsors.length - 1);
+  });
+
+  it("learns a new sponsor's id from the save, so the next unchanged save sends no sponsors", async () => {
+    renderEdit();
+    fireEvent.click(screen.getByRole("button", { name: "Add sponsor" }));
+    const inputs = screen.getAllByLabelText("Sponsor");
+    fireEvent.change(inputs[inputs.length - 1] as HTMLElement, { target: { value: "Tidewater Surf Co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const added = (sent[0]?.body.sponsors as Array<{ id?: string; name: string }>).find((s) => s.name === "Tidewater Surf Co");
+    expect(added).toBeDefined();
+    expect(added).not.toHaveProperty("id");
+    await screen.findByText("Saved");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]?.body).not.toHaveProperty("sponsors");
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Tidewater Surf Co" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(sent).toHaveLength(3));
+    expect((sent[2]?.body.sponsors as Array<{ name: string }>).map((s) => s.name)).not.toContain("Tidewater Surf Co");
   });
 });
