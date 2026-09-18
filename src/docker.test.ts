@@ -38,8 +38,11 @@ describe("Dockerfile", () => {
     expect(runtime).toContain("COPY --from=build --chown=node:node /app/node_modules ./node_modules");
   });
 
-  it("runs as a non-root user with the health check on /health", () => {
-    expect(runtime).toContain("USER node");
+  it("runs the app as the node user through the entrypoint, with the health check on /health", () => {
+    expect(runtime).toContain('ENTRYPOINT ["docker-entrypoint.sh"]');
+    const entrypoint = read("docker-entrypoint.sh");
+    expect(entrypoint).toContain("setpriv --reuid=node --regid=node --init-groups");
+    expect(entrypoint).toContain('chown node:node "$DATA_DIR"');
     expect(runtime).toMatch(/HEALTHCHECK[\s\S]*\/health/);
   });
 

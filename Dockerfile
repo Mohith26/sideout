@@ -49,11 +49,14 @@ COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/drizzle ./drizzle
-# The persistent volume mounts here (railway.json); the directory exists and
-# is writable even when no volume is attached, e.g. `docker run` locally.
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# The persistent volume mounts at /data (railway.json). The entrypoint starts
+# as root, makes that directory writable by `node`, and runs the command as
+# `node`: a volume arrives owned by root, so a `USER` switch at build time
+# could not open the database file on it.
 RUN mkdir -p /data && chown node:node /data
-USER node
 EXPOSE 3000
+ENTRYPOINT ["docker-entrypoint.sh"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 # Seed the demo dataset once (only when no database file exists yet), then
