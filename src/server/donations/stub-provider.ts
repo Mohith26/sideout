@@ -13,10 +13,13 @@ import { writeAudit, SYSTEM_ACTOR } from "@/server/audit";
  * `stub` — the default and the only provider in this build — accepts every
  * intent as `pending` and marks it `succeeded` once `STUB_SETTLE_DELAY_MS`
  * has passed on the injected clock. `settleDueDonations` is the sweep that
- * applies that rule; the registration, impact and profile paths call it before
- * reading (routes and pages through `sweepDueDonations`, which owns the
- * connection), so a pending donation flips on the next read after the delay
- * with no timers and no wall-clock dependence in tests.
+ * applies that rule, and every read that surfaces a donation figure runs it
+ * first — the public list, detail and impact routes, `/api/me`, registration,
+ * and the Home, `/events`, `/impact` and `/t/[slug]` pages (routes and pages
+ * through `sweepDueDonations`, which owns the connection) — so the same event
+ * reports the same total on every path and a pending donation flips on the
+ * next read after the delay, with no timers and no wall-clock dependence in
+ * tests. It is idempotent: a second sweep at the same instant changes nothing.
  *
  * A real provider (Stripe is the enum's other value) replaces `createIntent`
  * with a PaymentIntent and `settleDueDonations` with a webhook handler, and
