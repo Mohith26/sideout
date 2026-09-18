@@ -1,19 +1,38 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Bracket } from "@/components/bracket/Bracket";
 import type { BracketNode } from "@/components/bracket/model";
 
+/** The canvas size every test measures, smaller than the six-team layout so the view can pan. */
+const VIEW = { width: 400, height: 300 };
+
 beforeAll(() => {
-  // jsdom has no layout; the canvas measures itself through ResizeObserver, which the component tolerates missing.
+  // jsdom has no layout: the canvas measures itself through ResizeObserver, which reports a fixed box here.
   if (!("ResizeObserver" in globalThis)) {
     class RO {
-      observe() {}
+      constructor(private readonly callback: (entries: Array<{ contentRect: typeof VIEW }>) => void) {}
+      observe() {
+        this.callback([{ contentRect: VIEW }]);
+      }
       disconnect() {}
       unobserve() {}
     }
     Object.defineProperty(globalThis, "ResizeObserver", { value: RO, configurable: true });
   }
+  // jsdom has no pointer capture either; the component only needs the calls to exist.
+  const captured = new Set<number>();
+  Object.assign(Element.prototype, {
+    setPointerCapture(id: number) {
+      captured.add(id);
+    },
+    releasePointerCapture(id: number) {
+      captured.delete(id);
+    },
+    hasPointerCapture(id: number) {
+      return captured.has(id);
+    },
+  });
 });
 
 const team = (n: number) => ({ id: `t${n}`, name: `Team ${n}`, seed: n, members: [`Player ${n}a`, `Player ${n}b`] });
@@ -139,5 +158,76 @@ describe("Bracket", () => {
   it("renders nothing for an empty bracket", () => {
     const { container } = render(<Bracket nodes={[]} timeZone={TZ} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps every glyph on the type scale: names at body size, seeds and status at label size", () => {
+    const { container } = render(<Bracket nodes={sixTeamBracket()} timeZone={TZ} />);
+    const node = container.querySelector('[data-node-id="m2"]') as SVGElement;
+    const texts = [...node.querySelectorAll("text")];
+    expect(texts).toHaveLength(7); // two names, two sets each, court and status
+    for (const t of [...texts, ...node.querySelectorAll("tspan")]) {
+      expect(t.getAttribute("style")).toBeNull();
+      expect(t.className.baseVal).not.toMatch(/text-\[/);
+    }
+    for (const t of texts) expect(t.className.baseVal).toMatch(/\b(text-body|type-label)\b/);
+    const seed = node.querySelector("tspan") as SVGElement;
+    const line = seed.parentNode as SVGElement;
+    expect(seed.textContent).toBe("4");
+    expect(seed.className.baseVal).toContain("type-label");
+    expect(line.className.baseVal).toContain("text-body");
+    expect(line.textContent).toBe("4Team 4");
+  });
+
+  const canvas = () => screen.getByRole("group", { name: /^Bracket canvas/ }) as unknown as SVGSVGElement;
+  const canvasTransform = () => {
+    const g = canvas().querySelector(":scope > g") as SVGGElement;
+    const m = /translate\((-?[\d.]+) (-?[\d.]+)\) scale\(([\d.]+)\)/.exec(g.getAttribute("transform") ?? "");
+    if (!m) throw new Error(`unexpected transform ${g.getAttribute("transform")}`);
+    return { x: Number(m[1]), y: Number(m[2]), k: Number(m[3]) };
+  };
+
+  it("decides on every wheel event synchronously: a burst pans by the sum and each event is consumed while the canvas can move", () => {
+    render(<Bracket nodes={sixTeamBracket()} timeZone={TZ} />);
+    const svg = canvas();
+    const start = canvasTransform();
+    expect(start.k).toBe(1);
+    // The opening view centres the live match at the bottom of the layout, so only scrolling up can move it.
+    const events = [0, 1].map(() => new WheelEvent("wheel", { deltaY: -50, bubbles: true, cancelable: true }));
+    const consumed: boolean[] = [];
+    act(() => {
+      for (const e of events) {
+        svg.dispatchEvent(e);
+        consumed.push(e.defaultPrevented);
+      }
+    });
+    expect(consumed).toEqual([true, true]);
+    expect(canvasTransform().y).toBe(start.y + 100);
+
+    // Past the edge the bracket cannot move, so the page gets the scroll.
+    const over = new WheelEvent("wheel", { deltaY: -10_000, bubbles: true, cancelable: true });
+    const stuck = new WheelEvent("wheel", { deltaY: -50, bubbles: true, cancelable: true });
+    act(() => {
+      svg.dispatchEvent(over);
+      consumed.push(over.defaultPrevented);
+      svg.dispatchEvent(stuck);
+      consumed.push(stuck.defaultPrevented);
+    });
+    expect(consumed).toEqual([true, true, true, false]);
+    expect(canvasTransform().y).toBe(0);
+  });
+
+  it("forgets a press that leaves the canvas before it became a drag, so hovering back does not pan", () => {
+    render(<Bracket nodes={sixTeamBracket()} timeZone={TZ} />);
+    const svg = canvas();
+    const start = canvasTransform();
+    fireEvent.pointerDown(svg, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerLeave(svg, { pointerId: 1, pointerType: "mouse", clientX: -2, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 1, pointerType: "mouse", clientX: 80, clientY: 60 });
+    expect(canvasTransform()).toEqual(start);
+    // A real drag still pans.
+    fireEvent.pointerDown(svg, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(svg, { pointerId: 1, pointerType: "mouse", clientX: 10, clientY: 60 });
+    expect(canvasTransform().y).toBe(start.y + 50);
+    fireEvent.pointerUp(svg, { pointerId: 1, pointerType: "mouse", clientX: 10, clientY: 60 });
   });
 });

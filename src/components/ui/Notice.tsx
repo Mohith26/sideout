@@ -20,11 +20,10 @@ export interface NoticeProps {
   tone?: NoticeTone;
   title?: string;
   children?: ReactNode;
-  action?: ReactNode;
   className?: string;
 }
 
-export function Notice({ tone = "info", title, children, action, className }: NoticeProps) {
+export function Notice({ tone = "info", title, children, className }: NoticeProps) {
   const spec = TONE[tone];
   const Icon = spec.icon;
   return (
@@ -35,7 +34,6 @@ export function Notice({ tone = "info", title, children, action, className }: No
       <div className="min-w-0 flex-1">
         {title ? <p className="font-medium text-text-primary">{title}</p> : null}
         {children ? <div className={cx(title && "mt-0.5")}>{children}</div> : null}
-        {action ? <div className="mt-3">{action}</div> : null}
       </div>
     </div>
   );

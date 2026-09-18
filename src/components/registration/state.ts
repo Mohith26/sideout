@@ -21,16 +21,14 @@ export type RegistrationState =
   | { kind: "closed"; tournamentStatus: TournamentStatus }
   | { kind: "waiting_partner"; invitePhone: string | null }
   | { kind: "ready"; full: boolean }
-  | { kind: "registered"; donation: RegistrationInput["donation"]; checkedIn: boolean }
-  | { kind: "withdrawn"; donation: RegistrationInput["donation"] };
+  | { kind: "registered"; donation: RegistrationInput["donation"] };
 
 export function registrationState(input: RegistrationInput): RegistrationState {
   const { team } = input;
-  if (!team || team.status === "disbanded") {
+  if (!team || team.status === "withdrawn" || team.status === "disbanded") {
     return input.tournamentStatus === "registration_open" ? { kind: "no_team" } : { kind: "closed", tournamentStatus: input.tournamentStatus };
   }
-  if (team.status === "withdrawn") return { kind: "withdrawn", donation: input.donation };
-  if (team.status === "registered" || team.status === "checked_in") return { kind: "registered", donation: input.donation, checkedIn: team.status === "checked_in" };
+  if (team.status === "registered" || team.status === "checked_in") return { kind: "registered", donation: input.donation };
   // forming
   if (input.tournamentStatus !== "registration_open") return { kind: "closed", tournamentStatus: input.tournamentStatus };
   if (team.memberCount < 2) return { kind: "waiting_partner", invitePhone: team.pendingInvitePhone };
@@ -42,7 +40,7 @@ export type DonationStepState = "locked" | "due" | "processing" | "received" | "
 
 export function donationStep(state: RegistrationState, entryDonationCents: number): DonationStepState {
   if (state.kind === "ready") return entryDonationCents > 0 ? "due" : "free";
-  if (state.kind === "registered" || state.kind === "withdrawn") {
+  if (state.kind === "registered") {
     if (!state.donation) return entryDonationCents > 0 ? "locked" : "free";
     switch (state.donation.status) {
       case "pending":

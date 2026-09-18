@@ -1,4 +1,4 @@
-import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 import { Icons } from "@/components/ui/icons";
 import { cx } from "@/lib/cx";
 
@@ -67,12 +67,6 @@ export function Select({ className, invalid, children, ...rest }: SelectProps) {
       <Icons.chevronDown size={16} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-text-secondary" />
     </span>
   );
-}
-
-export type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean };
-
-export function Textarea({ className, invalid, ...rest }: TextareaProps) {
-  return <textarea {...rest} aria-invalid={invalid || undefined} className={cx(CONTROL, "py-2.5", className)} />;
 }
 
 export function Fieldset({ legend, children, className, description }: { legend: string; description?: ReactNode; children: ReactNode; className?: string }) {

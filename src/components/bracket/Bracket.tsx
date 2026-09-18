@@ -179,61 +179,64 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
     return target ? centerOn(target, 1, view.w, view.h, layout.width, layout.height) : clampTransform({ x: 0, y: 0, k: 1 }, view.w, view.h, layout.width, layout.height);
   }, [userTransform, view, layout, current]);
 
+  /** The transform as of the last mutation, which wheel bursts and pinches advance faster than React renders. */
+  const latest = useRef(transform);
+  useLayoutEffect(() => {
+    latest.current = transform;
+  }, [transform]);
+
   const apply = useCallback(
     (next: Transform) => {
       if (!view) return;
-      setUserTransform(clampTransform({ ...next, k: clampScale(next.k) }, view.w, view.h, layout.width, layout.height));
+      const clamped = clampTransform({ ...next, k: clampScale(next.k) }, view.w, view.h, layout.width, layout.height);
+      latest.current = clamped;
+      setUserTransform(clamped);
     },
     [view, layout],
   );
 
   const zoomAt = useCallback(
     (factor: number, px: number, py: number) => {
-      if (!view) return;
-      setUserTransform((prev) => {
-        const t = prev ?? transform;
-        const k = clampScale(t.k * factor);
-        const ratio = k / t.k;
-        return clampTransform({ x: px - (px - t.x) * ratio, y: py - (py - t.y) * ratio, k }, view.w, view.h, layout.width, layout.height);
-      });
+      const t = latest.current;
+      const k = clampScale(t.k * factor);
+      const ratio = k / t.k;
+      apply({ x: px - (px - t.x) * ratio, y: py - (py - t.y) * ratio, k });
     },
-    [view, layout, transform],
+    [apply],
   );
 
   const locate = useCallback(
     (id: string) => {
       const target = layout.byId.get(id);
       if (!target || !view) return;
-      setUserTransform((prev) => centerOn(target, Math.max((prev ?? transform).k, 1), view.w, view.h, layout.width, layout.height));
+      apply(centerOn(target, Math.max(latest.current.k, 1), view.w, view.h, layout.width, layout.height));
     },
-    [layout, view, transform],
+    [layout, view, apply],
   );
 
   const fit = useCallback(() => {
     if (!view) return;
-    setUserTransform(fitTransform(view.w, view.h, layout.width, layout.height));
-  }, [view, layout]);
+    apply(fitTransform(view.w, view.h, layout.width, layout.height));
+  }, [view, layout, apply]);
 
   /** Nudge the view so a keyboard-focused node is fully visible. */
   const reveal = useCallback(
     (id: string) => {
       const p = layout.byId.get(id);
       if (!p || !view) return;
-      setUserTransform((prev) => {
-        const t = prev ?? transform;
-        const left = p.x * t.k + t.x;
-        const top = p.y * t.k + t.y;
-        const right = left + NODE_WIDTH * t.k;
-        const bottom = top + NODE_HEIGHT * t.k;
-        let { x, y } = t;
-        if (left < PADDING) x += PADDING - left;
-        else if (right > view.w - PADDING) x -= right - (view.w - PADDING);
-        if (top < HEADER_HEIGHT) y += HEADER_HEIGHT - top;
-        else if (bottom > view.h - PADDING) y -= bottom - (view.h - PADDING);
-        return clampTransform({ x, y, k: t.k }, view.w, view.h, layout.width, layout.height);
-      });
+      const t = latest.current;
+      const left = p.x * t.k + t.x;
+      const top = p.y * t.k + t.y;
+      const right = left + NODE_WIDTH * t.k;
+      const bottom = top + NODE_HEIGHT * t.k;
+      let { x, y } = t;
+      if (left < PADDING) x += PADDING - left;
+      else if (right > view.w - PADDING) x -= right - (view.w - PADDING);
+      if (top < HEADER_HEIGHT) y += HEADER_HEIGHT - top;
+      else if (bottom > view.h - PADDING) y -= bottom - (view.h - PADDING);
+      apply({ x, y, k: t.k });
     },
-    [layout, view, transform],
+    [layout, view, apply],
   );
 
   const focusNode = useCallback(
@@ -265,7 +268,7 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
     const list = [...pointers.current.values()];
     const origin = list.length >= 2 ? { x: ((list[0]?.x ?? 0) + (list[1]?.x ?? 0)) / 2, y: ((list[0]?.y ?? 0) + (list[1]?.y ?? 0)) / 2 } : (list[0] ?? { x: 0, y: 0 });
     const distance = list.length >= 2 ? Math.hypot((list[0]?.x ?? 0) - (list[1]?.x ?? 0), (list[0]?.y ?? 0) - (list[1]?.y ?? 0)) : 0;
-    gesture.current = { start: transform, origin, distance, moved: gesture.current?.moved ?? false };
+    gesture.current = { start: latest.current, origin, distance, moved: gesture.current?.moved ?? false };
   };
 
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -304,7 +307,7 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
     } else {
       // One finger lifted mid-pinch: restart the gesture from the remaining pointer.
       const rest = [...pointers.current.values()];
-      gesture.current = { start: transform, origin: rest[0] ?? { x: 0, y: 0 }, distance: 0, moved: true };
+      gesture.current = { start: latest.current, origin: rest[0] ?? { x: 0, y: 0 }, distance: 0, moved: true };
     }
   };
 
@@ -320,16 +323,15 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
         zoomAt(e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, e.clientX - rect.left, e.clientY - rect.top);
         return;
       }
-      setUserTransform((prev) => {
-        const t = prev ?? transform;
-        const next = clampTransform({ x: t.x - e.deltaX, y: t.y - e.deltaY, k: t.k }, view.w, view.h, layout.width, layout.height);
-        if (next.x !== t.x || next.y !== t.y) e.preventDefault();
-        return next;
-      });
+      const t = latest.current;
+      const next = clampTransform({ x: t.x - e.deltaX, y: t.y - e.deltaY, k: t.k }, view.w, view.h, layout.width, layout.height);
+      if (next.x === t.x && next.y === t.y) return;
+      e.preventDefault();
+      apply(next);
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-  }, [view, layout, zoomAt, transform]);
+  }, [view, layout, zoomAt, apply]);
 
   const onClickCapture = (e: ReactMouseEvent) => {
     if (suppressClick.current) {
@@ -378,7 +380,7 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
             </CanvasButton>
           ) : null}
         </div>
-        <div ref={containerRef} style={{ height: canvasHeight }} className="w-full touch-none select-none">
+        <div ref={containerRef} style={{ height: canvasHeight }} className="w-full max-h-[360px] touch-pan-y select-none md:max-h-none">
           <svg
             ref={svgRef}
             role="group"
@@ -390,6 +392,7 @@ export function Bracket({ nodes, timeZone, currentId, label = "Bracket", classNa
             onPointerMove={onPointerMove}
             onPointerUp={endPointer}
             onPointerCancel={endPointer}
+            onPointerLeave={endPointer}
             onKeyDown={onKeyDown}
             onClickCapture={onClickCapture}
           >
@@ -464,10 +467,14 @@ function CanvasButton({ label, onClick, children }: { label: string; onClick: ()
 // ---------------------------------------------------------------------------
 
 const ROW_A_Y = 24;
-const ROW_B_Y = 46;
-const SET_COLUMN = 24;
-const SEED_COLUMN = 22;
+const ROW_B_Y = 48;
+const STATUS_Y = 71;
+const SET_COLUMN = 26;
 const TEXT_INSET = 12;
+/** Average glyph widths for `fitText`: body-size names and label-size seeds. */
+const NAME_CHAR_PX = 7.6;
+const SEED_CHAR_PX = 7.2;
+const SEED_GAP = 5;
 
 interface MatchNodeProps {
   placed: PlacedNode;
@@ -485,7 +492,7 @@ function MatchNode({ placed, rounds, timeZone, tabbable, pinned, register, onFoc
   const description = describe(node, rounds, timeZone);
   const stroke = STROKE_FOR_STATUS[node.status] ?? (pinned ? "stroke-border-strong" : "stroke-border-subtle");
   const setsWidth = node.sets.length * SET_COLUMN;
-  const nameWidth = NODE_WIDTH - TEXT_INSET * 2 - SEED_COLUMN - setsWidth - (setsWidth ? 8 : 0);
+  const nameWidth = NODE_WIDTH - TEXT_INSET * 2 - setsWidth - (setsWidth ? 8 : 0);
 
   const body = (
     <>
@@ -493,13 +500,13 @@ function MatchNode({ placed, rounds, timeZone, tabbable, pinned, register, onFoc
       <rect width={NODE_WIDTH} height={NODE_HEIGHT} rx={6} className={cx("fill-bg-raised", stroke, node.status === "in_progress" || node.status === "disputed" ? "stroke-[1.5]" : "stroke-1")} />
       <TeamRow team={node.teamA} y={ROW_A_Y} points={node.sets.map((s) => s.a)} won={node.winnerId !== null && node.winnerId === node.teamA?.id} nameWidth={nameWidth} live={node.status === "in_progress"} />
       {bye ? (
-        <text x={TEXT_INSET + SEED_COLUMN} y={ROW_B_Y} className="type-label fill-text-tertiary">
+        <text x={TEXT_INSET} y={ROW_B_Y} className="type-label fill-text-tertiary">
           Bye
         </text>
       ) : (
         <TeamRow team={node.teamB} y={ROW_B_Y} points={node.sets.map((s) => s.b)} won={node.winnerId !== null && node.winnerId === node.teamB?.id} nameWidth={nameWidth} live={node.status === "in_progress"} />
       )}
-      <text x={TEXT_INSET} y={NODE_HEIGHT - 6} className={cx("type-label", node.status === "in_progress" ? "fill-surf" : node.status === "disputed" ? "fill-fault" : "fill-text-tertiary")} style={{ fontSize: 10 }}>
+      <text x={TEXT_INSET} y={STATUS_Y} className={cx("type-label", node.status === "in_progress" ? "fill-surf" : node.status === "disputed" ? "fill-fault" : "fill-text-tertiary")}>
         {[node.courtLabel, statusNote(node, timeZone)].filter(Boolean).join(" · ")}
       </text>
     </>
@@ -537,16 +544,20 @@ function MatchNode({ placed, rounds, timeZone, tabbable, pinned, register, onFoc
 }
 
 function TeamRow({ team, y, points, won, nameWidth, live }: { team: BracketTeamRef | null; y: number; points: number[]; won: boolean; nameWidth: number; live: boolean }) {
-  const name = team ? fitText(team.name, nameWidth) : "TBD";
+  const seed = team?.seed ?? null;
+  const seedWidth = seed === null ? 0 : String(seed).length * SEED_CHAR_PX + SEED_GAP;
+  const name = team ? fitText(team.name, nameWidth - seedWidth, NAME_CHAR_PX) : "TBD";
   return (
     <g aria-hidden="true">
-      {team?.seed !== null && team?.seed !== undefined ? (
-        <text x={TEXT_INSET} y={y} className="type-label fill-text-tertiary" style={{ fontSize: 11 }}>
-          {team.seed}
-        </text>
-      ) : null}
-      <text x={TEXT_INSET + SEED_COLUMN} y={y} className={cx("text-[13px] font-medium", team ? (won ? "fill-text-primary" : "fill-text-secondary") : "fill-text-tertiary")}>
-        {name}
+      <text x={TEXT_INSET} y={y} className={cx("text-body font-medium", team ? (won ? "fill-text-primary" : "fill-text-secondary") : "fill-text-tertiary")}>
+        {seed === null ? (
+          name
+        ) : (
+          <>
+            <tspan className="type-label fill-text-tertiary">{seed}</tspan>
+            <tspan dx={SEED_GAP}>{name}</tspan>
+          </>
+        )}
       </text>
       {points.map((p, i) => (
         <text
@@ -554,7 +565,7 @@ function TeamRow({ team, y, points, won, nameWidth, live }: { team: BracketTeamR
           x={NODE_WIDTH - TEXT_INSET - (points.length - 1 - i) * SET_COLUMN}
           y={y}
           textAnchor="end"
-          className={cx("tabular text-[13px] font-medium", live ? "fill-surf" : won ? "fill-text-primary" : "fill-text-secondary")}
+          className={cx("tabular text-body font-medium", live ? "fill-surf" : won ? "fill-text-primary" : "fill-text-secondary")}
         >
           {p}
         </text>

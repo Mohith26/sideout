@@ -135,7 +135,14 @@ export function DrawPanel(props: DrawPanelProps) {
   const bracketStage = status === "live" && format === "pool_to_bracket" && !existing.bracketSeeded && existing.matchCount > 0;
   if (!poolsStage && !bracketStage) return null;
 
-  const set = <K extends keyof FormValues>(key: K, value: FormValues[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const set = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setPreview(null);
+  };
+  const setSeed = (teamId: string, value: string) => {
+    setSeeds((s) => ({ ...s, [teamId]: value }));
+    setPreview(null);
+  };
   const usesPools = format === "pool_to_bracket" || format === "round_robin";
   const usesBracket = format === "pool_to_bracket" || format === "single_elim";
 
@@ -331,7 +338,7 @@ export function DrawPanel(props: DrawPanelProps) {
                         inputMode="numeric"
                         min={1}
                         value={seeds[t.id] ?? ""}
-                        onChange={(e) => setSeeds((s) => ({ ...s, [t.id]: e.target.value }))}
+                        onChange={(e) => setSeed(t.id, e.target.value)}
                         aria-label={`Seed for ${t.name}`}
                         invalid={Boolean(errors[`seed.${t.id}`])}
                         className="text-end"

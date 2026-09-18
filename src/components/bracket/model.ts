@@ -43,8 +43,8 @@ export interface BracketNode {
   href: string | null;
 }
 
-export const NODE_WIDTH = 244;
-export const NODE_HEIGHT = 68;
+export const NODE_WIDTH = 272;
+export const NODE_HEIGHT = 80;
 export const COLUMN_GAP = 56;
 export const ROW_GAP = 20;
 export const HEADER_HEIGHT = 36;

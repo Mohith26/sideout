@@ -9,9 +9,8 @@ import type { ApiEnvelope, ApiError } from "@/lib/api";
  */
 
 export interface ApiRequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PATCH";
   body?: unknown;
-  signal?: AbortSignal;
 }
 
 export type ApiResult<T> = ApiEnvelope<T> & { status: number; retryAfterMs: number | null };
@@ -33,7 +32,6 @@ export async function api<T>(path: string, options: ApiRequestOptions = {}): Pro
     cache: "no-store",
   };
   if (options.body !== undefined) init.body = JSON.stringify(options.body);
-  if (options.signal) init.signal = options.signal;
 
   let response: Response;
   try {

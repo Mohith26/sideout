@@ -59,7 +59,7 @@ function StepCard({ number, title, tone, status, children, className }: { number
 export function RegistrationSteps({ slug, tournamentName, charityName, entryDonationCents, currency, state, teamId, teamName }: RegistrationStepsProps) {
   const step1 = donationStep(state, entryDonationCents);
   const amount = formatCents(entryDonationCents, currency);
-  const donation = state.kind === "registered" || state.kind === "withdrawn" ? state.donation : null;
+  const donation = state.kind === "registered" ? state.donation : null;
 
   return (
     <div className="space-y-4">

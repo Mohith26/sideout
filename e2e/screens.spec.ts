@@ -41,6 +41,11 @@ async function freePlayers(request: APIRequestContext): Promise<[string, string]
   return [free[0] as string, free[1] as string];
 }
 
+/** The streamed screen has replaced the route's loading skeleton, so a capture shows the screen itself. */
+async function settled(page: Page): Promise<void> {
+  await expect(page.locator("main .animate-pulse")).toHaveCount(0);
+}
+
 async function noHorizontalOverflow(page: Page): Promise<void> {
   const { scrollWidth, innerWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(scrollWidth, "page must not scroll sideways").toBeLessThanOrEqual(innerWidth);
@@ -74,6 +79,7 @@ test.describe("screens", () => {
         if (screen.anonymous) await page.request.post("/api/auth/logout");
         await page.goto(screen.path);
         await expect(page.locator("main")).toBeVisible();
+        await settled(page);
         await page.screenshot({ path: `test-results/screens/${screen.name}-${width}.png`, fullPage: true });
         if (width === 390) await noHorizontalOverflow(page);
         if (screen.anonymous) await page.request.post("/api/dev/login", { data: { phone: playerPhone(0) } });
@@ -82,6 +88,7 @@ test.describe("screens", () => {
       for (const screen of asOrganizer) {
         await page.goto(screen.path);
         await expect(page.getByRole("navigation", { name: "Console" })).toBeVisible();
+        await settled(page);
         await page.screenshot({ path: `test-results/screens/${screen.name}-${width}.png`, fullPage: true });
         if (width === 390) await noHorizontalOverflow(page);
       }

@@ -146,6 +146,20 @@ function initialSponsors(props: EventFormProps): SponsorDraft[] {
   return props.sponsors.map((s) => ({ key: s.id, id: s.id, name: s.name, tier: s.tier, contribution: centsToAmountString(s.prizeContributionCents), logoUrl: s.logoUrl ?? "" }));
 }
 
+interface SponsorPayload {
+  id?: string;
+  name: string;
+  tier: SponsorTier;
+  prizeContributionCents: number;
+  logoUrl: string | null;
+  currency: string;
+}
+
+/** What the server would store for a sponsor, so a list can be compared with the rows it came from. */
+function sponsorKey(s: Pick<Sponsor, "name" | "tier" | "prizeContributionCents" | "logoUrl" | "currency"> & { id?: string }): string {
+  return JSON.stringify([s.id ?? null, s.name, s.tier, s.prizeContributionCents, s.logoUrl, s.currency]);
+}
+
 function schemaFor(options: EventFormOptions, locks: EventFormLocks | null) {
   const amount = (label: string) => z.string().trim().refine((v) => parseAmountToCents(v) !== null, `${label} must be an amount like 75 or 75.00.`);
   const wall = (label: string) => z.string().refine((v) => parseWallClock(v) !== null, `${label} needs a date and time.`);
@@ -246,6 +260,15 @@ export function EventForm(props: EventFormProps) {
     const start = parseWallClock(v.startsAt);
     const end = parseWallClock(v.endsAt);
     if (!start || !end) return;
+    const sponsorRows: SponsorPayload[] = v.sponsors.map((s) => ({
+      ...(s.id ? { id: s.id } : {}),
+      name: s.name,
+      tier: s.tier,
+      prizeContributionCents: parseAmountToCents(s.contribution) ?? 0,
+      logoUrl: s.logoUrl === "" ? null : s.logoUrl,
+      currency: v.currency,
+    }));
+    const sponsorsChanged = props.mode === "create" || sponsorRows.map(sponsorKey).join() !== props.sponsors.map(sponsorKey).join();
     const payload = {
       slug: v.slug,
       name: v.name,
@@ -266,14 +289,7 @@ export function EventForm(props: EventFormProps) {
       prizeKind: v.prizeKind,
       lucraGameId: v.lucraGameId,
       lucraLocationId: v.lucraLocationId === "" ? null : v.lucraLocationId,
-      sponsors: v.sponsors.map((s) => ({
-        ...(s.id ? { id: s.id } : {}),
-        name: s.name,
-        tier: s.tier,
-        prizeContributionCents: parseAmountToCents(s.contribution) ?? 0,
-        logoUrl: s.logoUrl === "" ? null : s.logoUrl,
-        currency: v.currency,
-      })),
+      ...(sponsorsChanged ? { sponsors: sponsorRows } : {}),
     };
     setBusy(true);
     const result =
