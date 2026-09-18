@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixedClock } from "@/lib/clock";
 import { LUCRA_API_KEY_HEADER, LUCRA_ERROR_BODIES, LUCRA_PATHS } from "@/lucra/endpoints";
-import { createLucraMock, deterministicUuid, MOCK_API_KEY, type LucraMock, type MockHttpResponse } from "@/lucra/mock";
+import { createLucraMock, MOCK_API_KEY, type LucraMock, type MockHttpResponse } from "@/lucra/mock";
 import { verifyWebhookSignature } from "@/lucra/webhook-signature";
 
 const SECRET = "test-webhook-secret";
@@ -236,19 +236,15 @@ describe("LucraMock: joins, state and ids", () => {
     expect(mock.state().webhooks.delivered).toHaveLength(1);
   });
 
-  it("a sink receives deliveries as they are emitted, including anything already queued", () => {
+  it("queues deliveries in emission order and hands each one over exactly once", () => {
     const mock = seededMock();
     mock.join("m-c", "u-lee");
-    const seen: string[] = [];
-    mock.setWebhookSink((d) => seen.push(d.event));
     post(mock, "/api/rest/pool-tournament/m-c/complete", { object: { paymentStructure: [] } });
-    expect(seen).toEqual(["TournamentUserJoined", "TournamentCompleted"]);
-    expect(mock.pendingWebhooks).toEqual([]);
-  });
-
-  it("deterministic ids are UUID-shaped and stable", () => {
-    expect(deterministicUuid("sideout-a")).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(deterministicUuid("sideout-a")).toBe(deterministicUuid("sideout-a"));
-    expect(deterministicUuid("sideout-a")).not.toBe(deterministicUuid("sideout-b"));
+    expect(mock.pendingWebhooks.map((d) => d.event)).toEqual(["TournamentUserJoined", "TournamentCompleted"]);
+    const first = mock.drainWebhooks();
+    expect(first.map((d) => d.event)).toEqual(["TournamentUserJoined", "TournamentCompleted"]);
+    expect(new Set(first.map((d) => d.id)).size).toBe(2);
+    expect(mock.drainWebhooks()).toEqual([]);
+    expect(mock.state().webhooks).toMatchObject({ pending: [], delivered: [{ event: "TournamentUserJoined" }, { event: "TournamentCompleted" }] });
   });
 });

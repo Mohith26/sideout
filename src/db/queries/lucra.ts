@@ -17,6 +17,7 @@ import {
   type Tournament,
   type TournamentStatus,
 } from "@/db/schema";
+import { CLOSE_BLOCKING_CONSENSUS_STATES } from "@/domain/consensus";
 import type { Tx } from "@/server/audit";
 
 /**
@@ -148,6 +149,7 @@ export interface TournamentLucraStatus {
   counts: Record<LucraSubmissionOutcome, number>;
   /** Consensus rows that are agreed but have no attempt yet: written at settlement, or by hand from the console. */
   agreedUnwritten: number;
+  /** Consensus rows in a close-blocking state on a match that is not already forfeited or a bye, as the close itself counts them. */
   blocking: number;
 }
 
@@ -168,10 +170,10 @@ export function listTournamentLucraStatus(statuses?: readonly TournamentStatus[]
     .groupBy(lucraScoreSubmissions.tournamentId, lucraScoreSubmissions.outcome)
     .all();
   const consensusRows = db
-    .select({ tournamentId: matches.tournamentId, state: matchConsensus.state, n: sql<number>`count(*)` })
+    .select({ tournamentId: matches.tournamentId, state: matchConsensus.state, matchStatus: matches.status, n: sql<number>`count(*)` })
     .from(matchConsensus)
     .innerJoin(matches, eq(matches.id, matchConsensus.matchId))
-    .groupBy(matches.tournamentId, matchConsensus.state)
+    .groupBy(matches.tournamentId, matchConsensus.state, matches.status)
     .all();
   return rows.map((t) => {
     const byOutcome = Object.fromEntries(OUTCOMES.map((o) => [o, 0])) as Record<LucraSubmissionOutcome, number>;
@@ -181,7 +183,8 @@ export function listTournamentLucraStatus(statuses?: readonly TournamentStatus[]
     for (const c of consensusRows) {
       if (c.tournamentId !== t.id) continue;
       if (c.state === "agreed") agreedUnwritten += Number(c.n);
-      if (c.state === "submitting" || c.state === "rejected" || c.state === "partial" || c.state === "disputed") blocking += Number(c.n);
+      if (c.matchStatus === "forfeited" || c.matchStatus === "bye") continue;
+      if (CLOSE_BLOCKING_CONSENSUS_STATES.has(c.state)) blocking += Number(c.n);
     }
     return {
       tournament: {

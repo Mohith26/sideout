@@ -49,8 +49,6 @@ export const LUCRA_PATHS = {
   mockState: "/api/rest/_mock/state",
 } as const;
 
-export type LucraPathKey = keyof typeof LUCRA_PATHS;
-
 /** Webhook event names as Lucra publishes them (legacy/2.0_webhook_setup). */
 export const LUCRA_WEBHOOK_EVENTS = {
   tournamentCreated: "TournamentCreated",

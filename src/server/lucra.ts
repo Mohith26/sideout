@@ -274,17 +274,21 @@ const MATCHUP_COUNT_CODES: ReadonlySet<LucraErrorCode> = new Set(["ambiguous_mat
 /**
  * The matchup this tournament writes to, verified by the pre-write query. The
  * result is cached on the row; `force` re-runs the query (the organizer's
- * "verify targeting" action). On a count other than one the blocking alert is
- * raised, a `LucraError` (`ambiguous_matchup` or `matchup_not_found`) is
- * thrown, and — on the write path only (`freezeOnFailure`), as rule 7.3.4
- * says — a live tournament is moved to `awaiting_settlement`. A query that
- * failed to answer (transport, 5xx, shape) raises a non-blocking alert and
- * throws without freezing anything: there is no count to judge.
+ * "verify targeting" action). On a count other than one the cache is dropped
+ * — so the next write re-runs the assertion rather than trusting a stale id —
+ * the blocking alert is raised, a `LucraError` (`ambiguous_matchup` or
+ * `matchup_not_found`) is thrown, and — on the write path only
+ * (`freezeOnFailure`), as rule 7.3.4 says — a live tournament is moved to
+ * `awaiting_settlement`. A query that failed to answer (transport, 5xx,
+ * shape) raises a non-blocking alert and throws without freezing anything:
+ * there is no count to judge.
  *
  * The organizer's forced verify is the only thaw: when it finds exactly one
  * matchup for a tournament the rule froze (`awaiting_settlement` with no
  * frozen close preview), the tournament goes back to `live`, audited. A
- * participant read never changes a tournament's status.
+ * participant read never changes a tournament's status. The query can take
+ * tens of seconds, so every status decision is made on the row as it is when
+ * the transaction runs, not as it was before the call.
  */
 export async function ensureMatchupTarget(tournamentId: string, actor: TransitionActor, clock: Clock = systemClock, options: { force?: boolean; freezeOnFailure?: boolean } = {}): Promise<MatchupTargetResult> {
   const db = getDb();
@@ -295,16 +299,22 @@ export async function ensureMatchupTarget(tournamentId: string, actor: Transitio
   }
   const adapter = getLucra();
   const now = clock.now();
+  const fresh = (tx: Tx): Tournament => {
+    const row = tx.select().from(tournaments).where(eq(tournaments.id, t.id)).get();
+    if (!row) throw new ApiFailure("not_found", "The tournament disappeared during the Lucra query.");
+    return row;
+  };
   try {
     const { matchupId, count } = await adapter.assertSingleMatchup({ matchupMetadata: { externalId: t.lucraExternalId } });
     db.transaction((tx) => {
+      const current = fresh(tx);
       tx.update(tournaments).set({ lucraMatchupId: matchupId, lucraMatchupVerifiedAt: now }).where(eq(tournaments.id, t.id)).run();
       writeAudit(tx, { actor, action: LUCRA_AUDIT.matchupVerified, subjectType: "tournament", subjectId: t.id, detail: { externalId: t.lucraExternalId, matchupId, count }, at: now });
-      const existing = readLucraAlert(t);
+      const existing = readLucraAlert(current);
       if (existing && (existing.code === "matchup_ambiguous" || existing.code === "matchup_missing" || existing.code === "matchup_query_failed")) setAlert(tx, t.id, null, actor, now);
-      if (options.force && t.status === "awaiting_settlement" && t.closePreviewJson === null && transitionTournament(t.status, "live", actor).ok) {
+      if (options.force && current.status === "awaiting_settlement" && current.closePreviewJson === null && transitionTournament(current.status, "live", actor).ok) {
         tx.update(tournaments).set({ status: "live" }).where(eq(tournaments.id, t.id)).run();
-        writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "live", reason: "matchup_verified", matchupId, count }, at: now });
+        writeAudit(tx, { actor, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: current.status, to: "live", reason: "matchup_verified", matchupId, count }, at: now });
       }
     });
     return { matchupId, count, verifiedAt: now, queried: true };
@@ -327,12 +337,14 @@ export async function ensureMatchupTarget(tournamentId: string, actor: Transitio
     };
     log.error("lucra: pre-write matchup assertion failed", { tournamentId: t.id, externalId: t.lucraExternalId, count, code: err.code });
     db.transaction((tx) => {
+      const current = fresh(tx);
       writeAudit(tx, { actor, action: LUCRA_AUDIT.matchupAssertionFailed, subjectType: "tournament", subjectId: t.id, detail: { externalId: t.lucraExternalId, count, lucraCode: err.code }, at: now });
       setAlert(tx, t.id, alert, actor, now);
+      if (counted) tx.update(tournaments).set({ lucraMatchupId: null, lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, t.id)).run();
       // Rule 7.3.4: a count other than one refuses the write and marks the tournament awaiting_settlement.
-      if (counted && options.freezeOnFailure && t.status === "live" && transitionTournament(t.status, "awaiting_settlement", SYSTEM_ACTOR).ok) {
+      if (counted && options.freezeOnFailure && current.status === "live" && transitionTournament(current.status, "awaiting_settlement", SYSTEM_ACTOR).ok) {
         tx.update(tournaments).set({ status: "awaiting_settlement" }).where(eq(tournaments.id, t.id)).run();
-        writeAudit(tx, { actor: SYSTEM_ACTOR, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: t.status, to: "awaiting_settlement", reason: code }, at: now });
+        writeAudit(tx, { actor: SYSTEM_ACTOR, action: "tournament.status_changed", subjectType: "tournament", subjectId: t.id, detail: { from: current.status, to: "awaiting_settlement", reason: code }, at: now });
       }
     });
     throw err;
@@ -921,13 +933,19 @@ export function linkLucraAccount(user: Pick<User, "id">, clock: Clock = systemCl
   });
 }
 
-/** Whether the tournament's players are on a registered team, for the entry step's honest report. */
-export function lucraEntryState(tournamentId: string, userIds: readonly string[]): { players: Array<{ userId: string; linked: boolean; externalId: string | null }>; matchupVerified: boolean } {
+/**
+ * The roster's link state for the entry step's honest report. Only the
+ * caller's own `external_id` is returned: it is the key Lucra's participant
+ * list and webhooks bind a Lucra account to, so a teammate sees whether the
+ * others are linked, never their ids.
+ */
+export function lucraEntryState(tournamentId: string, userIds: readonly string[], callerUserId: string): { players: Array<{ userId: string; linked: boolean }>; externalId: string | null; matchupVerified: boolean } {
   const db = getDb();
   const links = linksForUsers(db, userIds);
   const t = db.select({ verifiedAt: tournaments.lucraMatchupVerifiedAt }).from(tournaments).where(eq(tournaments.id, tournamentId)).get();
   return {
-    players: userIds.map((userId) => ({ userId, linked: links.has(userId), externalId: links.get(userId)?.externalId ?? null })),
+    players: userIds.map((userId) => ({ userId, linked: links.has(userId) })),
+    externalId: links.get(callerUserId)?.externalId ?? null,
     matchupVerified: t?.verifiedAt !== null && t?.verifiedAt !== undefined,
   };
 }

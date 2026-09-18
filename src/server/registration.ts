@@ -33,7 +33,9 @@ export interface LucraEntryOutcome {
    * about who actually joined; auto-join is never relied on (§7.5).
    */
   state: "awaiting_sdk_join";
-  players: Array<{ userId: string; linked: boolean; externalId: string | null }>;
+  players: Array<{ userId: string; linked: boolean }>;
+  /** The registering player's own opaque id for the join step; never a teammate's. */
+  externalId: string | null;
   matchupVerified: boolean;
   reason: string;
 }
@@ -43,12 +45,13 @@ export interface LucraEntryOutcome {
  * the two steps stay ordered and separate. Reports the roster's link state
  * for the client's join step; it never fakes an enrolment.
  */
-export function lucraEntryHook(input: { tournamentId: string; teamId: string; userIds: string[] }): LucraEntryOutcome {
-  const { players, matchupVerified } = lucraEntryState(input.tournamentId, input.userIds);
+export function lucraEntryHook(input: { tournamentId: string; teamId: string; userIds: string[]; callerUserId: string }): LucraEntryOutcome {
+  const { players, externalId, matchupVerified } = lucraEntryState(input.tournamentId, input.userIds, input.callerUserId);
   const unlinked = players.filter((p) => !p.linked).length;
   return {
     state: "awaiting_sdk_join",
     players,
+    externalId,
     matchupVerified,
     reason: unlinked > 0 ? `${unlinked} player${unlinked === 1 ? " has" : "s have"} not signed in to Lucra yet; each joins the tournament from the Lucra SDK.` : "Each player joins the tournament from the Lucra SDK; the organizer's participant view confirms who has.",
   };
@@ -116,7 +119,7 @@ export function registerTeam(slug: string, teamId: string, user: User, clock: Cl
     }
   });
 
-  const lucraEntry = lucraEntryHook({ tournamentId: tournament.id, teamId, userIds: roster.map((m) => m.userId) });
+  const lucraEntry = lucraEntryHook({ tournamentId: tournament.id, teamId, userIds: roster.map((m) => m.userId), callerUserId: user.id });
   const detail = getTeamDetail(teamId);
   const donation = db.select().from(donations).where(eq(donations.id, donationId)).get() ?? null;
   if (!detail) throw new ApiFailure("internal", "Team disappeared.");

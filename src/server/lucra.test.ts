@@ -248,16 +248,20 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     const m = agreeThirteen();
     const mock = getLucra().mock!;
     const dup = mock.addMatchup({ id: "dup-matchup", kind: "pool_tournament", title: "duplicate", metadata: { externalId: live.lucraExternalId }, participants: [] });
-    // The organizer's explicit verify raises the alert but never changes the status of a live event.
+    // The organizer's explicit verify raises the alert but never changes the status of a live event; it does drop the
+    // cached matchup, so the next write cannot trust it.
+    expect(db().select({ id: tournaments.lucraMatchupId }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.id).not.toBeNull();
     await expect(ensureMatchupTarget(live.id, system, clock, { force: true })).rejects.toMatchObject({ code: "ambiguous_matchup" });
     let row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
     expect(row.status).toBe("live");
     expect(readLucraAlert(row)).toMatchObject({ code: "matchup_ambiguous", blocking: true, detail: { count: 2 } });
+    expect(row.lucraMatchupId).toBeNull();
+    expect(row.lucraMatchupVerifiedAt).toBeNull();
     expect(app.audits(live.id, "lucra.matchup_assertion_failed")).toHaveLength(1);
-    // The write path is where rule 7.3.4 bites: refused, and the live event is moved to awaiting_settlement.
-    db().update(tournaments).set({ lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, live.id)).run();
+    // The write path is where rule 7.3.4 bites: the assertion runs again, the write is refused, and the live event is moved to awaiting_settlement.
     await expect(submitConsensusScores(m.id, system, clock)).rejects.toBeInstanceOf(LucraError);
     expect(rowsFor(m.id)).toEqual([]);
+    expect(mock.listIngestions().filter((i) => (i.request as { object: { userScore: { metadata: { match_id: string } } } }).object.userScore.metadata.match_id === m.id)).toEqual([]);
     expect(consensusOf(m.id)?.state).toBe("agreed");
     row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
     expect(row.status).toBe("awaiting_settlement");
@@ -294,6 +298,47 @@ describe("Lucra write path (spec §7, §10; acceptance 5–10)", () => {
     db().update(tournaments).set({ lucraExternalId: "sideout-nowhere" }).where(eq(tournaments.id, live.id)).run();
     await expect(ensureMatchupTarget(live.id, system, clock, { force: true })).rejects.toMatchObject({ code: "matchup_not_found" });
     expect(readLucraAlert(db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!)).toMatchObject({ code: "matchup_missing" });
+  });
+
+  it("rule 7.3.4: the thaw and the freeze are decided on the row as it is after the query, not before it", async () => {
+    const m = agreeThirteen();
+    const mock = getLucra().mock!;
+    const dup = mock.addMatchup({ id: "dup-matchup", kind: "pool_tournament", title: "duplicate", metadata: { externalId: live.lucraExternalId }, participants: [] });
+    db().update(tournaments).set({ lucraMatchupId: null, lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, live.id)).run();
+    await expect(writeAgreedConsensus(m.id, clock)).resolves.toMatchObject({ state: "refused", code: "ambiguous_matchup" });
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, live.id)).get()?.status).toBe("awaiting_settlement");
+    dup.metadata.externalId = "somewhere-else";
+
+    // The organizer's verify is in flight when a colleague closes the frozen event and settlement completes.
+    const adapter = getLucra();
+    const query = adapter.assertSingleMatchup.bind(adapter);
+    const spy = vi.spyOn(adapter, "assertSingleMatchup");
+    const frozenPreview = JSON.stringify({ tournamentId: live.id, standings: [], rewards: [], previewHash: "x", closedAt: clock.now(), closedByUserId: organizerId });
+    spy.mockImplementationOnce(async (target) => {
+      db().update(tournaments).set({ status: "settled", closePreviewJson: frozenPreview }).where(eq(tournaments.id, live.id)).run();
+      return query(target);
+    });
+    const verified = await ensureMatchupTarget(live.id, { kind: "organizer", userId: organizerId }, clock, { force: true });
+    expect(verified).toMatchObject({ count: 1, queried: true });
+    const row = db().select().from(tournaments).where(eq(tournaments.id, live.id)).get()!;
+    expect(row.status).toBe("settled");
+    expect(row.lucraMatchupVerifiedAt).toBe(clock.now());
+    expect(app.audits(live.id, "tournament.status_changed").filter((a) => JSON.parse(a.detailJson ?? "{}").reason === "matchup_verified")).toEqual([]);
+    expect(JSON.parse(app.audits(live.id, "tournament.status_changed").at(-1)?.detailJson ?? "{}")).toMatchObject({ to: "awaiting_settlement", reason: "matchup_ambiguous" });
+
+    // The mirror image: a write-path query in flight while the organizer closes a live event; the freeze must not re-audit an edge already taken.
+    const other = app.tournament(SLUGS.upcoming);
+    db().update(tournaments).set({ status: "live", lucraMatchupId: null, lucraMatchupVerifiedAt: null }).where(eq(tournaments.id, other.id)).run();
+    mock.addMatchup({ id: "dup-upcoming", kind: "pool_tournament", title: "duplicate", metadata: { externalId: other.lucraExternalId }, participants: [] });
+    spy.mockImplementationOnce(async (target) => {
+      db().update(tournaments).set({ status: "awaiting_settlement", closePreviewJson: frozenPreview }).where(eq(tournaments.id, other.id)).run();
+      return query(target);
+    });
+    await expect(ensureMatchupTarget(other.id, system, clock, { freezeOnFailure: true })).rejects.toMatchObject({ code: "ambiguous_matchup" });
+    expect(db().select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, other.id)).get()?.status).toBe("awaiting_settlement");
+    expect(app.audits(other.id, "tournament.status_changed").filter((a) => JSON.parse(a.detailJson ?? "{}").to === "awaiting_settlement")).toEqual([]);
+    expect(readLucraAlert(db().select().from(tournaments).where(eq(tournaments.id, other.id)).get()!)).toMatchObject({ code: "matchup_ambiguous", blocking: true });
+    spy.mockRestore();
   });
 
   it("rule 7.3.4: a frozen tournament may also be closed from where it is, and settlement then writes what was queued", async () => {

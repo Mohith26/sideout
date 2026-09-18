@@ -189,6 +189,14 @@ describe("organizer routes", () => {
       expect((await patch(id, { status: "live" })).body.data.tournament.status).toBe("live");
       expectFailure(await patch(id, { status: "cancelled" }), 409, "conflict");
       expectFailure(await patch(id, { status: "awaiting_settlement" }), 409, "conflict");
+      // Nothing leaves awaiting_settlement by edit: neither a closed event (frozen preview) nor one Lucra's targeting rule froze.
+      app.conn.db.update(tournaments).set({ status: "awaiting_settlement", closePreviewJson: JSON.stringify({ tournamentId: id, standings: [], rewards: [], previewHash: "x", closedAt: 1, closedByUserId: "o" }) }).where(eq(tournaments.id, id)).run();
+      expect(expectFailure(await patch(id, { status: "live" }), 409, "conflict").detail).toEqual({ code: "awaiting_settlement_locked" });
+      app.conn.db.update(tournaments).set({ closePreviewJson: null }).where(eq(tournaments.id, id)).run();
+      expect(expectFailure(await patch(id, { status: "live" }), 409, "conflict").message).toMatch(/lucra\/verify/);
+      expectFailure(await patch(id, { status: "settled" }), 409, "conflict");
+      expect(app.conn.db.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, id)).get()?.status).toBe("awaiting_settlement");
+      app.conn.db.update(tournaments).set({ status: "live" }).where(eq(tournaments.id, id)).run();
       const transitions = app.audits(id, "tournament.status_changed").map((a) => JSON.parse(a.detailJson ?? "{}"));
       expect(transitions).toEqual([
         { from: "draft", to: "registration_open" },

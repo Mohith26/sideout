@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as submissionsRoute } from "@/app/api/admin/lucra/submissions/route";
+import { POST as forfeitRoute } from "@/app/api/admin/matches/[id]/forfeit/route";
 import { POST as retryRoute } from "@/app/api/admin/matches/[id]/lucra/retry/route";
 import { GET as participantsRoute } from "@/app/api/admin/tournaments/[id]/lucra/participants/route";
 import { POST as settleRoute } from "@/app/api/admin/tournaments/[id]/lucra/settle/route";
@@ -61,6 +62,23 @@ describe("Lucra routes (spec §9)", () => {
       if (!byTournament.body.ok) throw new Error("expected ok");
       expect(byTournament.body.data.submissions.every((s) => s.row.tournamentId === settled.id)).toBe(true);
       expectFailure(await app.call(submissionsRoute, "/api/admin/lucra/submissions?outcome=nope", { cookie: organizerCookie }), 400, "bad_request");
+    });
+
+    it("counts a dispute as blocking only while its match is still open: a forfeit settles it, as the close counts it", async () => {
+      const live = app.tournament(SLUGS.live);
+      const blockingFor = async () => {
+        const res = await app.call<Envelope<{ tournaments: Array<{ tournament: { id: string }; blocking: number }> }>>(submissionsRoute, "/api/admin/lucra/submissions", { cookie: organizerCookie });
+        if (!res.body.ok) throw new Error("expected ok");
+        return res.body.data.tournaments.find((t) => t.tournament.id === live.id)?.blocking ?? -1;
+      };
+      const disputed = app.conn.db.select({ match: matches, state: matchConsensus.state }).from(matchConsensus).innerJoin(matches, eq(matches.id, matchConsensus.matchId)).where(and(eq(matches.tournamentId, live.id), eq(matchConsensus.state, "disputed"))).get();
+      if (!disputed) throw new Error("the seed's live event has no disputed match");
+      const before = await blockingFor();
+      expect(before).toBeGreaterThan(0);
+      const settled = await app.call<Envelope<{ match: { status: string } }>>(forfeitRoute, `/api/admin/matches/${disputed.match.id}/forfeit`, { method: "POST", params: { id: disputed.match.id }, cookie: organizerCookie, body: { teamId: disputed.match.teamAId } });
+      expect(settled.status).toBe(200);
+      expect(app.conn.db.select({ state: matchConsensus.state }).from(matchConsensus).where(eq(matchConsensus.matchId, disputed.match.id)).get()?.state).toBe("disputed");
+      expect(await blockingFor()).toBe(before - 1);
     });
   });
 

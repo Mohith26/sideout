@@ -79,9 +79,6 @@ export const userScoreEntrySchema = z
   .refine(hasUserIdentifier, { message: "One user identifier is required: userId, phoneNumber or userMetadata." });
 export type UserScoreEntry = z.infer<typeof userScoreEntrySchema>;
 
-/** How Sideout identifies a player: the opaque `lucra_links.external_id`. */
-export const externalUserSchema = z.object({ userMetadata: strictExternalIdSchema }).strict();
-
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
@@ -149,14 +146,9 @@ export const completeTournamentRequestSchema = z
   .strict();
 export type CompleteTournamentRequest = z.infer<typeof completeTournamentRequestSchema>;
 
-export type LucraRequestBody = PoolTournamentUserScoreRequest | GenericUserScoreRequest | RecreationalUserScoreRequest | PoolTournamentQueryRequest | CompleteTournamentRequest;
-
 // ---------------------------------------------------------------------------
 // Responses
 // ---------------------------------------------------------------------------
-
-export const failureResponseSchema = z.object({ status: z.literal("failure"), error: z.string() });
-export type FailureResponse = z.infer<typeof failureResponseSchema>;
 
 /**
  * `status` is `"success"` even on partial failure; a non-empty

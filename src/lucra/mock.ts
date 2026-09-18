@@ -1,6 +1,5 @@
 import type { z } from "zod";
 import { systemClock, type Clock } from "@/lib/clock";
-import { uuidFromSeed } from "@/lib/uuid";
 import { LUCRA_API_KEY_HEADER, LUCRA_ERROR_BODIES, LUCRA_PATHS, LUCRA_WEBHOOK_EVENTS } from "@/lucra/endpoints";
 import { resolveMatchups, type MatcherInterpretation } from "@/lucra/matcher";
 import {
@@ -44,7 +43,7 @@ import { signWebhookBody } from "@/lucra/webhook-signature";
  *
  * Webhooks: every emitted event is signed exactly as Lucra documents and
  * queued on `pendingWebhooks`; the server drains the queue into the app's own
- * receiver, and tests can install a sink. The mock never opens a socket.
+ * receiver. The mock never opens a socket.
  */
 
 export const MOCK_API_KEY = "sideout-mock-backend-key";
@@ -178,11 +177,6 @@ export interface MockStateSnapshot {
   webhooks: { pending: MockWebhookDelivery[]; delivered: MockWebhookDelivery[] };
 }
 
-/** A UUID-shaped id derived from a string, so the mock's ids are stable across restarts. */
-export function deterministicUuid(seed: string): string {
-  return uuidFromSeed(seed);
-}
-
 const failure = (status: number, error: string): MockHttpResponse => ({ status, body: { status: "failure", error } });
 
 function firstIssue(err: z.ZodError): string {
@@ -206,7 +200,6 @@ export class LucraMock {
   private ingestions: MockIngestion[] = [];
   readonly pendingWebhooks: MockWebhookDelivery[] = [];
   private deliveredWebhooks: MockWebhookDelivery[] = [];
-  private webhookSink: ((delivery: MockWebhookDelivery) => void) | null = null;
   private webhookCounter = 0;
 
   constructor(options: MockOptions) {
@@ -322,12 +315,6 @@ export class LucraMock {
 
   // -- webhooks ---------------------------------------------------------------
 
-  /** Install a delivery sink; anything already queued is handed over at once. */
-  setWebhookSink(sink: ((delivery: MockWebhookDelivery) => void) | null): void {
-    this.webhookSink = sink;
-    if (sink) for (const d of this.drainWebhooks()) sink(d);
-  }
-
   /** Take every queued delivery, marking them delivered. */
   drainWebhooks(): MockWebhookDelivery[] {
     const out = this.pendingWebhooks.splice(0, this.pendingWebhooks.length);
@@ -340,12 +327,7 @@ export class LucraMock {
     const rawBody = JSON.stringify(body);
     this.webhookCounter += 1;
     const delivery: MockWebhookDelivery = { id: `mock-webhook-${this.webhookCounter}`, event, rawBody, signature: signWebhookBody(rawBody, this.webhookSecret), at: this.clock.now() };
-    if (this.webhookSink) {
-      this.deliveredWebhooks.push(delivery);
-      this.webhookSink(delivery);
-    } else {
-      this.pendingWebhooks.push(delivery);
-    }
+    this.pendingWebhooks.push(delivery);
   }
 
   // -- HTTP surface -----------------------------------------------------------

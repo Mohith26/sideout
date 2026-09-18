@@ -54,9 +54,6 @@ export const LUCRA_ERROR_MESSAGE: Record<LucraErrorCode, string> = {
   unlinked_user: "A player has no Lucra link yet.",
 };
 
-/** Failures that may be retried by an organizer (`rejected`/`partial → submitting`) with the same key. */
-export const RETRYABLE_LUCRA_ERROR_CODES: ReadonlySet<LucraErrorCode> = new Set(["matchup_not_found", "user_not_found", "not_participant", "server", "transport", "shape", "http"]);
-
 export class LucraError extends Error {
   constructor(
     readonly code: LucraErrorCode,
@@ -74,10 +71,6 @@ export class LucraError extends Error {
   ) {
     super(message);
     this.name = "LucraError";
-  }
-
-  get retryable(): boolean {
-    return RETRYABLE_LUCRA_ERROR_CODES.has(this.code);
   }
 }
 

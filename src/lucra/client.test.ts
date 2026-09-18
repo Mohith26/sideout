@@ -95,7 +95,6 @@ describe("LucraClient", () => {
     expect(err).toBeInstanceOf(LucraError);
     const lucraError = err as LucraError;
     expect(lucraError.code).toBe("server");
-    expect(lucraError.retryable).toBe(true);
     expect(lucraError.detail.httpStatus).toBe(504);
     expect(lucraError.detail.record?.tries).toBe(4);
     expect(lucraError.detail.record?.response).toEqual({ status: 504, body: { error: "d" } });
