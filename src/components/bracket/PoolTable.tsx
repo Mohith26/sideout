@@ -104,7 +104,7 @@ export function PoolTable({ label, courtLabel, teams, matches, standings, timeZo
         <h3 className="type-subheading">{label}</h3>
         <span className="tabular type-label text-text-tertiary">{`${courtLabel} · ${played} of ${matches.length} played`}</span>
       </div>
-      <div className="relative overflow-x-auto">
+      <div className="relative overflow-x-auto" tabIndex={0} role="group" aria-label={`${label} results table`}>
         <table className="w-full min-w-full border-collapse text-body">
           <caption className="sr-only">
             {label} results: each row is a team, each column an opponent, cells show the result of that match

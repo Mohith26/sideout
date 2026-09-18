@@ -53,7 +53,7 @@ export default async function CloseTournamentPage({ params }: PageProps<"/organi
         <p className="mt-2 max-w-prose text-text-secondary">
           Closing freezes the final standings and the projected rewards exactly as previewed and moves the event to awaiting settlement. Nothing settles without this reviewable, frozen preview.
         </p>
-        <Link href={`/t/${t.slug}`} className="mt-2 inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
+        <Link href={`/t/${t.slug}`} className="target mt-1 inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
           Open the public event page
           <Icons.chevronRight size={14} />
         </Link>

@@ -135,13 +135,13 @@ export function StatusActions({ tournamentId, status, patchable, matchCount, clo
           {settlement.text}{" "}
           {settlement.needsLucraPage ? (
             <>
-              <Link href="/admin/lucra" className="text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">
+              <Link href="/admin/lucra" className="link-inline text-text-secondary hover:text-text-primary">
                 Open the Lucra page
               </Link>
               {" · "}
             </>
           ) : null}
-          <Link href={`/organizer/events/${tournamentId}/close`} className="text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">
+          <Link href={`/organizer/events/${tournamentId}/close`} className="link-inline text-text-secondary hover:text-text-primary">
             {closed ? "See the frozen close preview" : "Open the close flow"}
           </Link>
         </p>

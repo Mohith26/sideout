@@ -6,6 +6,7 @@ export function DatabaseNotReady({ message }: { message: string }) {
   return (
     <Container className="py-8">
       <EmptyState
+        level={1}
         icon="circleAlert"
         title="The database is not ready"
         body={

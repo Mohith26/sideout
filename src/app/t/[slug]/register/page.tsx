@@ -68,7 +68,8 @@ export default async function RegisterPage({ params }: PageProps<"/t/[slug]">) {
     <Container className="py-6 md:py-8">
       {state.kind === "registered" && state.donation?.status === "pending" ? <LiveRefresh intervalMs={PENDING_REFRESH_MS} /> : null}
       <div className="mx-auto max-w-2xl">
-        <h1 className="sr-only">Register for {tournament.name}</h1>
+        {/* The event header above is the page's h1; this names the section for a screen reader. */}
+        <h2 className="sr-only">Register for {tournament.name}</h2>
         {detail ? (
           <p className="mb-4 text-text-secondary">
             Registering <span className="font-medium text-text-primary">{detail.name}</span>

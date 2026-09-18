@@ -50,7 +50,7 @@ export function BlockingList({ blockers, slug }: { blockers: readonly CloseBlock
         <h2 id="blocking-heading" className="type-label text-fault">
           {blockers.length} {blockers.length === 1 ? "match is" : "matches are"} blocking the close
         </h2>
-        <Link href={`/t/${slug}`} className="type-label text-text-secondary hover:text-text-primary">
+        <Link href={`/t/${slug}`} className="target inline-flex items-center type-label text-text-secondary hover:text-text-primary">
           Open event
         </Link>
       </div>
@@ -66,7 +66,7 @@ export function BlockingList({ blockers, slug }: { blockers: readonly CloseBlock
                 {b.teamA?.name ?? "TBD"} <span className="text-text-tertiary">vs</span> {b.teamB?.name ?? "TBD"}
               </p>
               <p className="mt-1 text-text-secondary">{b.reason}</p>
-              <Link href={`/m/${b.matchId}`} className="mt-2 inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
+              <Link href={`/m/${b.matchId}`} className="target mt-1 inline-flex items-center gap-1 type-label text-text-secondary hover:text-text-primary">
                 Open match
                 <Icons.chevronRight size={14} />
               </Link>
@@ -122,7 +122,7 @@ export function CloseFlow({ tournament, preview, stored, closedByName, close }: 
   }
 
   if (tournament.status !== "live" && !(tournament.status === "awaiting_settlement" && !stored)) {
-    return <EmptyState icon="info" title={`This event is ${tournament.status.replace(/_/g, " ")}`} body="Only a live event can be closed. Nothing here has changed." />;
+    return <EmptyState level={2} icon="info" title={`This event is ${tournament.status.replace(/_/g, " ")}`} body="Only a live event can be closed. Nothing here has changed." />;
   }
 
   if (preview.blockers.length > 0) {

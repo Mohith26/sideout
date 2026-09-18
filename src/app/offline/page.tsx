@@ -13,6 +13,7 @@ export default function OfflinePage() {
   return (
     <Container className="py-8">
       <EmptyState
+        level={1}
         icon="wifiOff"
         title="No connection, and this page is not saved on this phone"
         body={

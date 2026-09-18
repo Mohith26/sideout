@@ -114,7 +114,7 @@ export function ScorelineTable({ teamA, teamB, sets, winner, className }: { team
     return <span className={cx("tabular type-mono-stat", won ? "text-text-primary" : "text-text-secondary")}>{mine}</span>;
   };
   return (
-    <div className={cx("surface-raised overflow-x-auto rounded-md", className)}>
+    <div className={cx("surface-raised overflow-x-auto rounded-md", className)} tabIndex={0} role="group" aria-label="Sets">
       <table className="w-full border-collapse text-body">
         <caption className="sr-only">Sets</caption>
         <thead>

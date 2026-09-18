@@ -43,6 +43,7 @@ export default async function BracketPage({ params }: PageProps<"/t/[slug]">) {
     return (
       <Container className="py-6 md:py-8">
         <EmptyState
+          level={2}
           icon="bracket"
           title="No draw yet"
           body={`Pools and the bracket are generated once registration closes. ${summary.activeTeams} of ${t.maxTeams} teams are in so far.`}

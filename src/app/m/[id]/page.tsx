@@ -177,7 +177,7 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
     <Container className="space-y-8 py-6 md:py-8">
       {refreshes ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
       <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 type-label text-text-tertiary">
-        <Link href={`/t/${tournament.slug}`} className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary">
+        <Link href={`/t/${tournament.slug}`} className="inline-flex min-h-11 items-center gap-1 text-text-secondary hover:text-text-primary">
           {tournament.name}
         </Link>
         <Icons.chevronRight size={12} />
@@ -293,7 +293,7 @@ export default async function MatchPage({ params }: PageProps<"/m/[id]">) {
       {detail.next ? (
         <p className="type-label text-text-tertiary">
           Winner advances to{" "}
-          <Link href={`/m/${detail.next.matchId}`} className="text-text-secondary hover:text-text-primary">
+          <Link href={`/m/${detail.next.matchId}`} className="link-inline text-text-secondary hover:text-text-primary">
             {detail.next.bracketPosition !== null ? `bracket match ${detail.next.bracketPosition}` : "the next round"}
           </Link>
           .

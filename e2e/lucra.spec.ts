@@ -74,7 +74,7 @@ const NOT_ALLOWED_PHONE = playerPhone(5);
 const DEMOGRAPHICS_PHONE = playerPhone(11);
 const OPEN = "pier-9-open-2026";
 
-type Reconciliation = { data: { missing: Array<{ userId: string; displayName: string }>; matched: Array<{ userId: string }>; extra: unknown[]; unlinked: unknown[] } };
+type Reconciliation = { data: { missing: Array<{ userId: string; displayName: string; teamId: string }>; matched: Array<{ userId: string; teamId: string }>; extra: unknown[]; unlinked: unknown[] } };
 type Entry = { data: { players: Array<{ userId: string; you: boolean; entered: boolean | null }>; complete: boolean } };
 
 /**
@@ -90,7 +90,8 @@ test.describe("Lucra in the browser (mock stand-in)", () => {
     const tournament = (await (await page.request.get(`/api/tournaments/${OPEN}`)).json()) as { data: { tournament: { id: string } } };
     const before = (await (await page.request.get(`/api/admin/tournaments/${tournament.data.tournament.id}/lucra/participants`)).json()) as Reconciliation;
     // Both projects run this against one server; whoever is second finds the join already done and asserts the finished state.
-    const missing = before.data.missing[0];
+    // The seeded gap is one player whose partner Lucra already lists; a team another spec registered after boot is missing both.
+    const missing = before.data.missing.find((m) => before.data.matched.some((x) => x.teamId === m.teamId));
     let phone: string | null = null;
     for (let i = 0; i < 48 && !phone; i += 1) {
       const candidate = playerPhone(i);

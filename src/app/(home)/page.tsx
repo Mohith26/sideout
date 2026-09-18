@@ -51,6 +51,7 @@ export default function HomePage() {
 
   return (
     <>
+      <h1 className="sr-only">Live play</h1>
       {strips.length > 0 ? <LiveRefresh intervalMs={LIVE_REFRESH_MS} /> : null}
       {strips.map((strip) => (
         <LiveMatchStrip
@@ -71,7 +72,7 @@ export default function HomePage() {
             <TournamentCard summary={featured} variant="featured" nowMs={nowMs} />
           </section>
         ) : (
-          <EmptyState icon="calendar" title="No events scheduled" body="When an organizer opens registration, it shows up here first." />
+          <EmptyState level={2} icon="calendar" title="No events scheduled" body="When an organizer opens registration, it shows up here first." />
         )}
 
         {otherUpcoming.length > 0 ? (

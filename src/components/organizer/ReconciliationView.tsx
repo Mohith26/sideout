@@ -86,7 +86,7 @@ export function ReconciliationView({ reconciliation: r, readAtLabel }: Reconcili
         <Stat label="Extra" value={String(r.extra.length)} hint="in Lucra, on no team" />
       </dl>
       {divergent === 0 ? (
-        <EmptyState icon="circleCheck" title="Lucra agrees with the roster" body="Every registered player is listed by Lucra and nobody else is. Re-check after registration changes; nothing here is assumed from a join." />
+        <EmptyState level={2} icon="circleCheck" title="Lucra agrees with the roster" body="Every registered player is listed by Lucra and nobody else is. Re-check after registration changes; nothing here is assumed from a join." />
       ) : null}
       <Bucket id="missing" title="Missing" hint="Lucra's list does not include them" rows={r.missing} columns={missingColumns} getKey={(x) => x.userId} empty="Every linked player is in Lucra's list." tone="attention" />
       <Bucket id="unlinked" title="Unlinked" hint="never signed in to Lucra" rows={r.unlinked} columns={unlinkedColumns} getKey={(x) => x.userId} empty="Every registered player has a Lucra link." tone="attention" />

@@ -13,6 +13,7 @@ export function OrganizerAccessRequired({ user }: { user: User | null }) {
   return (
     <Container className="py-8">
       <EmptyState
+        level={1}
         icon="ban"
         title="Organizer access required"
         body={user ? `You are signed in as ${user.displayName}, who is not an organizer for this deployment.` : "Sign in with an organizer account to open the console."}
