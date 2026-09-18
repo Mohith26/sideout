@@ -4,7 +4,7 @@ Sideout runs charity beach volleyball tournaments: organizers build an event, te
 
 ![The live tournament screen: status, beneficiary, format, the matches on the sand right now, and the schedule](docs/screenshots/live-tournament-1280.png)
 
-The build brief I worked from is [`docs/build-spec.md`](docs/build-spec.md). Everything it marks OPEN is in [`docs/open-questions.md`](docs/open-questions.md) with the fallback I implemented; the Lucra write path is drawn out in [`docs/lucra-integration.md`](docs/lucra-integration.md); what a host needs is in [`docs/deploy.md`](docs/deploy.md).
+The build brief I worked from is [`docs/build-spec.md`](docs/build-spec.md). Everything it marks OPEN is in [`docs/open-questions.md`](docs/open-questions.md) with the fallback I implemented; the Lucra write path is drawn out in [`docs/lucra-integration.md`](docs/lucra-integration.md); what a host needs, and how the public demo on Railway is deployed and redeployed, is in [`docs/deploy.md`](docs/deploy.md).
 
 ## 60-second quickstart
 
