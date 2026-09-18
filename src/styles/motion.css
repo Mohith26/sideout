@@ -146,6 +146,24 @@
 }
 
 /*
+ * Decorative, not one of the six: the wave divider (src/components/art/WaveDivider)
+ * drifts sideways by one repeat of its pattern over --d-drift, so the shoreline
+ * moves. Under reduced motion it holds still like everything else.
+ */
+@keyframes wave-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@utility wave-drift {
+  animation: wave-drift var(--d-drift) linear infinite;
+}
+
+/*
  * Reduced motion: the same names, opacity only. Every keyframe above is
  * redefined here so nothing moves, scales or draws; the durations stay short
  * (tokens.css shortens them) and the breathing dot holds still.
@@ -221,11 +239,21 @@
     }
   }
 
+  @keyframes wave-drift {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
   .path-draw {
     stroke-dasharray: none;
   }
 
-  .live-dot {
+  .live-dot,
+  .wave-drift {
     animation: none;
   }
 }

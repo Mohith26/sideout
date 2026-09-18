@@ -4,6 +4,8 @@ Sideout runs charity beach volleyball tournaments: organizers build an event, te
 
 ![The live tournament screen: status, beneficiary, format, the matches on the sand right now, and the schedule](docs/screenshots/live-tournament-1280.png)
 
+The look is a sunny cartoon beach — sand and foam surfaces, navy ink, coral for the one action per screen, in-repo flat-vector art (`src/components/art/`) framing the data rather than sitting under it — on the same screens, components, bracket, score sheet and console. The spec's contrast, touch-target, keyboard, reduced-motion and tabular-numeral requirements are unchanged and still asserted by the tests (`src/styles/tokens.test.ts` proves every text tier and the action colour clear WCAG AA on every surface).
+
 The build brief I worked from is [`docs/build-spec.md`](docs/build-spec.md). Everything it marks OPEN is in [`docs/open-questions.md`](docs/open-questions.md) with the fallback I implemented; the Lucra write path is drawn out in [`docs/lucra-integration.md`](docs/lucra-integration.md); what a host needs, and how the public demo on Railway is deployed and redeployed, is in [`docs/deploy.md`](docs/deploy.md).
 
 ## 60-second quickstart

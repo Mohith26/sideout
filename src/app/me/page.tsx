@@ -177,7 +177,7 @@ export default async function MePage() {
             Tournament history
           </SectionHeading>
           {past.length === 0 ? (
-            <EmptyState icon="trophy" title="Nothing played yet" body="Results, pool finishes and bracket runs from past events collect here." />
+            <EmptyState scene="court" title="Nothing played yet" body="Results, pool finishes and bracket runs from past events collect here." />
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
               {past.map((h) => (

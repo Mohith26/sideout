@@ -3,17 +3,19 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cx } from "@/lib/cx";
 
 /**
- * The one button. `primary` is volt and there is exactly one per screen; if two
- * buttons are both primary, one of them is wrong (spec §12.1).
+ * The one button. `primary` is coral (`--volt`) and there is exactly one per
+ * screen; if two buttons are both primary, one of them is wrong (spec §12.1).
+ * Every variant sits on a 2px flat underline, the cartoon depth, and presses
+ * down onto it.
  */
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "md" | "lg";
 
 const VARIANT: Record<ButtonVariant, string> = {
-  primary: "bg-volt text-on-volt hover:bg-volt-dim active:bg-volt-dim border border-volt hover:border-volt-dim",
-  secondary: "surface-raised text-text-primary hover:border-border-strong active:bg-bg-overlay",
+  primary: "bg-volt text-on-volt border border-volt shadow-[0_2px_0_0_var(--volt-dim)] hover:bg-volt-dim hover:border-volt-dim active:translate-y-px active:shadow-none",
+  secondary: "surface-raised text-text-primary hover:border-border-strong active:translate-y-px active:shadow-none",
   ghost: "bg-transparent border border-transparent text-text-secondary hover:text-text-primary hover:bg-bg-raised",
-  danger: "bg-fault text-on-volt border border-fault hover:opacity-90",
+  danger: "bg-fault text-on-volt border border-fault shadow-[0_2px_0_0_var(--border-strong)] hover:opacity-90 active:translate-y-px active:shadow-none",
 };
 
 const SIZE: Record<ButtonSize, string> = {
@@ -28,7 +30,7 @@ const SIZE_WRAP: Record<ButtonSize, string> = {
 };
 
 const BASE =
-  "inline-flex items-center justify-center gap-2 rounded-sm font-medium select-none " +
+  "inline-flex items-center justify-center gap-2 rounded-sm font-semibold select-none " +
   "transition-[background-color,border-color,color,opacity] duration-(--d-micro) ease-(--ease-out-expo) " +
   "disabled:opacity-50 disabled:pointer-events-none target";
 

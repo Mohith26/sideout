@@ -32,8 +32,9 @@
   --radius-lg: var(--r-lg);
   --radius-full: var(--r-full);
 
-  --font-sans: var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-archivo), var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
+  /* Nunito for the UI (its digits are tabular by default), Baloo 2 for display (true `tnum` figures). */
+  --font-sans: var(--font-nunito), ui-rounded, ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-baloo), var(--font-nunito), ui-rounded, ui-sans-serif, system-ui, sans-serif;
 
   --ease-out-expo: var(--ease-out-expo);
   --ease-in-out-quart: var(--ease-in-out-quart);
@@ -41,7 +42,7 @@
   --text-*: initial;
   --text-display-xl: var(--fs-display-xl);
   --text-display-xl--line-height: 1;
-  --text-display-xl--letter-spacing: -0.02em;
+  --text-display-xl--letter-spacing: var(--tracking-display);
   --text-display-l: var(--fs-display-l);
   --text-display-l--line-height: 1.05;
   --text-display-l--letter-spacing: var(--tracking-display);
@@ -82,7 +83,7 @@
     font-weight: 400;
   }
 
-  /* 12.6 Visible focus: 2px volt at 2px offset, everywhere. */
+  /* 12.6 Visible focus: 2px coral at 2px offset, everywhere. */
   :focus-visible {
     outline: 2px solid var(--volt);
     outline-offset: 2px;
@@ -117,7 +118,7 @@
 
   dialog::backdrop {
     /* The one place backdrop blur is allowed: a sheet or dialog backdrop (§14). It fades in (motion.css). */
-    background: rgb(5 6 7 / 0.6);
+    background: var(--scrim);
     backdrop-filter: blur(8px);
     animation: backdrop-in var(--d-base) var(--ease-out-expo) both;
   }
@@ -129,34 +130,28 @@
  */
 @utility type-display-xl {
   font-family: var(--font-display);
-  font-stretch: var(--display-stretch);
   font-weight: 800;
   font-size: var(--fs-display-xl);
   line-height: 1;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
+  letter-spacing: var(--tracking-display);
   font-variant-numeric: tabular-nums;
 }
 
 @utility type-display-l {
   font-family: var(--font-display);
-  font-stretch: var(--display-stretch);
   font-weight: 700;
   font-size: var(--fs-display-l);
   line-height: 1.05;
   letter-spacing: var(--tracking-display);
-  text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
 
 @utility type-heading {
   font-family: var(--font-display);
-  font-stretch: var(--display-stretch);
   font-weight: 700;
   font-size: var(--fs-heading);
   line-height: 1.2;
-  letter-spacing: -0.01em;
-  text-transform: uppercase;
+  letter-spacing: var(--tracking-display);
   font-variant-numeric: tabular-nums;
 }
 
@@ -192,20 +187,39 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Elevation on dark: lighter background plus a hairline border. No shadows. */
+/*
+ * Elevation on sand: a lighter surface, a hairline border and a 2px sand-coloured
+ * underline — the flat "sticker" depth of the cartoon style. No blur, no soft shadow.
+ */
 @utility surface-raised {
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 0 0 var(--border-subtle);
 }
 
 @utility surface-overlay {
   background: var(--bg-overlay);
   border: 1px solid var(--border-strong);
+  box-shadow: 0 3px 0 0 var(--border-subtle);
 }
 
 @utility surface-inset {
   background: var(--bg-inset);
   border: 1px solid var(--border-subtle);
+}
+
+/*
+ * Sticker: the chunky outline a status pill or decorative badge takes. The tilt
+ * variant is for decorative badges only; a pill that carries data never rotates.
+ */
+@utility sticker {
+  border-width: 2px;
+  border-style: solid;
+  box-shadow: 0 2px 0 0 var(--border-subtle);
+}
+
+@utility sticker-tilt {
+  transform: rotate(-3deg);
 }
 
 /*

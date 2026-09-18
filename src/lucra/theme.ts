@@ -24,11 +24,11 @@ export type LucraWebThemeOption = (typeof LUCRA_WEB_THEME_OPTIONS)[number];
 
 /** The tokens the theme is built from, as `tokens.css` defines them (asserted by the test). */
 export const LUCRA_THEME_SOURCE_TOKENS = {
-  "bg-base": "#08090b",
-  "bg-overlay": "#171a1f",
-  "text-primary": "#f4f5f7",
-  volt: "#d7ff3e",
-  "on-volt": "#08090b",
+  "bg-base": "#fbf2df",
+  "bg-overlay": "#ffffff",
+  "text-primary": "#172a45",
+  volt: "#c33b22",
+  "on-volt": "#ffffff",
 } as const;
 
 export interface Hsl {

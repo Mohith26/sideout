@@ -124,11 +124,12 @@ The public demo runs on Railway, project `sideout`, service `sideout`, environme
 
 - **URL:** https://sideout-production-7db6.up.railway.app (the Railway-provided domain,
   from `railway domain`).
-- **Deployed commit:** `c57051986306cb9300d3865f4c6828fa0e96db81` on
-  `fm/sideout-demo-accounts` (the `buildSha` `/health` reports; `railway up` uploads the
+- **Deployed commit:** `22be020e136d056e1f70dfbe6bd382b71e633701` on `fm/sideout-beach-theme`
+  (the cartoon-beach theme; the `buildSha` `/health` reports; `railway up` uploads the
   working tree without `.git`, so `BUILD_SHA` is set as a service variable before each
   deploy). The `sideout-demo-reset` cron service ("Public demo", below) was deployed from
-  the commit after it, which changed only the reset CLI's `SIDEOUT_URL` fallback and docs.
+  `fm/sideout-demo-accounts`. A fresh worktree links non-interactively with
+  `railway link --workspace <id> --project <id> --environment production --service sideout`.
 - **Health check:** `GET /health` answers 200 with `lucraMode: "mock"`, `session: "env"`,
   `devLogin: false`, `demoAccounts: true`, `migrations: { applied: 6, available: 6, pending: 0 }`.
   Railway's own health check (`railway.json`) and the image `HEALTHCHECK` both point at it.

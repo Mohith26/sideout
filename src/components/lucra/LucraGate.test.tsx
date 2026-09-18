@@ -44,6 +44,9 @@ async function mount(script: Script) {
     </LucraGate>,
   );
   await waitFor(() => expect(screen.getByTestId("status").textContent).not.toBe("loading"));
+  // `latest` is written by a passive effect after the render that painted the status: wait for it too, or a
+  // slow runner hands the test a `launch` closed over the loading state (which answers `not_initialized`).
+  await waitFor(() => expect(latest?.status.kind).not.toBe("loading"));
   return { clients, client: () => clients[clients.length - 1]! };
 }
 

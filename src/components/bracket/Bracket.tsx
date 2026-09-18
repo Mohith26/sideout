@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import type { MatchStatus } from "@/db/schema";
+import { Volleyball, VolleyballGlyph } from "@/components/art";
 import { LiveDot } from "@/components/motion/LiveDot";
 import { ScoreDisplay } from "@/components/motion/ScoreDisplay";
 import { Icons } from "@/components/ui/icons";
@@ -45,7 +46,7 @@ import { cx } from "@/lib/cx";
  * Accessibility: the canvas is a list of rounds, each a list of matches, with
  * `aria-label`s throughout — no `role="application"`. Every match is a real
  * link (`<a>` inside the SVG) so Enter opens it; arrow keys move between
- * matches with a roving tabindex, and a visible 2px volt ring at 2px offset
+ * matches with a roving tabindex, and a visible 2px coral ring at 2px offset
  * follows focus. Winner paths are separate `<path>` elements carrying
  * `data-from`/`data-to`; one that becomes advanced after mount draws itself
  * in with a `stroke-dashoffset` animation over --d-draw (spec §12.4,
@@ -526,9 +527,12 @@ function MatchNode({ placed, rounds, timeZone, tabbable, pinned, register, onFoc
       <rect width={NODE_WIDTH} height={NODE_HEIGHT} rx={6} className={cx("fill-bg-raised", stroke, node.status === "in_progress" || node.status === "disputed" ? "stroke-[1.5]" : "stroke-1")} />
       <TeamRow team={node.teamA} y={ROW_A_Y} points={node.sets.map((s) => s.a)} won={node.winnerId !== null && node.winnerId === node.teamA?.id} nameWidth={nameWidth} live={node.status === "in_progress"} />
       {bye ? (
-        <text x={TEXT_INSET} y={ROW_B_Y} className="type-label fill-text-tertiary">
-          Bye
-        </text>
+        <g>
+          <VolleyballGlyph cx={TEXT_INSET + 7} cy={ROW_B_Y - 5} r={7} strokeWidth={1.2} />
+          <text x={TEXT_INSET + 20} y={ROW_B_Y} className="type-label fill-text-tertiary">
+            Bye
+          </text>
+        </g>
       ) : (
         <TeamRow team={node.teamB} y={ROW_B_Y} points={node.sets.map((s) => s.b)} won={node.winnerId !== null && node.winnerId === node.teamB?.id} nameWidth={nameWidth} live={node.status === "in_progress"} />
       )}
@@ -627,7 +631,12 @@ function PinnedMatch({ node, rounds, onLocate }: { node: BracketNode; rounds: nu
         </div>
         <div className="mt-2 space-y-1" aria-live="polite">
           <PinnedRow team={node.teamA} points={node.sets.map((s) => s.a)} won={winner !== null && winner === node.teamA?.id} live={node.status === "in_progress"} />
-          {node.status === "bye" ? <div className="type-label text-text-tertiary">Bye</div> : <PinnedRow team={node.teamB} points={node.sets.map((s) => s.b)} won={winner !== null && winner === node.teamB?.id} live={node.status === "in_progress"} />}
+          {node.status === "bye" ? (
+            <div className="flex items-center gap-2 type-label text-text-tertiary">
+              <Volleyball size={16} />
+              Bye
+            </div>
+          ) : <PinnedRow team={node.teamB} points={node.sets.map((s) => s.b)} won={winner !== null && winner === node.teamB?.id} live={node.status === "in_progress"} />}
         </div>
       </div>
       <div className="flex shrink-0 gap-2">

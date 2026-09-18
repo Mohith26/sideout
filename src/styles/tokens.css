@@ -2,42 +2,61 @@
  * Sideout design tokens — spec §12, defined once. Tailwind maps these into its
  * theme in globals.css; components consume utilities, never raw hex.
  *
- * Dark-only. There is no light theme in v1 and no half-built one here.
+ * Cartoon beach, light only. The captain's design direction replaced the spec's
+ * dark sports-tech scheme (§12.1) with a sunny beach palette; the token names and
+ * roles are unchanged so every component keeps working, and every text tier and
+ * the action colour still clear WCAG AA on every surface (src/styles/tokens.test.ts
+ * asserts it). There is no dark theme and no half-built one here.
  */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* 12.1 Color */
-  --bg-base: #08090b; /* app background */
-  --bg-raised: #101216; /* cards */
-  --bg-overlay: #171a1f; /* sheets, popovers */
-  --bg-inset: #050607; /* wells, inputs */
+  /* 12.1 Color — surfaces are sand and foam */
+  --bg-base: #fbf2df; /* app background: warm sand */
+  --bg-raised: #fffbf2; /* cards: a lighter cream */
+  --bg-overlay: #ffffff; /* sheets, popovers */
+  --bg-inset: #e4f3f6; /* wells, inputs: foam */
 
-  --border-subtle: #22262d;
-  --border-strong: #323843;
+  --border-subtle: #ead9b8; /* hairlines in a warm sand tone */
+  --border-strong: #cdb589;
 
-  --text-primary: #f4f5f7;
-  --text-secondary: #9ba3af;
+  /* Text tiers are inks: deep navy, then softer inks. Each clears 4.5:1 on every surface. */
+  --text-primary: #172a45;
+  --text-secondary: #3a5170;
+  --text-tertiary: #556a84;
+
   /*
-   * Deviates from spec §12.1 (#646C79) so every text tier clears WCAG AA on every
-   * surface; the measured ratios and rationale live under "Spec deviations" in
-   * docs/open-questions.md, and src/styles/tokens.test.ts asserts the result.
+   * Coral is the single action colour, one per screen. A lighter coral cannot
+   * clear 4.5:1 on sand, so this is a deep coral with white on it (5.3:1).
    */
-  --text-tertiary: #7c8491;
+  --volt: #c33b22;
+  --volt-dim: #a8321d; /* hover / pressed */
+  --on-volt: #ffffff;
 
-  --volt: #d7ff3e; /* primary action, brand — one per screen */
-  --volt-dim: #a8c82f;
-  --on-volt: #08090b; /* dark text on volt, never white */
+  /* Each semantic colour also clears 4.5:1 as text on its own 10% tint (the pills, notices and badges). */
+  --ember: #9c4706; /* sunset orange: charity + impact only, never a button */
+  --surf: #096a62; /* sea teal: live, positive delta, agreed */
+  --fault: #b51e34; /* cartoon red: errors, disputes */
 
-  --ember: #ff6b3d; /* charity + impact only, never a button */
-  --surf: #35d6c3; /* live, positive delta, agreed */
-  --fault: #ff4d4d; /* errors, disputes */
+  /* A navy scrim behind sheets and dialogs (the one backdrop blur, §14). */
+  --scrim: rgb(23 42 69 / 0.45);
 
-  /* 12.3 Radius — restrained on purpose */
-  --r-xs: 4px; /* chips, badges */
-  --r-sm: 6px; /* inputs, buttons */
-  --r-md: 10px; /* cards */
-  --r-lg: 14px; /* sheets, modals */
+  /*
+   * Illustration colours, used only by the SVG art under src/components/art/.
+   * They are not mapped into Tailwind on purpose: no text, border or button may
+   * take them, so nothing here needs to clear a contrast ratio.
+   */
+  --art-sky: #8fd6f4;
+  --art-ocean: #2aa6c1;
+  --art-palm: #3d9a4f;
+  --art-sun: #ffc83d;
+  --art-sand: #f3d999;
+
+  /* 12.3 Radius — a playful scale: cards 16px, pills full */
+  --r-xs: 6px; /* chips, badges */
+  --r-sm: 10px; /* inputs, buttons */
+  --r-md: 16px; /* cards */
+  --r-lg: 22px; /* sheets, modals */
   --r-full: 999px; /* pills, avatars */
 
   /* 12.3 Layout */
@@ -54,6 +73,7 @@
   --d-base: 220ms; /* enter, exit */
   --d-enter: 420ms; /* sheets, page content */
   --d-draw: 700ms; /* bracket path */
+  --d-drift: 14s; /* the wave divider's slow drift */
 
   /* 12.2 Type scale, 1.25 ratio, clamped fluid */
   --fs-display-xl: clamp(2.75rem, 6vw, 4.5rem);
@@ -64,10 +84,8 @@
   --fs-label: 0.8125rem;
   --fs-mono-stat: 0.875rem;
   --lh-body: 1.55;
-  --tracking-display: -0.015em;
+  --tracking-display: 0;
   --tracking-label: 0.06em;
-  /* "Archivo Expanded" is Archivo's variable width axis at its widest stop. */
-  --display-stretch: 125%;
 }
 
 @media (min-width: 1280px) {
@@ -88,6 +106,7 @@
     --d-base: 160ms;
     --d-enter: 160ms;
     --d-draw: 160ms;
+    --d-drift: 160ms;
   }
   *,
   *::before,

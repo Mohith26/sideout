@@ -32,10 +32,28 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 
 - Design tokens live once in `src/styles/tokens.css` and are mapped into Tailwind in
   `src/app/globals.css`. Tailwind's default palette and radii are removed on purpose:
-  only spec colors and `rounded-xs|sm|md|lg|full` exist. `src/styles/tokens.test.ts`
-  asserts WCAG AA for every text tier on every surface.
-- `--volt` is the single primary action color (one per screen); `--ember` is charity
-  and impact only; `--surf` is live/agreed; `--fault` is errors/disputes.
+  only the token colors and `rounded-xs|sm|md|lg|full` exist. `src/styles/tokens.test.ts`
+  asserts WCAG AA for every text tier and the action color on every surface.
+- The theme is a light cartoon beach (the captain's direction, recorded under "Spec
+  deviations" in `docs/open-questions.md`; it overrides the spec's §12 dark scheme and
+  nothing else). The token names and roles are unchanged: `--volt` (coral) is the single
+  primary action color (one per screen); `--ember` (sunset orange) is charity and impact
+  only; `--surf` (sea teal) is live/agreed; `--fault` (cartoon red) is errors/disputes.
+  The five `--art-*` colors are for the SVG art only and are not mapped into Tailwind.
+  There is no dark theme; do not start one. Elevation is a hairline plus a 2px sand
+  underline (`surface-raised`, `sticker`), never a soft shadow or blur (§14 still applies:
+  `src/copy-audit.test.ts` refuses gradients and `rounded-2xl`).
+- Fonts (`src/app/layout.tsx`, `next/font`): Baloo 2 for display (`type-display-*`,
+  `type-heading`, the wordmark, scores) and Nunito for UI. Both carry tabular figures
+  (Baloo 2 via `tnum`, Nunito by default); Fredoka and Lilita One do not, which is why
+  they were rejected — a display face without `tnum` breaks the rolling scores.
+- Illustration lives under `src/components/art/` (one flat style, `style.ts`: ink
+  outlines, `--art-*` fills, `aria-hidden`, never data): sun/clouds (`SkyBand`),
+  `WaveDivider` (drifts on `--d-drift`, still under reduced motion), palms/umbrella/beach
+  ball/flag (`Beach.tsx`), the volleyball (`Volleyball.tsx`, also inside the bracket's
+  byes), the tab bar's `SandEdge`, and the `Scene`s `EmptyState` takes through `scene=`.
+  Art frames and divides; it never sits under a table, the sheet or the bracket. The
+  organizer console keeps it to the header band.
 - Icons come from `src/components/ui/icons.ts` (lucide, 1.5px stroke), never from
   `lucide-react` directly. No emoji as iconography.
 - Console output only through `src/lib/log.ts`; ESLint makes `console`, `any`, and
@@ -211,7 +229,8 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
 ## Polish (phase 5 conventions)
 
 - Motion: the six named transitions (§12.4) are `src/styles/motion.css` (keyframes on the
-  motion tokens, every one with an opacity-only `prefers-reduced-motion` branch that
+  motion tokens, every one — and any decorative keyframe such as the wave drift — with an
+  opacity-only `prefers-reduced-motion` branch that
   `src/components/motion/motion.test.ts` asserts) plus `src/components/motion/`:
   `ScoreDisplay` (count-up), `flip.ts`/`FlipRows` (the ~40-line FLIP helper keyed on
   `data-team-id`, WAAPI, `--surf` rank flash), `LiveDot` (the pulse), `reduced-motion.ts`
@@ -234,7 +253,9 @@ by guessing: implement the fallback, mark it `// OPEN:` in code, and add a row t
   legal-clearance, casino, blame and emoji language and the §14 treatments; a new phrase
   that trips it is wrong until proven otherwise, and an allowance needs the exact line.
 - `scripts/screenshots.ts` re-captures `docs/screenshots/` from the e2e server;
-  `docs/deploy.md` is what a host needs.
+  `docs/deploy.md` is what a host needs. The app icons are `public/icon.svg` and
+  `public/icons/icon-maskable.svg` (the volleyball on sky and sand, static hex copies of the
+  art tokens); `npx tsx scripts/render-icons.ts` re-renders the PNGs.
 
 ## Screens (phase 2b conventions)
 

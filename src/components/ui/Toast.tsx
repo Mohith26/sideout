@@ -103,7 +103,7 @@ function ToastViewport({ items, onDismiss }: { items: ToastItem[]; onDismiss: (i
           <div
             key={item.id}
             role="status"
-            className="pointer-events-auto surface-overlay flex w-full max-w-sm items-start gap-3 rounded-md p-3 shadow-[0_12px_40px_rgb(0_0_0/0.45)]"
+            className="pointer-events-auto surface-overlay flex w-full max-w-sm items-start gap-3 rounded-md p-3"
           >
             <span className={cx("mt-0.5 shrink-0", tone.className)}>
               <Icon size={18} />
