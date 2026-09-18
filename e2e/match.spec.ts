@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 /**
  * Smoke over the consensus surfaces against the production build: the match
@@ -22,6 +22,30 @@ function matchWithStatus(detail: Detail, status: string): MatchView {
   const m = detail.bracket.matches.find((x) => x.match.status === status);
   if (!m) throw new Error(`seed has no ${status} bracket match`);
   return m;
+}
+
+/**
+ * Both teams' set-1 steppers lie inside the viewport and no scroll container
+ * under `scope` can be scrolled sideways: the score sheet has to be usable by
+ * thumb at 390px without a horizontal swipe (spec §11.3, acceptance #18).
+ */
+async function expectSteppersFit(page: Page, scope: Locator): Promise<void> {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("viewport size unknown");
+  const increase = scope.getByRole("button", { name: /^Increase .*, set 1$/ });
+  await expect(increase).toHaveCount(2);
+  for (const button of await increase.all()) {
+    const box = await button.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+  }
+  const sideways = await scope.evaluate((root) =>
+    [root, ...root.querySelectorAll<HTMLElement>("*")]
+      .filter((el) => ["auto", "scroll"].includes(getComputedStyle(el).overflowX) && el.scrollWidth > el.clientWidth)
+      .map((el) => `${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}`),
+  );
+  expect(sideways).toEqual([]);
 }
 
 test.describe("Match page", () => {
@@ -67,6 +91,9 @@ test.describe("Match page", () => {
     const box = await plus.boundingBox();
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(56);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(56);
+    // Both sides' steppers sit inside the viewport and nothing in the sheet scrolls
+    // sideways (spec §11.3 "thumb-reachable", acceptance #18 "usable one-handed at 390px").
+    await expectSteppersFit(page, sheet);
     const submit = sheet.getByRole("button", { name: "Submit scoreline" });
     await expect(submit).toBeDisabled();
 
@@ -96,6 +123,8 @@ test.describe("Organizer consensus screens", () => {
     await expect(card).toContainText("Quarterfinals");
     await expect(card.locator("[data-differs]")).toHaveCount(1);
     await expect(card.getByRole("button", { name: "Resolve as organizer" })).toBeDisabled();
+    // The organizer's resolve editor is the same stepper layout and must fit a phone too.
+    await expectSteppersFit(page, card);
 
     await page.goto(`/organizer/events/${detail.tournament.id}/close`);
     await expect(page.getByRole("heading", { level: 1, name: /Close Sandbar Classic/ })).toBeVisible();

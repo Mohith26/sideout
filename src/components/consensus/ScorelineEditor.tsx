@@ -8,11 +8,11 @@ import { judgeMatch, judgeSet, setTarget, type MatchVerdict, type SetScore } fro
 import { cx } from "@/lib/cx";
 
 /**
- * One row per set, two steppers per row, and the legality of every set and
- * of the whole match judged live by `@/domain/scoreline` as the numbers
- * change (spec §11.3). The rules are the beach volleyball ones: sets to 21,
- * a deciding third set to 15, win by two, best-of-1 or best-of-3. A third
- * row appears only once the first two sets are legal and split.
+ * One row per set, a stepper line per team inside it, and the legality of
+ * every set and of the whole match judged live by `@/domain/scoreline` as
+ * the numbers change (spec §11.3). The rules are the beach volleyball ones:
+ * sets to 21, a deciding third set to 15, win by two, best-of-1 or best-of-3.
+ * A third row appears only once the first two sets are legal and split.
  */
 export interface EditorSet {
   setNumber: number;
@@ -69,11 +69,6 @@ export function ScorelineEditor({ bestOf, leftLabel, rightLabel, value, onChange
   };
   return (
     <div className={cx("space-y-3", className)}>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-2 px-1 type-label text-text-tertiary">
-        <span className="truncate text-start">{leftLabel}</span>
-        <span aria-hidden="true" />
-        <span className="truncate text-end">{rightLabel}</span>
-      </div>
       <ol className="space-y-3">
         {rows.map((row) => {
           const target = setTarget(row.setNumber, bestOf);
@@ -97,11 +92,8 @@ export function ScorelineEditor({ bestOf, leftLabel, rightLabel, value, onChange
                   )}
                 </span>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="mt-3 space-y-2">
                 <SetStepper label={leftLabel} setNumber={row.setNumber} value={row.left} onChange={(v) => update(row.setNumber, { left: v })} disabled={disabled} leading={setVerdict.legal && setVerdict.winner === "a"} />
-                <span aria-hidden="true" className="type-label text-text-tertiary">
-                  –
-                </span>
                 <SetStepper label={rightLabel} setNumber={row.setNumber} value={row.right} onChange={(v) => update(row.setNumber, { right: v })} disabled={disabled} leading={setVerdict.legal && setVerdict.winner === "b"} />
               </div>
             </li>
