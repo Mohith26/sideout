@@ -226,7 +226,7 @@ export function createTournament(input: CreateTournamentInput, actor: Transition
 // Update
 // ---------------------------------------------------------------------------
 
-/** Edges the PATCH route may take; closing and settlement belong to the close flow (phase 4). */
+/** Edges the PATCH route may take; closing is `@/server/close` (preview, hash, confirm) and `settled` is the settlement outcome (phase 4). */
 const PATCHABLE_TARGETS: ReadonlySet<TournamentStatus> = new Set(["registration_open", "registration_closed", "live", "cancelled"]);
 
 export function updateTournament(id: string, input: UpdateTournamentInput, actor: TransitionActor, clock: Clock = systemClock): TournamentDetail {
@@ -271,7 +271,12 @@ export function updateTournament(id: string, input: UpdateTournamentInput, actor
   let transition: { from: TournamentStatus; to: TournamentStatus } | null = null;
   if (nextStatus !== undefined && nextStatus !== current.status) {
     if (!PATCHABLE_TARGETS.has(nextStatus)) {
-      throw new ApiFailure("conflict", `Moving to ${nextStatus} goes through the close flow, which is not built yet.`);
+      throw new ApiFailure(
+        "conflict",
+        nextStatus === "awaiting_settlement"
+          ? "Closing goes through POST /api/admin/tournaments/:id/close with the hash from GET …/close/preview."
+          : `Moving to ${nextStatus} is the outcome of settlement, not a status edit.`,
+      );
     }
     const verdict = transitionTournament(current.status, nextStatus, actor);
     if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);

@@ -13,7 +13,8 @@ import { createTestApp, expectFailure, type TestApp } from "@/test/routes";
 type Summary = { tournament: { id: string; slug: string; status: string; maxTeams: number }; activeTeams: number; raisedCents: number; donorCount: number; sponsorCount: number };
 type Envelope<T> = { ok: true; data: T };
 
-const lucraKeys = (row: object) => Object.keys(row).filter((k) => k.toLowerCase().startsWith("lucra"));
+/** Columns the public projection must drop: every Lucra identifier, the organizer's draw configuration, the frozen close preview. */
+const serverOnlyKeys = (row: object) => Object.keys(row).filter((k) => k.toLowerCase().startsWith("lucra") || k === "drawConfigJson" || k === "closePreviewJson");
 
 describe("public tournament routes", () => {
   let app: TestApp;
@@ -64,12 +65,15 @@ describe("public tournament routes", () => {
     for (const d of app.data.donations.filter((x) => x.tournamentId === live.id && x.status === "pending")) expect(app.audits(d.id, "donation.succeeded")).toHaveLength(1);
   });
 
-  it("keeps every Lucra identifier off the public shapes and never exposes a draft", async () => {
+  it("keeps every Lucra identifier, the draw config and the close preview off the public shapes and never exposes a draft", async () => {
+    // The live event has a stored draw; give the settled one a frozen close preview so both columns are present to leak.
+    app.conn.db.update(tournaments).set({ closePreviewJson: JSON.stringify({ hash: "frozen", closedByUserId: app.organizer().id }) }).where(eq(tournaments.slug, SLUGS.settled)).run();
     const list = await app.call<Envelope<Summary[]>>(listTournaments, "/api/tournaments");
     expect(list.body.data).toHaveLength(3);
-    for (const s of list.body.data) expect(lucraKeys(s.tournament)).toEqual([]);
+    for (const s of list.body.data) expect(serverOnlyKeys(s.tournament)).toEqual([]);
+    expect(JSON.stringify(list.body)).not.toContain(app.organizer().id);
     const detail = await app.call<Envelope<{ tournament: object }>>(getTournament, `/api/tournaments/${SLUGS.live}`, { params: { slug: SLUGS.live } });
-    expect(lucraKeys(detail.body.data.tournament)).toEqual([]);
+    expect(serverOnlyKeys(detail.body.data.tournament)).toEqual([]);
     expect(detail.body.data.tournament).toMatchObject({ slug: SLUGS.live, name: expect.any(String), status: "live" });
 
     // An organizer's unpublished draft is invisible to every public read.

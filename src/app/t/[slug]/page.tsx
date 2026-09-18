@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Container } from "@/components/shell/AppShell";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -81,7 +82,9 @@ export default async function OverviewPage({ params }: PageProps<"/t/[slug]">) {
           <ul className="-mx-gutter flex snap-x gap-3 overflow-x-auto px-gutter pb-1 md:mx-0 md:grid md:grid-cols-2 md:overflow-visible md:px-0 xl:grid-cols-3">
             {live.map((m) => (
               <li key={m.match.id} className="snap-start md:min-w-0">
-                <MatchCard view={m} bracketRounds={bracketRounds} className="md:w-full" />
+                <Link href={`/m/${m.match.id}`} className="block rounded-md" aria-label={`Open match: ${m.teamA?.name ?? "TBD"} vs ${m.teamB?.name ?? "TBD"}`}>
+                  <MatchCard view={m} bracketRounds={bracketRounds} className="md:w-full" />
+                </Link>
               </li>
             ))}
           </ul>

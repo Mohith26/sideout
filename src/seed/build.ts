@@ -31,19 +31,11 @@ import {
   type DrawPlan,
   type DrawTeam,
 } from "@/domain/draw";
+import { canonicalizeSubmission, CONSENSUS_AUDIT, describeDifferences, diffScorelines, toPerspective, type StoredSubmission } from "@/domain/consensus";
 import { computeStandings, type StandingRow, type StandingsMatch } from "@/domain/standings";
 import { assertTeamRoster } from "@/domain/team";
-import {
-  DECIDING_SET_TARGET,
-  SET_TARGET,
-  hashScoreline,
-  judgeMatch,
-  judgeSet,
-  setTarget,
-  type Scoreline,
-  type SetScore,
-  type Side,
-} from "@/domain/scoreline";
+import { DECIDING_SET_TARGET, SET_TARGET, judgeMatch, judgeSet, setTarget, type Scoreline, type SetScore, type Side } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 import { pairName, surname } from "@/lib/format";
 import { createRng, type Rng } from "@/lib/rng";
 import { createUuidV7Generator, shortId } from "@/lib/uuid";
@@ -506,30 +498,104 @@ class SeedBuilder {
   }
 
   // -- consensus + sets -----------------------------------------------------
+  //
+  // Everything below writes exactly the rows and audit entries the consensus
+  // service (`@/server/consensus`) would have written for the same events, so
+  // a seeded match is indistinguishable from one played through the API.
+
+  /** The `match_consensus` row for a match, created as `awaiting_first` at `at`. */
+  openConsensus(match: NewMatch, at: number): NewMatchConsensus {
+    const row: NewMatchConsensus = {
+      id: this.id(at),
+      matchId: match.id,
+      state: "awaiting_first",
+      agreedPayloadJson: null,
+      agreedPayloadHash: null,
+      disputedReason: null,
+      resolvedByUserId: null,
+      idempotencyKey: null,
+      updatedAt: at,
+    };
+    this.data.matchConsensus.push(row);
+    return row;
+  }
+
+  /** A match going onto the sand: `scheduled → in_progress`, as the organizer's live board records it. */
+  startMatch(match: NewMatch, organizer: NewUser, startedAt: number): void {
+    match.status = "in_progress";
+    match.startedAt = startedAt;
+    this.audit({
+      actorUserId: organizer.id,
+      actorKind: "organizer",
+      action: "match.status_changed",
+      subjectType: "match",
+      subjectId: match.id,
+      detailJson: JSON.stringify({ from: "scheduled", to: "in_progress" }),
+      createdAt: startedAt,
+    });
+  }
+
+  private consensusTransition(consensus: NewMatchConsensus, to: NewMatchConsensus["state"], actor: { kind: "player" | "organizer"; userId: string }, at: number, detail: Record<string, unknown>): void {
+    this.audit({
+      actorUserId: actor.userId,
+      actorKind: actor.kind,
+      action: CONSENSUS_AUDIT.stateChanged,
+      subjectType: "consensus",
+      subjectId: consensus.id,
+      detailJson: JSON.stringify({ matchId: consensus.matchId, from: consensus.state, to, ...detail }),
+      createdAt: at,
+    });
+    consensus.state = to;
+    consensus.updatedAt = at;
+  }
+
+  private matchTransition(match: NewMatch, to: MatchStatus, actor: { kind: "player" | "organizer" | "system"; userId: string | null }, at: number, detail: Record<string, unknown>): void {
+    this.audit({
+      actorUserId: actor.userId,
+      actorKind: actor.kind,
+      action: "match.status_changed",
+      subjectType: "match",
+      subjectId: match.id,
+      detailJson: JSON.stringify({ from: match.status, to, ...detail }),
+      createdAt: at,
+    });
+    match.status = to;
+  }
+
+  /** The first team's submission: `awaiting_first → awaiting_second`, `in_progress → awaiting_scores`. */
+  firstSubmission(match: NewMatch, consensus: NewMatchConsensus, team: SeedTeam, scoreline: Scoreline, side: Side, at: number): NewScoreSubmission {
+    const sub = this.submission(match, team, scoreline, side, at);
+    const actor = { kind: "player" as const, userId: sub.submittedByUserId };
+    this.consensusTransition(consensus, "awaiting_second", actor, at, { event: "first_submission", teamId: team.row.id, submissionId: sub.id });
+    this.matchTransition(match, "awaiting_scores", actor, at, { submissionId: sub.id });
+    return sub;
+  }
 
   /** Record two agreeing captain submissions, the agreed consensus, and the set rows. */
   recordAgreedResult(match: NewMatch, a: SeedTeam, b: SeedTeam, sets: readonly SetScore[], finalizedAt: number): void {
     const scoreline: Scoreline = { matchId: match.id, sets: [...sets] };
     const hash = hashScoreline(scoreline, "a");
     const firstAt = finalizedAt - this.rng.int(4, 9) * MINUTE;
-    const secondAt = finalizedAt - this.rng.int(0, 3) * MINUTE;
-    const subA = this.submission(match, a, scoreline, "a", firstAt);
-    const subB = this.submission(match, b, scoreline, "b", secondAt);
+    const consensus = this.openConsensus(match, match.startedAt ?? firstAt);
+    const subA = this.firstSubmission(match, consensus, a, scoreline, "a", firstAt);
+    const subB = this.submission(match, b, scoreline, "b", finalizedAt);
     if (subA.payloadHash !== subB.payloadHash || subA.payloadHash !== hash) {
       throw new Error("seed: agreeing submissions must hash identically");
     }
-    const consensusId = this.id(finalizedAt);
-    this.data.matchConsensus.push({
-      id: consensusId,
-      matchId: match.id,
-      state: "agreed",
-      agreedPayloadJson: JSON.stringify(scoreline),
-      agreedPayloadHash: hash,
-      disputedReason: null,
+    const winnerTeamId = match.winnerTeamId;
+    if (!winnerTeamId) throw new Error("seed: an agreed result needs a winner");
+    const idempotencyKey = this.id(finalizedAt);
+    this.consensusTransition(consensus, "agreed", { kind: "player", userId: subB.submittedByUserId }, finalizedAt, {
+      event: "matching_submission",
+      hash,
+      idempotencyKey,
+      mintedKey: true,
+      winnerTeamId,
       resolvedByUserId: null,
-      idempotencyKey: `sideout-consensus-${this.id(finalizedAt)}`,
-      updatedAt: finalizedAt,
     });
+    consensus.agreedPayloadJson = JSON.stringify(scoreline);
+    consensus.agreedPayloadHash = hash;
+    consensus.idempotencyKey = idempotencyKey;
     for (const s of sets) {
       this.data.sets.push({
         id: this.id(finalizedAt),
@@ -540,24 +606,8 @@ class SeedBuilder {
         agreed: true,
       });
     }
-    this.audit({
-      actorUserId: b.members[0].row.id,
-      actorKind: "player",
-      action: "consensus.agreed",
-      subjectType: "match",
-      subjectId: match.id,
-      detailJson: JSON.stringify({ hash }),
-      createdAt: secondAt,
-    });
-    this.audit({
-      actorUserId: null,
-      actorKind: "system",
-      action: "match.finalized",
-      subjectType: "match",
-      subjectId: match.id,
-      detailJson: JSON.stringify({ winnerTeamId: match.winnerTeamId, sets }),
-      createdAt: finalizedAt,
-    });
+    this.matchTransition(match, "final", { kind: "system", userId: null }, finalizedAt, { winnerTeamId, consensusId: consensus.id, hash });
+    match.finalizedAt = finalizedAt;
   }
 
   /**
@@ -566,27 +616,16 @@ class SeedBuilder {
    * form, so two honest views of one result agree.
    */
   submission(match: NewMatch, team: SeedTeam, scoreline: Scoreline, perspective: Side, at: number): NewScoreSubmission {
-    const asTyped = {
-      matchId: scoreline.matchId,
-      perspective,
-      sets: scoreline.sets.map((s) => ({
-        setNumber: s.setNumber,
-        usPoints: perspective === "a" ? s.teamAPoints : s.teamBPoints,
-        themPoints: perspective === "a" ? s.teamBPoints : s.teamAPoints,
-      })),
-    };
-    // Re-express the typed view in a/b terms from the submitter's side, then canonicalize.
-    const fromSubmitter: Scoreline = {
-      matchId: scoreline.matchId,
-      sets: asTyped.sets.map((s) => ({ setNumber: s.setNumber, teamAPoints: s.usPoints, teamBPoints: s.themPoints })),
-    };
+    const stored: StoredSubmission = { matchId: scoreline.matchId, perspective, sets: toPerspective(scoreline.sets, perspective) };
+    const canonical = canonicalizeSubmission(match.id, stored.sets, perspective, match.bestOf);
+    if (!canonical.verdict.legal) throw new Error(`seed: illegal submission: ${canonical.verdict.reason}`);
     const row: NewScoreSubmission = {
       id: this.id(at),
       matchId: match.id,
       submittedByUserId: team.members[0].row.id,
       submittedForTeamId: team.row.id,
-      payloadJson: JSON.stringify(asTyped),
-      payloadHash: hashScoreline(fromSubmitter, perspective),
+      payloadJson: JSON.stringify(stored),
+      payloadHash: canonical.hash,
       createdAt: at,
       supersededById: null,
     };
@@ -594,10 +633,10 @@ class SeedBuilder {
     this.audit({
       actorUserId: team.members[0].row.id,
       actorKind: "player",
-      action: "score.submitted",
+      action: CONSENSUS_AUDIT.scoreSubmitted,
       subjectType: "match",
       subjectId: match.id,
-      detailJson: JSON.stringify({ teamId: team.row.id, hash: row.payloadHash }),
+      detailJson: JSON.stringify({ submissionId: row.id, teamId: team.row.id, side: perspective, hash: row.payloadHash, replaced: false }),
       createdAt: at,
     });
     return row;
@@ -674,7 +713,7 @@ class SeedBuilder {
   // -- pool play ------------------------------------------------------------
 
   /** Play every pool match to a final, agreed result; returns standings per pool. */
-  playPools(drawn: DrawnEvent, teamsById: Map<string, SeedTeam>): PoolResult[] {
+  playPools(drawn: DrawnEvent, organizer: NewUser, teamsById: Map<string, SeedTeam>): PoolResult[] {
     const played = new Map<string, StandingsMatch[]>();
     const poolMatches = drawn.plan.matches.filter((m) => m.poolKey !== null).sort((x, y) => (x.scheduledAt ?? 0) - (y.scheduledAt ?? 0));
     for (const m of poolMatches) {
@@ -685,10 +724,8 @@ class SeedBuilder {
       const startedAt = row.scheduledAt + this.rng.int(0, 4) * MINUTE;
       const finalizedAt = startedAt + this.rng.int(18, 27) * MINUTE;
       const result = this.playMatch(a, b, row.bestOf);
-      row.status = "final";
+      this.startMatch(row, organizer, startedAt);
       row.winnerTeamId = result.winner === "a" ? a.row.id : b.row.id;
-      row.startedAt = startedAt;
-      row.finalizedAt = finalizedAt;
       this.recordAgreedResult(row, a, b, result.sets, finalizedAt);
       const list = played.get(m.poolKey ?? "") ?? [];
       list.push({ teamAId: a.row.id, teamBId: b.row.id, winnerTeamId: row.winnerTeamId, sets: result.sets });
@@ -744,7 +781,7 @@ class SeedBuilder {
   // -- bracket --------------------------------------------------------------
 
   /** Play the bracket to the planned status per position, advancing winners as the engine does. */
-  playBracket(drawn: DrawnEvent, plan: BracketPlan, teamsById: Map<string, SeedTeam>): void {
+  playBracket(drawn: DrawnEvent, organizer: NewUser, plan: BracketPlan, teamsById: Map<string, SeedTeam>): void {
     const bracket = drawn.plan.matches
       .filter((m): m is DrawMatch & { bracketPosition: number } => m.bracketPosition !== null)
       .sort((x, y) => x.bracketPosition - y.bracketPosition);
@@ -753,11 +790,21 @@ class SeedBuilder {
       if (!row) throw new Error(`seed: unknown bracket match ${key}`);
       return row;
     };
-    const advance = (m: DrawMatch, winner: SeedTeam) => {
+    /** The winner moves into the next slot, as `applyAdvancement` records it. */
+    const advance = (m: DrawMatch, winner: SeedTeam, at: number) => {
       if (m.nextMatchKey === null || m.nextMatchSlot === null) return;
       const next = rowOf(m.nextMatchKey);
       if (m.nextMatchSlot === "a") next.teamAId = winner.row.id;
       else next.teamBId = winner.row.id;
+      this.audit({
+        actorUserId: null,
+        actorKind: "system",
+        action: "match.slot_filled",
+        subjectType: "match",
+        subjectId: next.id,
+        detailJson: JSON.stringify({ slot: m.nextMatchSlot, teamId: winner.row.id, fromMatchId: rowOf(m.key).id }),
+        createdAt: at,
+      });
     };
 
     for (const m of bracket) {
@@ -773,17 +820,15 @@ class SeedBuilder {
       const b = teamsById.get(row.teamBId ?? "");
       if (!a || !b) throw new Error(`seed: position ${m.bracketPosition} planned as ${desired} but lacks two teams`);
       const startedAt = scheduledAt + this.rng.int(2, 9) * MINUTE;
-      row.startedAt = startedAt;
+      this.startMatch(row, organizer, startedAt);
 
       switch (desired) {
         case "final": {
           const result = this.playMatch(a, b, row.bestOf);
           const finalizedAt = startedAt + (38 + 14 * (result.sets.length - 2)) * MINUTE + this.rng.int(0, 6) * MINUTE;
-          row.status = "final";
           row.winnerTeamId = result.winner === "a" ? a.row.id : b.row.id;
-          row.finalizedAt = finalizedAt;
           this.recordAgreedResult(row, a, b, result.sets, finalizedAt);
-          advance(m, result.winner === "a" ? a : b);
+          advance(m, result.winner === "a" ? a : b, finalizedAt);
           break;
         }
         case "disputed": {
@@ -819,48 +864,27 @@ class SeedBuilder {
           const verdictB = judgeMatch(viewB.sets, "3");
           if (!verdictB.legal) throw new Error(`seed: disputed alternate scoreline is illegal: ${verdictB.reason}`);
           const endedAt = startedAt + 52 * MINUTE;
-          const subA = this.submission(row, a, viewA, "a", endedAt + 3 * MINUTE);
-          const subB = this.submission(row, b, viewB, "b", endedAt + 6 * MINUTE);
+          const firstAt = endedAt + 3 * MINUTE;
+          const secondAt = endedAt + 6 * MINUTE;
+          const consensus = this.openConsensus(row, startedAt);
+          const subA = this.firstSubmission(row, consensus, a, viewA, "a", firstAt);
+          const subB = this.submission(row, b, viewB, "b", secondAt);
           if (subA.payloadHash === subB.payloadHash) throw new Error("seed: disputed submissions must differ");
-          row.status = "disputed";
-          this.data.matchConsensus.push({
-            id: this.id(endedAt + 6 * MINUTE),
-            matchId: row.id,
-            state: "disputed",
-            agreedPayloadJson: null,
-            agreedPayloadHash: null,
-            disputedReason: `Set 3 differs: ${third.teamAPoints}–${third.teamBPoints} vs ${viewB.sets[2]?.teamAPoints}–${viewB.sets[2]?.teamBPoints}`,
-            resolvedByUserId: null,
-            idempotencyKey: null,
-            updatedAt: endedAt + 6 * MINUTE,
+          const reason = describeDifferences(diffScorelines(viewA.sets, viewB.sets));
+          this.consensusTransition(consensus, "disputed", { kind: "player", userId: subB.submittedByUserId }, secondAt, {
+            event: "conflicting_submission",
+            reason,
+            hashes: [subA.payloadHash, subB.payloadHash],
           });
-          this.audit({
-            actorUserId: null,
-            actorKind: "system",
-            action: "consensus.disputed",
-            subjectType: "match",
-            subjectId: row.id,
-            detailJson: JSON.stringify({ hashes: [subA.payloadHash, subB.payloadHash] }),
-            createdAt: endedAt + 6 * MINUTE,
-          });
+          consensus.disputedReason = reason;
+          this.matchTransition(row, "disputed", { kind: "system", userId: null }, secondAt, { consensusId: consensus.id, reason });
           break;
         }
         case "awaiting_scores": {
           const result = this.playMatch(a, b, "3");
           const endedAt = startedAt + 44 * MINUTE;
-          this.submission(row, a, { matchId: row.id, sets: result.sets }, "a", endedAt + 2 * MINUTE);
-          row.status = "awaiting_scores";
-          this.data.matchConsensus.push({
-            id: this.id(endedAt + 2 * MINUTE),
-            matchId: row.id,
-            state: "awaiting_second",
-            agreedPayloadJson: null,
-            agreedPayloadHash: null,
-            disputedReason: null,
-            resolvedByUserId: null,
-            idempotencyKey: null,
-            updatedAt: endedAt + 2 * MINUTE,
-          });
+          const consensus = this.openConsensus(row, startedAt);
+          this.firstSubmission(row, consensus, a, { matchId: row.id, sets: result.sets }, "a", endedAt + 2 * MINUTE);
           break;
         }
         case "in_progress": {
@@ -885,18 +909,7 @@ class SeedBuilder {
             teamBPoints: first.winner === "a" ? liveA : liveB,
             agreed: false,
           });
-          row.status = "in_progress";
-          this.data.matchConsensus.push({
-            id: this.id(startedAt),
-            matchId: row.id,
-            state: "awaiting_first",
-            agreedPayloadJson: null,
-            agreedPayloadHash: null,
-            disputedReason: null,
-            resolvedByUserId: null,
-            idempotencyKey: null,
-            updatedAt: startedAt,
-          });
+          this.openConsensus(row, startedAt);
           break;
         }
         case "bye":
@@ -1053,10 +1066,10 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     });
     const teamsById = new Map(teams.map((x) => [x.row.id, x]));
     const drawn = b.drawEvent(t, coOrganizer, teams, SEED_DRAWS.settled, day - 2 * DAY + 3 * HOUR);
-    const results = b.playPools(drawn, teamsById);
+    const results = b.playPools(drawn, organizer, teamsById);
     const lastPool = Math.max(...[...drawn.matchRows.values()].map((m) => m.finalizedAt ?? 0));
     b.seedBracketFromPools(t, drawn, results, SEED_DRAWS.settled, teamsById, lastPool + 5 * MINUTE);
-    b.playBracket(drawn, { 1: "final", 2: "final", 3: "final", 4: "final", 5: "final", 6: "final", 7: "final" }, teamsById);
+    b.playBracket(drawn, organizer, { 1: "final", 2: "final", 3: "final", 4: "final", 5: "final", 6: "final", 7: "final" }, teamsById);
     b.commitMatches(drawn);
 
     const northline = b.sponsor(t, "Northline Boardworks", "presenting", 150000);
@@ -1166,13 +1179,14 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     });
     const teamsById = new Map(teams.map((x) => [x.row.id, x]));
     const drawn = b.drawEvent(t, organizer, teams, SEED_DRAWS.live, day - 1 * DAY + 2 * HOUR);
-    const results = b.playPools(drawn, teamsById);
+    const results = b.playPools(drawn, organizer, teamsById);
     const lastPool = Math.max(...[...drawn.matchRows.values()].map((m) => m.finalizedAt ?? 0));
     b.seedBracketFromPools(t, drawn, results, SEED_DRAWS.live, teamsById, lastPool + 5 * MINUTE);
     // Position 1 is the top seed's bye (engine-made). Round of 16 done, quarters
     // mid-way, one semifinal on the sand.
     b.playBracket(
       drawn,
+      organizer,
       {
         2: "final",
         3: "final",

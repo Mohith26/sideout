@@ -1,21 +1,32 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { getMatchDetail, type MatchDetail } from "@/db/queries/tournaments";
-import { matches, tournaments } from "@/db/schema";
+import { matchConsensus, matches, tournaments } from "@/db/schema";
 import { fillSlot, forfeitMatch as forfeitInDomain, type Advancement } from "@/domain/bracket";
-import { transitionMatch, type TransitionActor } from "@/domain/transitions";
+import { CONSENSUS_AUDIT } from "@/domain/consensus";
+import { TERMINAL_MATCH_STATUSES, transitionMatch, type TransitionActor } from "@/domain/transitions";
 import { ApiFailure } from "@/lib/api";
 import { systemClock, type Clock } from "@/lib/clock";
-import { writeAudit, type Tx } from "@/server/audit";
+import { errorMessage, log } from "@/lib/log";
+import { SYSTEM_ACTOR, writeAudit, type Tx } from "@/server/audit";
+import { seedBracketFromPools } from "@/server/draw";
 
 /**
- * Match service. Phase 2 exposes one write: an organizer forfeit, which is
- * the one bracket-advancing action that exists before the consensus state
- * machine (phase 3) lands. `applyAdvancement` is the shared tail both paths
- * use: it writes the resolved match, moves the winner into the next slot, and
- * audits both, inside the caller's transaction.
+ * Match service. The one write here is an organizer forfeit; a played result
+ * reaches `final` only through `@/server/consensus`. Both paths share the same
+ * tail: `applyAdvancement` writes the resolved match, moves the winner into
+ * the next slot, and audits both, inside the caller's transaction; then, once
+ * that transaction has committed, `seedBracketIfPoolsComplete` unlocks the
+ * bracket if this was the last pool match.
+ *
+ * A forfeit on a disputed match sets the dispute aside: the consensus row
+ * keeps its `disputed` state (nothing is ever written to Lucra for it) but
+ * records who settled it and that a forfeit did, so every reader keys on the
+ * match status.
  */
+
+const SETTLED_BY_FORFEIT = "Settled by forfeit";
 
 export function requireMatch(matchId: string): MatchDetail {
   const detail = getMatchDetail(matchId);
@@ -53,8 +64,49 @@ export function applyAdvancement(tx: Tx, advancement: Advancement, from: string,
   });
 }
 
+/**
+ * When the last pool match of a `pool_to_bracket` event becomes terminal —
+ * agreed, resolved or forfeited — seed the bracket from the pool standings so
+ * organizers do not have to (`docs/open-questions.md`, follow-ups). Runs after
+ * the resolving transaction committed: a failure here must never undo a
+ * recorded result, so it is logged and reported as `false`, and the
+ * organizer's `{ stage: "bracket" }` draw request remains available.
+ */
+export function seedBracketIfPoolsComplete(matchId: string, clock: Clock): boolean {
+  const db = getDb();
+  const match = db.select().from(matches).where(eq(matches.id, matchId)).get();
+  if (!match || match.poolId === null) return false;
+  const t = db.select({ format: tournaments.format, status: tournaments.status }).from(tournaments).where(eq(tournaments.id, match.tournamentId)).get();
+  if (!t || t.format !== "pool_to_bracket" || t.status !== "live") return false;
+  const poolMatches = db
+    .select({ status: matches.status })
+    .from(matches)
+    .where(and(eq(matches.tournamentId, match.tournamentId), isNotNull(matches.poolId)))
+    .all();
+  if (poolMatches.some((m) => !TERMINAL_MATCH_STATUSES.has(m.status))) return false;
+  const roundOne = db
+    .select({ teamAId: matches.teamAId, teamBId: matches.teamBId, status: matches.status })
+    .from(matches)
+    .where(and(eq(matches.tournamentId, match.tournamentId), isNull(matches.poolId), eq(matches.round, 1)))
+    .all();
+  // Already seeded (or no bracket): nothing to do.
+  if (roundOne.length === 0 || roundOne.some((m) => m.teamAId !== null || m.teamBId !== null || m.status !== "scheduled")) return false;
+  try {
+    seedBracketFromPools(match.tournamentId, SYSTEM_ACTOR, { preview: false, clock });
+    return true;
+  } catch (err) {
+    log.error("matches: bracket seeding after the last pool match failed", { tournamentId: match.tournamentId, message: errorMessage(err) }, err);
+    return false;
+  }
+}
+
+export type ForfeitResult = MatchDetail & {
+  /** Whether this forfeit completed pool play and the bracket was seeded from the pools as a side effect. */
+  bracketSeeded: boolean;
+};
+
 /** Organizer forfeit: `forfeitingTeamId` loses, the opponent advances. */
-export function forfeitMatch(matchId: string, forfeitingTeamId: string, actor: TransitionActor, clock: Clock = systemClock): MatchDetail {
+export function forfeitMatch(matchId: string, forfeitingTeamId: string, actor: TransitionActor, clock: Clock = systemClock): ForfeitResult {
   const db = getDb();
   const match = db.select().from(matches).where(eq(matches.id, matchId)).get();
   if (!match) throw new ApiFailure("not_found", "No match with that id.");
@@ -63,10 +115,23 @@ export function forfeitMatch(matchId: string, forfeitingTeamId: string, actor: T
 
   const verdict = transitionMatch(match.status, "forfeited", actor);
   if (!verdict.ok) throw new ApiFailure("conflict", verdict.reason);
-  const advancement = forfeitInDomain(match, forfeitingTeamId, clock.now());
+  const now = clock.now();
+  const advancement = forfeitInDomain(match, forfeitingTeamId, now);
+  const consensus = db.select().from(matchConsensus).where(eq(matchConsensus.matchId, matchId)).get();
 
   db.transaction((tx) => {
     applyAdvancement(tx, advancement, match.status, actor, { forfeitedTeamId: forfeitingTeamId });
+    if (consensus?.state !== "disputed") return;
+    tx.update(matchConsensus).set({ disputedReason: SETTLED_BY_FORFEIT, resolvedByUserId: actor.userId, updatedAt: now }).where(eq(matchConsensus.id, consensus.id)).run();
+    writeAudit(tx, {
+      actor,
+      action: CONSENSUS_AUDIT.settledByForfeit,
+      subjectType: "consensus",
+      subjectId: consensus.id,
+      detail: { matchId, forfeitedTeamId: forfeitingTeamId, previousReason: consensus.disputedReason },
+      at: now,
+    });
   });
-  return requireMatch(matchId);
+  const bracketSeeded = seedBracketIfPoolsComplete(matchId, clock);
+  return { ...requireMatch(matchId), bracketSeeded };
 }

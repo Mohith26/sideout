@@ -5,10 +5,10 @@ import type { MatchSlot, MatchStatus } from "@/db/schema";
  * takes the match as it stands, returns the patches to apply, and never touches
  * the database. Two ways a played bracket match resolves:
  *
- * - `final`      — the consensus state machine (phase 3) calls `advanceWinner`
- *                  with the agreed winner once a match reaches `agreed`.
+ * - `final`      — the consensus service (`@/server/consensus`) calls
+ *                  `advanceWinner` with the agreed winner once a match reaches
+ *                  `agreed`.
  * - `forfeited`  — an organizer forfeits one side; the other side advances.
- *                  `forfeitMatch` is the only path phase 2 exposes on a route.
  *
  * Byes are placed, resolved and pre-advanced when round 1 is seeded
  * (`seedBracketSlots` in `@/domain/draw`); they never occur past round 1.

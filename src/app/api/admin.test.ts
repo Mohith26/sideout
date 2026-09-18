@@ -466,9 +466,18 @@ describe("organizer routes", () => {
       expect(res.body.data.match.finalizedAt).not.toBeNull();
       const finalMatch = app.conn.db.select().from(matches).where(eq(matches.id, semi.nextMatchId)).get();
       expect(semi.nextMatchSlot === "a" ? finalMatch?.teamAId : finalMatch?.teamBId).toBe(semi.teamBId);
-      expect(app.audits(semi.id, "match.status_changed").map((a) => JSON.parse(a.detailJson ?? "{}"))).toEqual([
-        { from: "in_progress", to: "forfeited", winnerTeamId: semi.teamBId, forfeitedTeamId: semi.teamAId },
-      ]);
+      // The seed recorded the match going on the sand at its fictional time today (mid-afternoon
+      // at the venue); the forfeit is stamped by the real clock, so the two are not compared by
+      // order — the forfeit's row is the one at the match's finalizedAt.
+      const statusChanges = app.audits(semi.id, "match.status_changed");
+      expect(statusChanges.map((a) => JSON.parse(a.detailJson ?? "{}"))).toEqual(
+        expect.arrayContaining([
+          { from: "scheduled", to: "in_progress" },
+          { from: "in_progress", to: "forfeited", winnerTeamId: semi.teamBId, forfeitedTeamId: semi.teamAId },
+        ]),
+      );
+      expect(statusChanges).toHaveLength(2);
+      expect(statusChanges.find((a) => a.createdAt === res.body.data.match.finalizedAt)?.detailJson).toContain('"to":"forfeited"');
       expect(app.audits(semi.nextMatchId, "match.slot_filled")).toHaveLength(1);
 
       expectFailure(

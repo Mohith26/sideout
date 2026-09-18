@@ -88,20 +88,41 @@ export type ServerEnv = z.infer<typeof serverSchema> & PublicEnv & DerivedEnv;
 
 const DEV_SESSION_SECRET = "sideout-dev-session-secret-never-in-production";
 
+declare global {
+  var __sideoutEphemeralSessionSecret: string | undefined;
+}
+
+/**
+ * The random secret a production process without SESSION_SECRET signs with.
+ * Kept on `globalThis` because the server build bundles this module into
+ * every route's chunk: a module-level value would be minted once per chunk,
+ * and a cookie issued by the sign-in route would fail to verify in the page
+ * that renders next. One process, one secret.
+ */
+function ephemeralSessionSecret(): string {
+  globalThis.__sideoutEphemeralSessionSecret ??= randomBytes(32).toString("hex");
+  return globalThis.__sideoutEphemeralSessionSecret;
+}
+
 /**
  * Outside production a fixed dev secret keeps local sessions valid across
  * restarts. In production the secret must come from the environment; when it
  * is missing the process still boots (so `next build` and a smoke deploy work)
  * but signs with a random per-process secret and says so loudly — every
  * session dies on restart and a multi-instance deploy cannot share them.
+ * `mint` exists so tests can prove the fallback is random; the app shares one
+ * secret across every module instance in the process.
  */
-export function resolveSessionSecret(env: { NODE_ENV: string; SESSION_SECRET?: string | undefined }): {
+export function resolveSessionSecret(
+  env: { NODE_ENV: string; SESSION_SECRET?: string | undefined },
+  mint: () => string = ephemeralSessionSecret,
+): {
   sessionSecret: string;
   sessionSecretSource: SessionSecretSource;
 } {
   if (env.SESSION_SECRET) return { sessionSecret: env.SESSION_SECRET, sessionSecretSource: "env" };
   if (env.NODE_ENV !== "production") return { sessionSecret: DEV_SESSION_SECRET, sessionSecretSource: "dev-default" };
-  return { sessionSecret: randomBytes(32).toString("hex"), sessionSecretSource: "ephemeral" };
+  return { sessionSecret: mint(), sessionSecretSource: "ephemeral" };
 }
 
 /** The dev-login route is compiled in outside production, or in production only when explicitly opted in. */
@@ -120,7 +141,7 @@ function emptyToUndefined(raw: RawEnv): RawEnv {
 }
 
 /** Parse a raw environment. Exposed for tests; the app uses the `env` singleton. */
-export function parseServerEnv(raw: RawEnv): ServerEnv {
+export function parseServerEnv(raw: RawEnv, options: { mintEphemeralSecret?: () => string } = {}): ServerEnv {
   const cleaned = emptyToUndefined(raw);
   const parsed = serverSchema.safeParse(cleaned);
   if (!parsed.success) {
@@ -134,7 +155,7 @@ export function parseServerEnv(raw: RawEnv): ServerEnv {
   return {
     ...parsed.data,
     ...pub,
-    ...resolveSessionSecret(parsed.data),
+    ...resolveSessionSecret(parsed.data, options.mintEphemeralSecret),
     devLoginEnabled: isDevLoginEnabled(parsed.data),
   };
 }

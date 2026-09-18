@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { parseServerEnv } from "@/env";
 import { parsePublicEnv } from "@/env.public";
@@ -79,11 +80,22 @@ describe("session secret and dev login", () => {
   });
 
   it("never falls back to the dev secret in production: a missing secret is ephemeral and random", () => {
-    const a = parseServerEnv({ NODE_ENV: "production" });
-    const b = parseServerEnv({ NODE_ENV: "production" });
+    const mint = () => randomBytes(32).toString("hex");
+    const a = parseServerEnv({ NODE_ENV: "production" }, { mintEphemeralSecret: mint });
+    const b = parseServerEnv({ NODE_ENV: "production" }, { mintEphemeralSecret: mint });
     expect(a.sessionSecretSource).toBe("ephemeral");
     expect(a.sessionSecret).not.toBe(b.sessionSecret);
     expect(a.sessionSecret).not.toBe(parseServerEnv({ NODE_ENV: "development" }).sessionSecret);
+    expect(a.sessionSecret).toHaveLength(64);
+  });
+
+  it("shares one ephemeral secret across every module instance in the process", () => {
+    // The server build evaluates env.ts once per route chunk; a cookie signed by the
+    // sign-in route must verify in the page rendered next, so the default mint is process-wide.
+    const a = parseServerEnv({ NODE_ENV: "production" });
+    const b = parseServerEnv({ NODE_ENV: "production" });
+    expect(a.sessionSecretSource).toBe("ephemeral");
+    expect(a.sessionSecret).toBe(b.sessionSecret);
     expect(a.sessionSecret).toHaveLength(64);
   });
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import type { NewMatch, NewScoreSubmission, NewSetRow } from "@/db/schema";
+import { storedSubmissionSets } from "@/domain/consensus";
 import { judgeMatch, judgeSet, setTarget, type SetScore } from "@/domain/scoreline";
+import { hashScoreline } from "@/domain/scoreline-hash";
 import { draw, drawConfigSchema, seedBracketSlots, selectAdvancing } from "@/domain/draw";
 import { computeStandings, type StandingsMatch } from "@/domain/standings";
 import { isUuidV7 } from "@/lib/uuid";
@@ -31,21 +32,13 @@ function toStandingsMatch(m: NewMatch, sets: NewSetRow[]): StandingsMatch {
   return { teamAId: m.teamAId, teamBId: m.teamBId, winnerTeamId: m.winnerTeamId, sets };
 }
 
-// What a captain typed, stored verbatim: their own points first.
-const submittedPayload = z.object({
-  perspective: z.enum(["a", "b"]),
-  sets: z.array(z.object({ setNumber: z.number(), usPoints: z.number(), themPoints: z.number() })),
-});
-
-/** A stored submission re-expressed from team A's side, as consensus would read it. */
+/** A stored submission (what a captain typed, their own points first) re-expressed from team A's side, as consensus reads it. */
 function submittedSets(sub: NewScoreSubmission): SetScore[] {
-  const payload = submittedPayload.parse(JSON.parse(sub.payloadJson));
-  return payload.sets.map((s) => ({
-    setNumber: s.setNumber,
-    teamAPoints: payload.perspective === "a" ? s.usPoints : s.themPoints,
-    teamBPoints: payload.perspective === "a" ? s.themPoints : s.usPoints,
-  }));
+  return storedSubmissionSets(sub.payloadJson);
 }
+
+const audits = (subjectId: string, action: string) => data.auditLog.filter((a) => a.subjectId === subjectId && a.action === action);
+const detailOf = (a: { detailJson?: string | null | undefined } | undefined) => JSON.parse(a?.detailJson ?? "{}") as Record<string, unknown>;
 
 describe("seed dataset (spec §13)", () => {
   it("is deterministic and every id is a unique UUID v7", () => {
@@ -264,10 +257,24 @@ describe("seed dataset (spec §13)", () => {
       expect(subs.every((s) => s.submittedForTeamId === disputed?.teamAId || s.submittedForTeamId === disputed?.teamBId)).toBe(true);
       const consensus = data.matchConsensus.find((c) => c.matchId === disputed?.id);
       expect(consensus?.state).toBe("disputed");
-      expect(consensus?.disputedReason).toMatch(/Set 3 differs/);
+      expect(consensus?.disputedReason).toMatch(/^Set 3 differs: \d+–\d+ vs \d+–\d+$/);
       expect(consensus?.idempotencyKey).toBeNull();
+      expect(consensus?.agreedPayloadJson).toBeNull();
       expect(setsOf(disputed?.id ?? "")).toHaveLength(0);
       for (const sub of subs) expect(judgeMatch(submittedSets(sub), "3")).toMatchObject({ legal: true });
+      expect(subs.every((s) => s.supersededById === null)).toBe(true);
+      // The rows read like the service wrote them: two transitions on the consensus, the match to disputed by system.
+      const transitions = audits(consensus?.id ?? "", "consensus.state_changed").map((a) => [detailOf(a).from, detailOf(a).to, a.actorKind]);
+      expect(transitions).toEqual([
+        ["awaiting_first", "awaiting_second", "player"],
+        ["awaiting_second", "disputed", "player"],
+      ]);
+      expect(audits(disputed?.id ?? "", "match.status_changed").map((a) => [detailOf(a).to, a.actorKind])).toEqual([
+        ["in_progress", "organizer"],
+        ["awaiting_scores", "player"],
+        ["disputed", "system"],
+      ]);
+      expect(audits(disputed?.id ?? "", "score.submitted")).toHaveLength(2);
     });
 
     it("both disputed submissions are legal scorelines whatever the rng seed", () => {
@@ -287,8 +294,13 @@ describe("seed dataset (spec §13)", () => {
 
     it("awaiting-scores match has exactly one submission; live match has provisional sets only", () => {
       const awaiting = bracket.find((m) => m.status === "awaiting_scores");
-      expect(data.scoreSubmissions.filter((s) => s.matchId === awaiting?.id)).toHaveLength(1);
-      expect(data.matchConsensus.find((c) => c.matchId === awaiting?.id)?.state).toBe("awaiting_second");
+      const single = data.scoreSubmissions.filter((s) => s.matchId === awaiting?.id);
+      expect(single).toHaveLength(1);
+      expect(single[0]?.submittedForTeamId).toBe(awaiting?.teamAId);
+      expect(single[0]?.supersededById).toBeNull();
+      const awaitingConsensus = data.matchConsensus.find((c) => c.matchId === awaiting?.id);
+      expect(awaitingConsensus?.state).toBe("awaiting_second");
+      expect(audits(awaitingConsensus?.id ?? "", "consensus.state_changed").map((a) => detailOf(a).to)).toEqual(["awaiting_second"]);
 
       const liveMatch = bracket.find((m) => m.status === "in_progress");
       const liveSets = setsOf(liveMatch?.id ?? "");
@@ -335,24 +347,54 @@ describe("seed dataset (spec §13)", () => {
       }
     });
 
-    it("has two agreeing submissions from different teams and an agreed consensus with an idempotency key", () => {
+    it("has two agreeing submissions from different teams and an agreed consensus with a minted idempotency key", () => {
       for (const m of finals) {
         const subs = data.scoreSubmissions.filter((s) => s.matchId === m.id);
         expect(subs).toHaveLength(2);
         expect(new Set(subs.map((s) => s.submittedForTeamId)).size).toBe(2);
+        expect(subs.every((s) => s.submittedForTeamId === m.teamAId || s.submittedForTeamId === m.teamBId)).toBe(true);
+        expect(subs.every((s) => s.supersededById === null)).toBe(true);
         expect(new Set(subs.map((s) => s.payloadHash)).size).toBe(1);
         const consensus = data.matchConsensus.find((c) => c.matchId === m.id);
         expect(consensus?.state).toBe("agreed");
         expect(consensus?.agreedPayloadHash).toBe(subs[0]?.payloadHash);
-        expect(consensus?.idempotencyKey).toMatch(/^sideout-consensus-/);
+        expect(consensus?.resolvedByUserId).toBeNull();
+        expect(isUuidV7(consensus?.idempotencyKey ?? "")).toBe(true);
       }
-      const keys = data.matchConsensus.map((c) => c.idempotencyKey).filter(Boolean);
+      const keys = data.matchConsensus.map((c) => c.idempotencyKey).filter((k): k is string => k !== null);
+      expect(keys).toHaveLength(finals.length);
       expect(new Set(keys).size).toBe(keys.length);
     });
 
-    it("writes an audit trail for finalization", () => {
+    it("stores the agreed payload the sets rows were written from, hashed the same way both captains hashed it", () => {
       for (const m of finals) {
-        expect(data.auditLog.some((a) => a.subjectId === m.id && a.action === "match.finalized")).toBe(true);
+        const consensus = data.matchConsensus.find((c) => c.matchId === m.id);
+        const agreed = JSON.parse(consensus?.agreedPayloadJson ?? "null") as { matchId: string; sets: SetScore[] } | null;
+        expect(agreed?.matchId).toBe(m.id);
+        const rows = setsOf(m.id).map((s) => ({ setNumber: s.setNumber, teamAPoints: s.teamAPoints, teamBPoints: s.teamBPoints }));
+        expect(rows).toEqual(agreed?.sets);
+        expect(hashScoreline({ matchId: m.id, sets: rows }, "a")).toBe(consensus?.agreedPayloadHash);
+        for (const sub of data.scoreSubmissions.filter((s) => s.matchId === m.id)) expect(submittedSets(sub)).toEqual(rows);
+      }
+    });
+
+    it("writes the audit trail the consensus service writes: transitions by the players, final by system", () => {
+      for (const m of finals) {
+        const consensus = data.matchConsensus.find((c) => c.matchId === m.id);
+        const transitions = audits(consensus?.id ?? "", "consensus.state_changed");
+        expect(transitions.map((a) => [detailOf(a).from, detailOf(a).to, a.actorKind])).toEqual([
+          ["awaiting_first", "awaiting_second", "player"],
+          ["awaiting_second", "agreed", "player"],
+        ]);
+        expect(detailOf(transitions[1])).toMatchObject({ event: "matching_submission", hash: consensus?.agreedPayloadHash, idempotencyKey: consensus?.idempotencyKey, mintedKey: true, winnerTeamId: m.winnerTeamId });
+        const statuses = audits(m.id, "match.status_changed");
+        expect(statuses.map((a) => [detailOf(a).to, a.actorKind])).toEqual([
+          ["in_progress", "organizer"],
+          ["awaiting_scores", "player"],
+          ["final", "system"],
+        ]);
+        expect(detailOf(statuses[2])).toMatchObject({ winnerTeamId: m.winnerTeamId, consensusId: consensus?.id });
+        expect(audits(m.id, "score.submitted")).toHaveLength(2);
       }
     });
   });

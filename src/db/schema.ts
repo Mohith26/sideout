@@ -247,6 +247,14 @@ export const tournaments = sqliteTable(
      * than trusting the caller to resend the rule that sized the bracket.
      */
     drawConfigJson: text("draw_config_json"),
+    /**
+     * The frozen close preview (`StoredClosePreview` from `@/server/close`, as
+     * JSON): the final standings and projected rewards the organizer confirmed,
+     * their hash, and when and by whom. Written once by the close flow when
+     * `live → awaiting_settlement`; null before that. Organizer-only: the public
+     * projection (`PublicTournament`) omits it.
+     */
+    closePreviewJson: text("close_preview_json"),
     createdAt: epochMs("created_at").notNull(),
   },
   (t) => [
@@ -443,11 +451,10 @@ export const scoreSubmissions = sqliteTable(
     submittedByUserId: text("submitted_by_user_id")
       .notNull()
       .references(() => users.id),
-    submittedForTeamId: text("submitted_for_team_id")
-      .notNull()
-      .references(() => teams.id),
+    /** Null for an organizer's resolution, which speaks for neither team (`resolved_by_user_id` names who). */
+    submittedForTeamId: text("submitted_for_team_id").references(() => teams.id),
     payloadJson: text("payload_json").notNull(),
-    /** sha256 of the canonicalized scoreline (`@/domain/scoreline`). */
+    /** sha256 of the canonicalized, match-oriented scoreline (`hashScoreline` in `@/domain/scoreline-hash`). */
     payloadHash: text("payload_hash").notNull(),
     createdAt: epochMs("created_at").notNull(),
     supersededById: text("superseded_by_id").references((): AnySQLiteColumn => scoreSubmissions.id),
