@@ -12,7 +12,10 @@ export interface DataTableColumn<Row> {
   render: (row: Row) => ReactNode;
   align?: "start" | "end";
   numeric?: boolean;
-  /** Tailwind width class, e.g. "w-12". */
+  /**
+   * Tailwind width classes applied to every cell in the column, e.g. "w-12", or
+   * "w-full max-w-0" for the one column that should truncate rather than widen the row.
+   */
   width?: string;
   /** Hide below the md breakpoint. */
   hideBelowMd?: boolean;
@@ -81,6 +84,7 @@ export function DataTable<Row>({
                       "px-3 py-2.5 align-middle first:pl-4 last:pr-4",
                       col.align === "end" || col.numeric ? "text-end" : "text-start",
                       col.numeric && "tabular whitespace-nowrap",
+                      col.width,
                       col.hideBelowMd && "hidden md:table-cell",
                     )}
                   >

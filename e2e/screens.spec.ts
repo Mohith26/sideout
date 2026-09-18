@@ -25,11 +25,17 @@ function playerPhone(i: number): string {
 
 type Me = { data: { teams: Array<{ tournament: { slug: string }; team: { status: string } }>; invites: Array<{ tournament: { slug: string } }> } };
 
-/** Two seeded players with no live team and no pending invite in the open event. */
+/**
+ * Two seeded players with no live team and no pending invite in the open event.
+ * Both projects run the team flow in parallel against one database, so each
+ * scans from its own end of the roster: picking the same captain twice would
+ * make the second team supersede the first (`src/server/teams.ts`).
+ */
 async function freePlayers(request: APIRequestContext): Promise<[string, string]> {
   const free: string[] = [];
-  for (let i = 0; i < 48 && free.length < 2; i += 1) {
-    const phone = playerPhone(i);
+  const fromTheEnd = test.info().project.name === "desktop";
+  for (let n = 0; n < 48 && free.length < 2; n += 1) {
+    const phone = playerPhone(fromTheEnd ? 47 - n : n);
     await devLogin(request, phone);
     const me = (await (await request.get("/api/me")).json()) as Me;
     const busy = me.data.teams.some((t) => t.tournament.slug === OPEN && t.team.status !== "disbanded" && t.team.status !== "withdrawn");
@@ -181,7 +187,8 @@ test.describe("screens", () => {
     const donate = captainPage.getByRole("button", { name: /Donate \$75 and register/ });
     await expect(donate).toBeVisible();
     await donate.click();
-    await expect(captainPage.getByText("Your donation is being processed")).toBeVisible();
+    // Exact: the success toast's body carries the same sentence with a full stop.
+    await expect(captainPage.getByText("Your donation is being processed", { exact: true })).toBeVisible();
     await expect(captainPage.getByText("Processing")).toBeVisible();
     await expect(captainPage.getByText("Not available in this build · phase 4")).toBeVisible();
     // The registration is real: the team now counts on the public roster and the donation is a pending stub intent.
@@ -206,7 +213,8 @@ test.describe("screens", () => {
     await expect(page).toHaveURL(/\/organizer\/events$/);
     await expect(page.getByRole("heading", { level: 1, name: "Events" })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Console" }).first()).toBeVisible();
-    await page.getByRole("link", { name: "Sandbar Classic", exact: true }).first().click();
+    // The event cell is one 44px link whose name also carries the division/format line (the status pill on a phone).
+    await page.getByRole("link", { name: /^Sandbar Classic/ }).first().click();
     await expect(page.getByRole("heading", { level: 1, name: "Sandbar Classic" })).toBeVisible();
     await expect(page.getByText("Close tournament")).toBeVisible();
     await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Sandbar Classic");

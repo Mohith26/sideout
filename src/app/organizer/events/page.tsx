@@ -23,16 +23,23 @@ const columns: DataTableColumn<TournamentSummary>[] = [
   {
     key: "event",
     header: "Event",
+    // The one shrinkable column: the name truncates instead of widening the row, down to a floor
+    // that keeps it legible when every column is showing and the box has to scroll. Below md the
+    // status pill sits under the name, since its own column would leave the name no room at 390px.
+    width: "w-full min-w-40 max-w-0",
     render: (s) => (
-      <Link href={`/organizer/events/${s.tournament.id}`} className="group target -my-2.5 flex min-w-0 flex-col justify-center rounded-sm py-2.5 after:absolute after:inset-0 md:after:hidden">
+      <Link href={`/organizer/events/${s.tournament.id}`} className="group target -my-2.5 flex min-w-0 flex-col justify-center gap-1 rounded-sm py-2.5 after:absolute after:inset-0 md:gap-0 md:after:hidden">
         <span className="truncate font-medium text-text-primary group-hover:text-volt">{s.tournament.name}</span>
-        <span className="truncate type-label text-text-tertiary">
+        <span className="hidden truncate type-label text-text-tertiary md:block">
           {DIVISION_LABEL[s.tournament.division]} · {FORMAT_LABEL[s.tournament.format]} · {s.tournament.venueCity}
+        </span>
+        <span className="md:hidden">
+          <StatusPill spec={TOURNAMENT_STATUS_PILL[s.tournament.status]} size="sm" />
         </span>
       </Link>
     ),
   },
-  { key: "status", header: "Status", render: (s) => <StatusPill spec={TOURNAMENT_STATUS_PILL[s.tournament.status]} size="sm" /> },
+  { key: "status", header: "Status", hideBelowMd: true, render: (s) => <StatusPill spec={TOURNAMENT_STATUS_PILL[s.tournament.status]} size="sm" /> },
   { key: "date", header: "Starts", hideBelowMd: true, render: (s) => <span className="tabular text-text-secondary">{formatDate(s.tournament.startsAt, s.tournament.venueTimezone)}</span> },
   { key: "teams", header: "Teams", numeric: true, render: (s) => `${s.activeTeams}/${s.tournament.maxTeams}` },
   { key: "live", header: "On court", numeric: true, hideBelowMd: true, render: (s) => (s.liveMatchCount > 0 ? <span className="text-surf">{s.liveMatchCount}</span> : <span className="text-text-tertiary">0</span>) },
