@@ -13,13 +13,24 @@ import type {
   NewSetRow,
   NewSponsor,
   NewTeam,
+  NewTeamInvite,
   NewTeamMember,
   NewTournament,
   NewUser,
   MatchStatus,
   VerificationState,
 } from "@/db/schema";
-import { compareStandings, computeStandings, type StandingRow, type StandingsMatch } from "@/domain/standings";
+import {
+  draw,
+  seedBracketSlots,
+  selectAdvancing,
+  type AdvancementRule,
+  type DrawMatch,
+  type DrawOptions,
+  type DrawPlan,
+  type DrawTeam,
+} from "@/domain/draw";
+import { computeStandings, type StandingRow, type StandingsMatch } from "@/domain/standings";
 import { assertTeamRoster } from "@/domain/team";
 import {
   DECIDING_SET_TARGET,
@@ -32,10 +43,10 @@ import {
   type SetScore,
   type Side,
 } from "@/domain/scoreline";
-import { pairName } from "@/lib/format";
+import { pairName, surname } from "@/lib/format";
 import { createRng, type Rng } from "@/lib/rng";
 import { createUuidV7Generator, shortId } from "@/lib/uuid";
-import { PLAYER_NAMES } from "@/seed/names";
+import { ORGANIZER_NAMES, PLAYER_NAMES } from "@/seed/names";
 
 /**
  * Builds the complete section 13 dataset as plain rows. Pure and deterministic:
@@ -59,6 +70,7 @@ export interface SeedDataset {
   tournaments: NewTournament[];
   teams: NewTeam[];
   teamMembers: NewTeamMember[];
+  teamInvites: NewTeamInvite[];
   pools: NewPool[];
   poolTeams: NewPoolTeam[];
   matches: NewMatch[];
@@ -88,6 +100,76 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+/**
+ * Draw inputs for the seeded events. The seed runs the real draw engine with
+ * these, and `src/seed/build.test.ts` re-runs `draw` from the same inputs to
+ * prove the seeded rows are exactly what the engine produces.
+ */
+export interface SeedDrawSpec {
+  rngSeed: number;
+  courts: number;
+  poolSize: number;
+  advance: AdvancementRule;
+  poolBestOf: BestOf;
+  bracketBestOf: BestOf;
+  /** Minutes after `tournaments.starts_at` that the first pool round begins. */
+  startOffsetMinutes: number;
+  poolMatchMinutes: number;
+  bracketMatchMinutes: number;
+  restMinutes: number;
+}
+
+export const SEED_DRAWS: Record<"live" | "settled", SeedDrawSpec> = {
+  // Six pools of four on six courts; the six winners, six runners-up and three
+  // best third-placed teams make fifteen into a sixteen-slot bracket, so the
+  // top seed draws the one bye.
+  live: {
+    rngSeed: 0x5a9db4c,
+    courts: 6,
+    poolSize: 4,
+    advance: { perPool: 2, bestRemaining: 3 },
+    poolBestOf: "1",
+    bracketBestOf: "3",
+    startOffsetMinutes: 30,
+    poolMatchMinutes: 30,
+    bracketMatchMinutes: 50,
+    restMinutes: 30,
+  },
+  // Four pools of four on four courts; winners and runners-up fill an eight-slot bracket.
+  settled: {
+    rngSeed: 0x10e71de,
+    courts: 4,
+    poolSize: 4,
+    advance: { perPool: 2, bestRemaining: 0 },
+    poolBestOf: "1",
+    bracketBestOf: "3",
+    startOffsetMinutes: 30,
+    poolMatchMinutes: 30,
+    bracketMatchMinutes: 50,
+    restMinutes: 30,
+  },
+};
+
+/** The exact `DrawOptions` the seed hands the engine for a tournament. */
+export function seedDrawOptions(t: Pick<NewTournament, "format" | "startsAt">, teams: readonly DrawTeam[], spec: SeedDrawSpec): DrawOptions {
+  return {
+    format: t.format,
+    teams,
+    courts: spec.courts,
+    poolSize: spec.poolSize,
+    advance: spec.advance,
+    poolBestOf: spec.poolBestOf,
+    bracketBestOf: spec.bracketBestOf,
+    schedule: {
+      startsAt: t.startsAt + spec.startOffsetMinutes * MINUTE,
+      poolMatchMinutes: spec.poolMatchMinutes,
+      bracketMatchMinutes: spec.bracketMatchMinutes,
+      restMinutes: spec.restMinutes,
+    },
+    rng: createRng(spec.rngSeed),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Internal working types
 // ---------------------------------------------------------------------------
@@ -103,15 +185,18 @@ interface SeedTeam {
   strength: number;
 }
 
+/** Desired status per bracket position; positions left out stay `scheduled`. */
 type BracketPlan = Record<number, MatchStatus>;
 
-interface BracketSlot {
-  position: number;
-  round: number;
-  teamA: SeedTeam | null;
-  teamB: SeedTeam | null;
-  nextPosition: number | null;
-  nextSlot: Side | null;
+interface DrawnEvent {
+  plan: DrawPlan;
+  poolRows: Map<string, NewPool>;
+  matchRows: Map<string, NewMatch>;
+}
+
+interface PoolResult {
+  poolKey: string;
+  standings: StandingRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +214,7 @@ class SeedBuilder {
     tournaments: [],
     teams: [],
     teamMembers: [],
+    teamInvites: [],
     pools: [],
     poolTeams: [],
     matches: [],
@@ -185,6 +271,7 @@ class SeedBuilder {
           phoneE164: `+1555${String(100 + i).padStart(3, "0")}${String(1000 + i * 7).slice(-4)}`,
           email: `${slug}@example.com`,
           avatarUrl: null,
+          role: "player",
           createdAt,
         },
       };
@@ -218,6 +305,25 @@ class SeedBuilder {
       });
     });
     return users;
+  }
+
+  /** Organizer accounts: they run events and never play, so they hold no Lucra link. */
+  buildOrganizers(): NewUser[] {
+    const createdBase = this.anchorMs - 119 * DAY;
+    const rows = ORGANIZER_NAMES.map(([first, last], i): NewUser => {
+      const createdAt = createdBase + i * HOUR;
+      return {
+        id: this.id(createdAt),
+        displayName: `${first} ${last}`,
+        phoneE164: `+1555010${String(90 + i).padStart(2, "0")}`,
+        email: `${first}.${last}`.toLowerCase() + "@example.com",
+        avatarUrl: null,
+        role: "organizer",
+        createdAt,
+      };
+    });
+    this.data.users.push(...rows);
+    return rows;
   }
 
   buildCharity(): NewCharity {
@@ -256,10 +362,14 @@ class SeedBuilder {
     return row;
   }
 
-  tournamentTransitions(t: NewTournament, transitions: ReadonlyArray<readonly [from: string, to: string, at: number]>): void {
+  tournamentTransitions(
+    t: NewTournament,
+    organizer: NewUser,
+    transitions: ReadonlyArray<readonly [from: string, to: string, at: number]>,
+  ): void {
     for (const [from, to, at] of transitions) {
       this.audit({
-        actorUserId: null,
+        actorUserId: organizer.id,
         actorKind: "organizer",
         action: "tournament.status_changed",
         subjectType: "tournament",
@@ -304,6 +414,47 @@ class SeedBuilder {
       teams.push({ row, members: [captain, player], strength: (captain.strength + player.strength) / 2 });
     });
     return teams;
+  }
+
+  /**
+   * A team mid-formation: the captain is in, the partner has a pending invite
+   * by phone. Forming teams never count toward capacity and have no donation.
+   */
+  buildFormingTeam(t: NewTournament, captain: SeedUser, invitee: SeedUser, name: string, createdAt: number): NewTeam {
+    const row: NewTeam = { id: this.id(createdAt), tournamentId: t.id, name, seed: null, status: "forming", createdAt };
+    this.data.teams.push(row);
+    this.data.teamMembers.push({ id: this.id(createdAt + 1), teamId: row.id, userId: captain.row.id, role: "captain" });
+    const phone = invitee.row.phoneE164;
+    if (!phone) throw new Error("seed: invitee has no phone");
+    this.data.teamInvites.push({
+      id: this.id(createdAt + 2),
+      teamId: row.id,
+      invitedByUserId: captain.row.id,
+      phoneE164: phone,
+      status: "pending",
+      acceptedByUserId: null,
+      createdAt: createdAt + 2,
+      respondedAt: null,
+    });
+    this.audit({
+      actorUserId: captain.row.id,
+      actorKind: "player",
+      action: "team.created",
+      subjectType: "team",
+      subjectId: row.id,
+      detailJson: JSON.stringify({ tournamentId: t.id, name }),
+      createdAt,
+    });
+    this.audit({
+      actorUserId: captain.row.id,
+      actorKind: "player",
+      action: "team.invite_sent",
+      subjectType: "team",
+      subjectId: row.id,
+      detailJson: JSON.stringify({ phoneE164: phone }),
+      createdAt: createdAt + 2,
+    });
+    return row;
   }
 
   // -- scoring --------------------------------------------------------------
@@ -447,366 +598,315 @@ class SeedBuilder {
     return row;
   }
 
+  // -- draw -----------------------------------------------------------------
+
+  /**
+   * Run the draw engine for a tournament and mint its pool and match rows,
+   * exactly as `POST /api/admin/tournaments/:id/draw` would. Team order is
+   * creation order; every entry seed is null, so pool placement follows the
+   * engine's rng for `spec.rngSeed`.
+   */
+  drawEvent(t: NewTournament, organizer: NewUser, teams: readonly SeedTeam[], spec: SeedDrawSpec, drawnAt: number): DrawnEvent {
+    const plan = draw(
+      seedDrawOptions(
+        t,
+        teams.map((team) => ({ id: team.row.id, seed: null })),
+        spec,
+      ),
+    );
+    const poolRows = new Map<string, NewPool>();
+    plan.pools.forEach((pool, p) => {
+      const row: NewPool = { id: this.id(t.createdAt + p), tournamentId: t.id, label: pool.label, courtLabel: pool.courtLabel };
+      poolRows.set(pool.key, row);
+      this.data.pools.push(row);
+      for (const teamId of pool.teamIds) this.data.poolTeams.push({ id: this.id(t.createdAt + p + 1), poolId: row.id, teamId });
+    });
+    const matchRows = new Map<string, NewMatch>();
+    for (const m of plan.matches) {
+      const poolRow = m.poolKey === null ? null : poolRows.get(m.poolKey);
+      if (m.poolKey !== null && !poolRow) throw new Error(`seed: match ${m.key} references unknown pool ${m.poolKey}`);
+      matchRows.set(m.key, {
+        id: this.id(m.scheduledAt ?? drawnAt),
+        tournamentId: t.id,
+        poolId: poolRow?.id ?? null,
+        round: m.round,
+        bracketPosition: m.bracketPosition,
+        courtLabel: m.courtLabel,
+        teamAId: m.teamAId,
+        teamBId: m.teamBId,
+        bestOf: m.bestOf,
+        status: m.status,
+        winnerTeamId: m.winnerTeamId,
+        nextMatchId: null,
+        nextMatchSlot: m.nextMatchSlot,
+        scheduledAt: m.scheduledAt,
+        startedAt: null,
+        finalizedAt: null,
+      });
+    }
+    for (const m of plan.matches) {
+      const row = matchRows.get(m.key);
+      if (row && m.nextMatchKey !== null) row.nextMatchId = matchRows.get(m.nextMatchKey)?.id ?? null;
+    }
+    this.audit({
+      actorUserId: organizer.id,
+      actorKind: "organizer",
+      action: "tournament.draw_generated",
+      subjectType: "tournament",
+      subjectId: t.id,
+      detailJson: JSON.stringify({ format: plan.format, pools: plan.pools.length, matches: plan.matches.length, bracket: plan.bracket }),
+      createdAt: drawnAt,
+    });
+    return { plan, poolRows, matchRows };
+  }
+
   // -- pool play ------------------------------------------------------------
 
-  buildPools(
-    t: NewTournament,
-    teams: readonly SeedTeam[],
-    options: { poolSize: number; roundTimes: readonly number[]; bestOf: BestOf },
-  ): { pools: Array<{ row: NewPool; teams: SeedTeam[]; standings: ReturnType<typeof computeStandings> }> } {
-    const shuffled = this.rng.shuffle(teams);
-    const poolCount = Math.floor(shuffled.length / options.poolSize);
-    const pools: Array<{ row: NewPool; teams: SeedTeam[]; standings: ReturnType<typeof computeStandings> }> = [];
-
-    for (let p = 0; p < poolCount; p += 1) {
-      const label = `Pool ${String.fromCharCode(65 + p)}`;
-      const courtLabel = `Court ${p + 1}`;
-      const poolRow: NewPool = { id: this.id(t.createdAt + p), tournamentId: t.id, label, courtLabel };
-      this.data.pools.push(poolRow);
-      const poolTeams = shuffled.slice(p * options.poolSize, (p + 1) * options.poolSize);
-      for (const team of poolTeams) {
-        this.data.poolTeams.push({ id: this.id(t.createdAt + p + 1), poolId: poolRow.id, teamId: team.row.id });
-      }
-
-      // Round robin of 4: a fixed rotation gives 3 rounds of 2 simultaneous matches.
-      const rr: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
-        [[0, 3], [1, 2]],
-        [[0, 2], [3, 1]],
-        [[0, 1], [2, 3]],
-      ];
-      const played: StandingsMatch[] = [];
-      rr.forEach((round, r) => {
-        const roundAt = options.roundTimes[r];
-        if (roundAt === undefined) throw new Error("seed: missing pool round time");
-        round.forEach(([ia, ib], k) => {
-          const a = poolTeams[ia];
-          const b = poolTeams[ib];
-          if (!a || !b) throw new Error("seed: pool needs exactly poolSize teams");
-          const scheduledAt = roundAt + k * 0; // both matches of a round run together on the pool's court sequence
-          const startedAt = scheduledAt + k * 28 * MINUTE + this.rng.int(0, 4) * MINUTE;
-          const finalizedAt = startedAt + this.rng.int(22, 34) * MINUTE;
-          const result = this.playMatch(a, b, options.bestOf);
-          const match: NewMatch = {
-            id: this.id(scheduledAt),
-            tournamentId: t.id,
-            poolId: poolRow.id,
-            round: r + 1,
-            bracketPosition: null,
-            courtLabel,
-            teamAId: a.row.id,
-            teamBId: b.row.id,
-            bestOf: options.bestOf,
-            status: "final",
-            winnerTeamId: result.winner === "a" ? a.row.id : b.row.id,
-            nextMatchId: null,
-            nextMatchSlot: null,
-            scheduledAt,
-            startedAt,
-            finalizedAt,
-          };
-          this.data.matches.push(match);
-          this.recordAgreedResult(match, a, b, result.sets, finalizedAt);
-          played.push({
-            teamAId: a.row.id,
-            teamBId: b.row.id,
-            winnerTeamId: match.winnerTeamId ?? a.row.id,
-            sets: result.sets,
-          });
-        });
-      });
-      pools.push({ row: poolRow, teams: poolTeams, standings: computeStandings(poolTeams.map((x) => x.row.id), played) });
+  /** Play every pool match to a final, agreed result; returns standings per pool. */
+  playPools(drawn: DrawnEvent, teamsById: Map<string, SeedTeam>): PoolResult[] {
+    const played = new Map<string, StandingsMatch[]>();
+    const poolMatches = drawn.plan.matches.filter((m) => m.poolKey !== null).sort((x, y) => (x.scheduledAt ?? 0) - (y.scheduledAt ?? 0));
+    for (const m of poolMatches) {
+      const row = drawn.matchRows.get(m.key);
+      const a = teamsById.get(m.teamAId ?? "");
+      const b = teamsById.get(m.teamBId ?? "");
+      if (!row || !a || !b || row.scheduledAt === null || row.scheduledAt === undefined) throw new Error(`seed: pool match ${m.key} is incomplete`);
+      const startedAt = row.scheduledAt + this.rng.int(0, 4) * MINUTE;
+      const finalizedAt = startedAt + this.rng.int(18, 27) * MINUTE;
+      const result = this.playMatch(a, b, row.bestOf);
+      row.status = "final";
+      row.winnerTeamId = result.winner === "a" ? a.row.id : b.row.id;
+      row.startedAt = startedAt;
+      row.finalizedAt = finalizedAt;
+      this.recordAgreedResult(row, a, b, result.sets, finalizedAt);
+      const list = played.get(m.poolKey ?? "") ?? [];
+      list.push({ teamAId: a.row.id, teamBId: b.row.id, winnerTeamId: row.winnerTeamId, sets: result.sets });
+      played.set(m.poolKey ?? "", list);
     }
-    return { pools };
+    return drawn.plan.pools.map((pool) => ({ poolKey: pool.key, standings: computeStandings(pool.teamIds, played.get(pool.key) ?? []) }));
   }
 
   /**
-   * Seed the bracket from pool results: pool winners ranked 1..n, runners-up
-   * n+1..2n, then the best third-placed teams by the same tiebreak. Returns the
-   * ordered seed list and writes `teams.seed`.
+   * Seed the bracket from pool results through the engine's advancement rule,
+   * write `teams.seed`, and resolve round-1 byes (the present team advances).
    */
-  seedBracket(pools: ReturnType<SeedBuilder["buildPools"]>["pools"], advancing: number, teamsById: Map<string, SeedTeam>): SeedTeam[] {
-    const byPlace: StandingRow[][] = [];
-    for (const pool of pools) {
-      pool.standings.forEach((row, place) => {
-        (byPlace[place] ??= []).push(row);
-      });
-    }
-
-    const ordered: SeedTeam[] = [];
-    for (const place of byPlace) {
-      for (const row of [...place].sort(compareStandings)) {
-        if (ordered.length >= advancing) break;
-        const team = teamsById.get(row.teamId);
-        if (!team) throw new Error("seed: standings row for unknown team");
-        ordered.push(team);
+  seedBracketFromPools(t: NewTournament, drawn: DrawnEvent, results: readonly PoolResult[], spec: SeedDrawSpec, teamsById: Map<string, SeedTeam>, at: number): SeedTeam[] {
+    const advancing = selectAdvancing(
+      results.map((r) => ({ rows: r.standings })),
+      spec.advance,
+    );
+    const seeds = advancing.map((teamId, i) => {
+      const team = teamsById.get(teamId);
+      if (!team) throw new Error("seed: advancing team is unknown");
+      team.row.seed = i + 1;
+      return team;
+    });
+    const bracket = drawn.plan.matches.filter((m): m is DrawMatch & { bracketPosition: number } => m.bracketPosition !== null);
+    const patches = seedBracketSlots(bracket, advancing);
+    for (const patch of patches) {
+      const row = drawn.matchRows.get(patch.key);
+      if (!row) throw new Error(`seed: patch for unknown match ${patch.key}`);
+      row.teamAId = patch.teamAId;
+      row.teamBId = patch.teamBId;
+      if (patch.status === "bye") {
+        row.status = "bye";
+        row.winnerTeamId = patch.winnerTeamId;
+        row.finalizedAt = at;
+        this.audit({
+          actorUserId: null,
+          actorKind: "system",
+          action: "match.status_changed",
+          subjectType: "match",
+          subjectId: row.id,
+          detailJson: JSON.stringify({ from: "scheduled", to: "bye", winnerTeamId: row.winnerTeamId }),
+          createdAt: at,
+        });
       }
     }
-    ordered.forEach((team, i) => {
-      team.row.seed = i + 1;
+    this.audit({
+      actorUserId: null,
+      actorKind: "system",
+      action: "tournament.bracket_seeded",
+      subjectType: "tournament",
+      subjectId: t.id,
+      detailJson: JSON.stringify({ seeds: advancing }),
+      createdAt: at,
     });
-    return ordered;
+    return seeds;
   }
 
   // -- bracket --------------------------------------------------------------
 
-  /**
-   * Single-elimination bracket over `slots` (8 or 16). Seeds beyond `seeds.length`
-   * are empty, which makes their opponent's first match a bye. Positions are
-   * numbered breadth-first from the first round so `(tournament, position)` is unique.
-   */
-  buildBracket(
-    t: NewTournament,
-    seeds: readonly SeedTeam[],
-    slots: 8 | 16,
-    plan: BracketPlan,
-    schedule: { roundStarts: readonly number[]; courts: number },
-  ): void {
-    const order16 = [1, 16, 8, 9, 5, 12, 4, 13, 3, 14, 6, 11, 7, 10, 2, 15];
-    const order8 = [1, 8, 4, 5, 3, 6, 2, 7];
-    const order = slots === 16 ? order16 : order8;
-    const bySeed = (s: number): SeedTeam | null => seeds[s - 1] ?? null;
-
-    // Build the slot tree.
-    const roundsCount = Math.log2(slots);
-    const slotsByRound: BracketSlot[][] = [];
-    let position = 1;
-    for (let r = 1; r <= roundsCount; r += 1) {
-      const count = slots / 2 ** r;
-      const round: BracketSlot[] = [];
-      for (let i = 0; i < count; i += 1) {
-        round.push({ position, round: r, teamA: null, teamB: null, nextPosition: null, nextSlot: null });
-        position += 1;
-      }
-      slotsByRound.push(round);
-    }
-    for (let r = 0; r < slotsByRound.length - 1; r += 1) {
-      const cur = slotsByRound[r];
-      const next = slotsByRound[r + 1];
-      if (!cur || !next) continue;
-      cur.forEach((slot, i) => {
-        const target = next[Math.floor(i / 2)];
-        if (!target) return;
-        slot.nextPosition = target.position;
-        slot.nextSlot = i % 2 === 0 ? "a" : "b";
-      });
-    }
-    const first = slotsByRound[0];
-    if (!first) throw new Error("seed: bracket has no first round");
-    first.forEach((slot, i) => {
-      slot.teamA = bySeed(order[i * 2] ?? 0);
-      slot.teamB = bySeed(order[i * 2 + 1] ?? 0);
-    });
-
-    const rowsByPosition = new Map<number, NewMatch>();
-    const slotByPosition = new Map<number, BracketSlot>();
-    for (const round of slotsByRound) for (const s of round) slotByPosition.set(s.position, s);
-
-    // Pre-mint every match row (ids and next links), then play rounds in order.
-    for (const round of slotsByRound) {
-      const roundStart = schedule.roundStarts[round[0]?.round ? round[0].round - 1 : 0];
-      if (roundStart === undefined) throw new Error("seed: missing bracket round start");
-      round.forEach((slot, i) => {
-        const wave = Math.floor(i / schedule.courts);
-        const scheduledAt = roundStart + wave * 50 * MINUTE;
-        rowsByPosition.set(slot.position, {
-          id: this.id(scheduledAt),
-          tournamentId: t.id,
-          poolId: null,
-          round: slot.round,
-          bracketPosition: slot.position,
-          courtLabel: `Court ${(i % schedule.courts) + 1}`,
-          teamAId: null,
-          teamBId: null,
-          bestOf: "3",
-          status: "scheduled",
-          winnerTeamId: null,
-          nextMatchId: null,
-          nextMatchSlot: slot.nextSlot,
-          scheduledAt,
-          startedAt: null,
-          finalizedAt: null,
-        });
-      });
-    }
-    for (const slot of slotByPosition.values()) {
-      const row = rowsByPosition.get(slot.position);
-      if (row && slot.nextPosition !== null) row.nextMatchId = rowsByPosition.get(slot.nextPosition)?.id ?? null;
-    }
-
-    const advance = (slot: BracketSlot, winner: SeedTeam) => {
-      if (slot.nextPosition === null || slot.nextSlot === null) return;
-      const next = slotByPosition.get(slot.nextPosition);
-      if (!next) return;
-      if (slot.nextSlot === "a") next.teamA = winner;
-      else next.teamB = winner;
+  /** Play the bracket to the planned status per position, advancing winners as the engine does. */
+  playBracket(drawn: DrawnEvent, plan: BracketPlan, teamsById: Map<string, SeedTeam>): void {
+    const bracket = drawn.plan.matches
+      .filter((m): m is DrawMatch & { bracketPosition: number } => m.bracketPosition !== null)
+      .sort((x, y) => x.bracketPosition - y.bracketPosition);
+    const rowOf = (key: string): NewMatch => {
+      const row = drawn.matchRows.get(key);
+      if (!row) throw new Error(`seed: unknown bracket match ${key}`);
+      return row;
+    };
+    const advance = (m: DrawMatch, winner: SeedTeam) => {
+      if (m.nextMatchKey === null || m.nextMatchSlot === null) return;
+      const next = rowOf(m.nextMatchKey);
+      if (m.nextMatchSlot === "a") next.teamAId = winner.row.id;
+      else next.teamBId = winner.row.id;
     };
 
-    for (const round of slotsByRound) {
-      for (const slot of round) {
-        const row = rowsByPosition.get(slot.position);
-        if (!row) continue;
-        row.teamAId = slot.teamA?.row.id ?? null;
-        row.teamBId = slot.teamB?.row.id ?? null;
-        const desired: MatchStatus = plan[slot.position] ?? "scheduled";
-        const scheduledAt = row.scheduledAt ?? this.anchorMs;
+    for (const m of bracket) {
+      const row = rowOf(m.key);
+      const desired: MatchStatus = plan[m.bracketPosition] ?? "scheduled";
+      if (row.status === "bye") {
+        if (desired !== "scheduled" && desired !== "bye") throw new Error(`seed: position ${m.bracketPosition} is a bye and cannot be ${desired}`);
+        continue;
+      }
+      if (desired === "scheduled") continue;
+      const scheduledAt = row.scheduledAt ?? this.anchorMs;
+      const a = teamsById.get(row.teamAId ?? "");
+      const b = teamsById.get(row.teamBId ?? "");
+      if (!a || !b) throw new Error(`seed: position ${m.bracketPosition} planned as ${desired} but lacks two teams`);
+      const startedAt = scheduledAt + this.rng.int(2, 9) * MINUTE;
+      row.startedAt = startedAt;
 
-        if (desired === "bye" || (slot.teamA && !slot.teamB && desired !== "scheduled")) {
-          if (!slot.teamA) throw new Error(`seed: bye at position ${slot.position} has no team`);
-          row.status = "bye";
-          row.teamBId = null;
-          row.winnerTeamId = slot.teamA.row.id;
-          row.finalizedAt = scheduledAt;
-          advance(slot, slot.teamA);
+      switch (desired) {
+        case "final": {
+          const result = this.playMatch(a, b, row.bestOf);
+          const finalizedAt = startedAt + (38 + 14 * (result.sets.length - 2)) * MINUTE + this.rng.int(0, 6) * MINUTE;
+          row.status = "final";
+          row.winnerTeamId = result.winner === "a" ? a.row.id : b.row.id;
+          row.finalizedAt = finalizedAt;
+          this.recordAgreedResult(row, a, b, result.sets, finalizedAt);
+          advance(m, result.winner === "a" ? a : b);
+          break;
+        }
+        case "disputed": {
+          // Two captains, two different set-3 totals. Everything else agrees.
+          const result = this.playMatch(a, b, "3");
+          if (result.sets.length < 3) {
+            // Force a deciding set so the disagreement lives in set 3, where it is easiest to see.
+            result.sets.length = 0;
+            result.sets.push(
+              { setNumber: 1, teamAPoints: 21, teamBPoints: 18 },
+              { setNumber: 2, teamAPoints: 19, teamBPoints: 21 },
+              { setNumber: 3, teamAPoints: 15, teamBPoints: 13 },
+            );
+          }
+          const viewA: Scoreline = { matchId: row.id, sets: result.sets };
+          const third = result.sets[2];
+          if (!third) throw new Error("seed: disputed match needs three sets");
+          const loserPoints = Math.min(third.teamAPoints, third.teamBPoints);
+          const altLoser = loserPoints >= 2 ? loserPoints - 2 : loserPoints + 2;
+          const altWin = altLoser >= DECIDING_SET_TARGET - 1 ? altLoser + 2 : DECIDING_SET_TARGET;
+          const viewB: Scoreline = {
+            matchId: row.id,
+            sets: result.sets.map((s) =>
+              s.setNumber === 3
+                ? {
+                    setNumber: 3,
+                    teamAPoints: s.teamAPoints > s.teamBPoints ? altWin : altLoser,
+                    teamBPoints: s.teamBPoints > s.teamAPoints ? altWin : altLoser,
+                  }
+                : s,
+            ),
+          };
+          const verdictB = judgeMatch(viewB.sets, "3");
+          if (!verdictB.legal) throw new Error(`seed: disputed alternate scoreline is illegal: ${verdictB.reason}`);
+          const endedAt = startedAt + 52 * MINUTE;
+          const subA = this.submission(row, a, viewA, "a", endedAt + 3 * MINUTE);
+          const subB = this.submission(row, b, viewB, "b", endedAt + 6 * MINUTE);
+          if (subA.payloadHash === subB.payloadHash) throw new Error("seed: disputed submissions must differ");
+          row.status = "disputed";
+          this.data.matchConsensus.push({
+            id: this.id(endedAt + 6 * MINUTE),
+            matchId: row.id,
+            state: "disputed",
+            agreedPayloadJson: null,
+            agreedPayloadHash: null,
+            disputedReason: `Set 3 differs: ${third.teamAPoints}–${third.teamBPoints} vs ${viewB.sets[2]?.teamAPoints}–${viewB.sets[2]?.teamBPoints}`,
+            resolvedByUserId: null,
+            idempotencyKey: null,
+            updatedAt: endedAt + 6 * MINUTE,
+          });
           this.audit({
             actorUserId: null,
             actorKind: "system",
-            action: "match.bye",
+            action: "consensus.disputed",
             subjectType: "match",
             subjectId: row.id,
-            detailJson: JSON.stringify({ winnerTeamId: row.winnerTeamId }),
-            createdAt: scheduledAt,
+            detailJson: JSON.stringify({ hashes: [subA.payloadHash, subB.payloadHash] }),
+            createdAt: endedAt + 6 * MINUTE,
           });
-          continue;
+          break;
         }
-
-        if (desired === "scheduled") continue;
-
-        const a = slot.teamA;
-        const b = slot.teamB;
-        if (!a || !b) throw new Error(`seed: position ${slot.position} planned as ${desired} but lacks two teams`);
-        const startedAt = scheduledAt + this.rng.int(2, 9) * MINUTE;
-        row.startedAt = startedAt;
-
-        switch (desired) {
-          case "final": {
-            const result = this.playMatch(a, b, "3");
-            const finalizedAt = startedAt + (38 + 14 * (result.sets.length - 2)) * MINUTE + this.rng.int(0, 6) * MINUTE;
-            row.status = "final";
-            row.winnerTeamId = result.winner === "a" ? a.row.id : b.row.id;
-            row.finalizedAt = finalizedAt;
-            this.recordAgreedResult(row, a, b, result.sets, finalizedAt);
-            advance(slot, result.winner === "a" ? a : b);
-            break;
-          }
-          case "disputed": {
-            // Two captains, two different set-3 totals. Everything else agrees.
-            const result = this.playMatch(a, b, "3");
-            if (result.sets.length < 3) {
-              // Force a deciding set so the disagreement lives in set 3, where it is easiest to see.
-              result.sets.length = 0;
-              result.sets.push(
-                { setNumber: 1, teamAPoints: 21, teamBPoints: 18 },
-                { setNumber: 2, teamAPoints: 19, teamBPoints: 21 },
-                { setNumber: 3, teamAPoints: 15, teamBPoints: 13 },
-              );
-            }
-            const viewA: Scoreline = { matchId: row.id, sets: result.sets };
-            const third = result.sets[2];
-            if (!third) throw new Error("seed: disputed match needs three sets");
-            const loserPoints = Math.min(third.teamAPoints, third.teamBPoints);
-            const altLoser = loserPoints >= 2 ? loserPoints - 2 : loserPoints + 2;
-            const altWin = altLoser >= DECIDING_SET_TARGET - 1 ? altLoser + 2 : DECIDING_SET_TARGET;
-            const viewB: Scoreline = {
-              matchId: row.id,
-              sets: result.sets.map((s) =>
-                s.setNumber === 3
-                  ? {
-                      setNumber: 3,
-                      teamAPoints: s.teamAPoints > s.teamBPoints ? altWin : altLoser,
-                      teamBPoints: s.teamBPoints > s.teamAPoints ? altWin : altLoser,
-                    }
-                  : s,
-              ),
-            };
-            const verdictB = judgeMatch(viewB.sets, "3");
-            if (!verdictB.legal) throw new Error(`seed: disputed alternate scoreline is illegal: ${verdictB.reason}`);
-            const endedAt = startedAt + 52 * MINUTE;
-            const subA = this.submission(row, a, viewA, "a", endedAt + 3 * MINUTE);
-            const subB = this.submission(row, b, viewB, "b", endedAt + 6 * MINUTE);
-            if (subA.payloadHash === subB.payloadHash) throw new Error("seed: disputed submissions must differ");
-            row.status = "disputed";
-            this.data.matchConsensus.push({
-              id: this.id(endedAt + 6 * MINUTE),
-              matchId: row.id,
-              state: "disputed",
-              agreedPayloadJson: null,
-              agreedPayloadHash: null,
-              disputedReason: `Set 3 differs: ${third.teamAPoints}–${third.teamBPoints} vs ${viewB.sets[2]?.teamAPoints}–${viewB.sets[2]?.teamBPoints}`,
-              resolvedByUserId: null,
-              idempotencyKey: null,
-              updatedAt: endedAt + 6 * MINUTE,
-            });
-            this.audit({
-              actorUserId: null,
-              actorKind: "system",
-              action: "consensus.disputed",
-              subjectType: "match",
-              subjectId: row.id,
-              detailJson: JSON.stringify({ hashes: [subA.payloadHash, subB.payloadHash] }),
-              createdAt: endedAt + 6 * MINUTE,
-            });
-            break;
-          }
-          case "awaiting_scores": {
-            const result = this.playMatch(a, b, "3");
-            const endedAt = startedAt + 44 * MINUTE;
-            this.submission(row, a, { matchId: row.id, sets: result.sets }, "a", endedAt + 2 * MINUTE);
-            row.status = "awaiting_scores";
-            this.data.matchConsensus.push({
-              id: this.id(endedAt + 2 * MINUTE),
-              matchId: row.id,
-              state: "awaiting_second",
-              agreedPayloadJson: null,
-              agreedPayloadHash: null,
-              disputedReason: null,
-              resolvedByUserId: null,
-              idempotencyKey: null,
-              updatedAt: endedAt + 2 * MINUTE,
-            });
-            break;
-          }
-          case "in_progress": {
-            // Set 1 complete, set 2 under way. Provisional (agreed = false) until
-            // both teams confirm through consensus; the live strip reads these.
-            const first = this.playSet(a, b, SET_TARGET);
-            this.data.sets.push({
-              id: this.id(startedAt + 24 * MINUTE),
-              matchId: row.id,
-              setNumber: 1,
-              teamAPoints: first.a,
-              teamBPoints: first.b,
-              agreed: false,
-            });
-            const liveA = this.rng.int(9, 16);
-            const liveB = Math.max(0, liveA - this.rng.int(1, 5));
-            this.data.sets.push({
-              id: this.id(startedAt + 36 * MINUTE),
-              matchId: row.id,
-              setNumber: 2,
-              teamAPoints: first.winner === "a" ? liveB : liveA,
-              teamBPoints: first.winner === "a" ? liveA : liveB,
-              agreed: false,
-            });
-            row.status = "in_progress";
-            this.data.matchConsensus.push({
-              id: this.id(startedAt),
-              matchId: row.id,
-              state: "awaiting_first",
-              agreedPayloadJson: null,
-              agreedPayloadHash: null,
-              disputedReason: null,
-              resolvedByUserId: null,
-              idempotencyKey: null,
-              updatedAt: startedAt,
-            });
-            break;
-          }
-          case "forfeited":
-            throw new Error(`seed: unsupported planned status ${desired}`);
+        case "awaiting_scores": {
+          const result = this.playMatch(a, b, "3");
+          const endedAt = startedAt + 44 * MINUTE;
+          this.submission(row, a, { matchId: row.id, sets: result.sets }, "a", endedAt + 2 * MINUTE);
+          row.status = "awaiting_scores";
+          this.data.matchConsensus.push({
+            id: this.id(endedAt + 2 * MINUTE),
+            matchId: row.id,
+            state: "awaiting_second",
+            agreedPayloadJson: null,
+            agreedPayloadHash: null,
+            disputedReason: null,
+            resolvedByUserId: null,
+            idempotencyKey: null,
+            updatedAt: endedAt + 2 * MINUTE,
+          });
+          break;
         }
+        case "in_progress": {
+          // Set 1 complete, set 2 under way. Provisional (agreed = false) until
+          // both teams confirm through consensus; the live strip reads these.
+          const first = this.playSet(a, b, SET_TARGET);
+          this.data.sets.push({
+            id: this.id(startedAt + 24 * MINUTE),
+            matchId: row.id,
+            setNumber: 1,
+            teamAPoints: first.a,
+            teamBPoints: first.b,
+            agreed: false,
+          });
+          const liveA = this.rng.int(9, 16);
+          const liveB = Math.max(0, liveA - this.rng.int(1, 5));
+          this.data.sets.push({
+            id: this.id(startedAt + 36 * MINUTE),
+            matchId: row.id,
+            setNumber: 2,
+            teamAPoints: first.winner === "a" ? liveB : liveA,
+            teamBPoints: first.winner === "a" ? liveA : liveB,
+            agreed: false,
+          });
+          row.status = "in_progress";
+          this.data.matchConsensus.push({
+            id: this.id(startedAt),
+            matchId: row.id,
+            state: "awaiting_first",
+            agreedPayloadJson: null,
+            agreedPayloadHash: null,
+            disputedReason: null,
+            resolvedByUserId: null,
+            idempotencyKey: null,
+            updatedAt: startedAt,
+          });
+          break;
+        }
+        case "bye":
+        case "forfeited":
+          throw new Error(`seed: unsupported planned status ${desired}`);
       }
     }
-    this.data.matches.push(...[...rowsByPosition.values()].sort((x, y) => (x.bracketPosition ?? 0) - (y.bracketPosition ?? 0)));
+  }
+
+  /** Push the drawn match rows into the dataset in schedule order. */
+  commitMatches(drawn: DrawnEvent): void {
+    this.data.matches.push(
+      ...[...drawn.matchRows.values()].sort(
+        (x, y) => (x.scheduledAt ?? 0) - (y.scheduledAt ?? 0) || (x.bracketPosition ?? 0) - (y.bracketPosition ?? 0) || x.id.localeCompare(y.id),
+      ),
+    );
   }
 
   // -- money ----------------------------------------------------------------
@@ -902,6 +1002,8 @@ export function buildSeed(options: SeedOptions): SeedDataset {
 
   const charity = b.buildCharity();
   const users = b.buildUsers();
+  const [organizer, coOrganizer] = b.buildOrganizers();
+  if (!organizer || !coOrganizer) throw new Error("seed: organizers missing");
 
   // ---- Low Tide Open — settled six weeks ago -------------------------------
   {
@@ -927,7 +1029,7 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       lucraMatchupId: null,
       createdAt,
     });
-    b.tournamentTransitions(t, [
+    b.tournamentTransitions(t, coOrganizer, [
       ["draft", "registration_open", createdAt + 2 * DAY],
       ["registration_open", "registration_closed", day - 2 * DAY],
       ["registration_closed", "live", day + 8 * HOUR],
@@ -944,19 +1046,12 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       registeredTo: day - 3 * DAY,
     });
     const teamsById = new Map(teams.map((x) => [x.row.id, x]));
-    const { pools } = b.buildPools(t, teams, {
-      poolSize: 4,
-      roundTimes: [day + 8 * HOUR + 30 * MINUTE, day + 9 * HOUR + 40 * MINUTE, day + 10 * HOUR + 50 * MINUTE],
-      bestOf: "1",
-    });
-    const seeds = b.seedBracket(pools, 8, teamsById);
-    b.buildBracket(
-      t,
-      seeds,
-      8,
-      { 1: "final", 2: "final", 3: "final", 4: "final", 5: "final", 6: "final", 7: "final" },
-      { roundStarts: [day + 12 * HOUR + 30 * MINUTE, day + 14 * HOUR, day + 15 * HOUR + 30 * MINUTE], courts: 4 },
-    );
+    const drawn = b.drawEvent(t, coOrganizer, teams, SEED_DRAWS.settled, day - 2 * DAY + 3 * HOUR);
+    const results = b.playPools(drawn, teamsById);
+    const lastPool = Math.max(...[...drawn.matchRows.values()].map((m) => m.finalizedAt ?? 0));
+    b.seedBracketFromPools(t, drawn, results, SEED_DRAWS.settled, teamsById, lastPool + 5 * MINUTE);
+    b.playBracket(drawn, { 1: "final", 2: "final", 3: "final", 4: "final", 5: "final", 6: "final", 7: "final" }, teamsById);
+    b.commitMatches(drawn);
 
     const northline = b.sponsor(t, "Northline Boardworks", "presenting", 150000);
     b.sponsor(t, "Dune & Co. Eyewear", "prize", 50000);
@@ -1014,7 +1109,7 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     b.data.rewards.push(...rewardRows);
     for (const r of rewardRows) {
       b.audit({
-        actorUserId: null,
+        actorUserId: coOrganizer.id,
         actorKind: "organizer",
         action: "reward.awarded",
         subjectType: "reward",
@@ -1049,7 +1144,7 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       lucraMatchupId: null,
       createdAt,
     });
-    b.tournamentTransitions(t, [
+    b.tournamentTransitions(t, organizer, [
       ["draft", "registration_open", createdAt + 1 * DAY],
       ["registration_open", "registration_closed", day - 1 * DAY],
       ["registration_closed", "live", day + 8 * HOUR],
@@ -1064,20 +1159,15 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       registeredTo: day - 2 * DAY,
     });
     const teamsById = new Map(teams.map((x) => [x.row.id, x]));
-    const { pools } = b.buildPools(t, teams, {
-      poolSize: 4,
-      roundTimes: [day + 8 * HOUR + 30 * MINUTE, day + 9 * HOUR + 30 * MINUTE, day + 10 * HOUR + 30 * MINUTE],
-      bestOf: "1",
-    });
-    // Six pool winners, six runners-up, and the three best third-placed teams:
-    // fifteen into a sixteen-slot bracket, so the top seed draws the one bye.
-    const seeds = b.seedBracket(pools, 15, teamsById);
-    b.buildBracket(
-      t,
-      seeds,
-      16,
+    const drawn = b.drawEvent(t, organizer, teams, SEED_DRAWS.live, day - 1 * DAY + 2 * HOUR);
+    const results = b.playPools(drawn, teamsById);
+    const lastPool = Math.max(...[...drawn.matchRows.values()].map((m) => m.finalizedAt ?? 0));
+    b.seedBracketFromPools(t, drawn, results, SEED_DRAWS.live, teamsById, lastPool + 5 * MINUTE);
+    // Position 1 is the top seed's bye (engine-made). Round of 16 done, quarters
+    // mid-way, one semifinal on the sand.
+    b.playBracket(
+      drawn,
       {
-        1: "bye",
         2: "final",
         3: "final",
         4: "final",
@@ -1090,14 +1180,10 @@ export function buildSeed(options: SeedOptions): SeedDataset {
         11: "disputed",
         12: "awaiting_scores",
         13: "in_progress",
-        14: "scheduled",
-        15: "scheduled",
       },
-      {
-        roundStarts: [day + 12 * HOUR, day + 13 * HOUR + 45 * MINUTE, day + 15 * HOUR + 15 * MINUTE, day + 16 * HOUR + 30 * MINUTE],
-        courts: 6,
-      },
+      teamsById,
     );
+    b.commitMatches(drawn);
 
     b.sponsor(t, "Northline Boardworks", "presenting", 250000);
     b.sponsor(t, "Saltwater Coffee Roasters", "court", 75000);
@@ -1130,9 +1216,9 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       lucraMatchupId: null,
       createdAt,
     });
-    b.tournamentTransitions(t, [["draft", "registration_open", createdAt + 1 * DAY]]);
+    b.tournamentTransitions(t, organizer, [["draft", "registration_open", createdAt + 1 * DAY]]);
 
-    const idx = b.rng.shuffle(users.map((_, i) => i)).slice(0, 18);
+    const idx = b.rng.shuffle(users.map((_, i) => i));
     const pairs: Array<readonly [number, number]> = [];
     for (let i = 0; i < 18; i += 2) pairs.push([idx[i] ?? 0, idx[i + 1] ?? 1]);
     const teams = b.buildTeams(t, users, pairs, {
@@ -1143,6 +1229,11 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     // One pair withdrew; their entry donation is refunded and they do not count toward capacity.
     const withdrawn = teams[teams.length - 1];
     if (withdrawn) withdrawn.row.status = "withdrawn";
+    // One team is still forming: captain in, partner invited by phone, no donation yet.
+    const captain = users[idx[18] ?? 0];
+    const invitee = users[idx[19] ?? 1];
+    if (!captain || !invitee) throw new Error("seed: forming team needs two spare players");
+    b.buildFormingTeam(t, captain, invitee, `${surname(captain.row.displayName)} / TBD`, anchor - 3 * HOUR);
     b.sponsor(t, "Saltwater Coffee Roasters", "court", 50000);
     b.entryDonations(t, teams);
     b.supporterDonations(t, users, { from: createdAt + 2 * DAY, to: anchor - 1 * HOUR }, { minFraction: 0.14, maxFraction: 0.2 });

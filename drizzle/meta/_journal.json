@@ -8,6 +8,13 @@
       "when": 1789681703688,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789689287399,
+      "tag": "0001_panoramic_kylun",
+      "breakpoints": true
     }
   ]
 }
