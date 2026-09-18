@@ -36,12 +36,15 @@ export const VERIFICATION_STATES = [
   "demographics_missing",
 ] as const;
 /**
- * `forming` is not in spec §6.1: it is the state between `POST /api/teams`
- * (captain plus a pending partner invite) and `POST /api/tournaments/:slug/register`
- * (both members in, donation intent created). Forming teams never count toward
- * capacity. Recorded as a deviation in docs/open-questions.md.
+ * `forming` and `disbanded` are not in spec §6.1. `forming` is the state between
+ * `POST /api/teams` (captain plus a pending partner invite) and
+ * `POST /api/tournaments/:slug/register` (both members in, donation intent
+ * created); `disbanded` is a forming team its captain or partner abandoned by
+ * creating or joining another before it registered. Neither counts toward
+ * capacity or appears on a public roster; `withdrawn` stays reserved for a team
+ * that had registered. Recorded as a deviation in docs/open-questions.md.
  */
-export const TEAM_STATUSES = ["forming", "registered", "checked_in", "withdrawn"] as const;
+export const TEAM_STATUSES = ["forming", "registered", "checked_in", "withdrawn", "disbanded"] as const;
 export const USER_ROLES = ["player", "organizer"] as const;
 export const TEAM_INVITE_STATUSES = ["pending", "accepted", "revoked"] as const;
 export const TEAM_ROLES = ["captain", "player"] as const;

@@ -19,7 +19,7 @@ function applyRaw(sqlite: ReturnType<typeof openConnection>["sqlite"], tag: stri
 }
 
 describe("migrations on a populated phase-1 database", () => {
-  it("adds users.role, the forming team status and tournaments.draw_config_json without losing rows or foreign keys", () => {
+  it("adds users.role, the forming and disbanded team statuses and tournaments.draw_config_json without losing rows or foreign keys", () => {
     const conn = openConnection(":memory:", { create: true });
     try {
       const journal = readJournal();
@@ -65,6 +65,9 @@ describe("migrations on a populated phase-1 database", () => {
       expect(conn.sqlite.prepare("SELECT team_id FROM pool_teams").all()).toEqual([{ team_id: "team1" }]);
       expect(conn.sqlite.prepare("SELECT team_a_id FROM matches").all()).toEqual([{ team_a_id: "team1" }]);
       expect(() => conn.sqlite.prepare("UPDATE teams SET status = 'forming' WHERE id = 'team1'").run()).not.toThrow();
+      expect(() => conn.sqlite.prepare("UPDATE teams SET status = 'disbanded' WHERE id = 'team1'").run()).not.toThrow();
+      expect(() => conn.sqlite.prepare("UPDATE teams SET status = 'gone' WHERE id = 'team1'").run()).toThrow(/CHECK constraint failed/);
+      conn.sqlite.prepare("UPDATE teams SET status = 'registered' WHERE id = 'team1'").run();
       expect(() => conn.sqlite.prepare("UPDATE users SET role = 'admin' WHERE id = 'u1'").run()).toThrow(/CHECK constraint failed/);
       expect(() => conn.sqlite.prepare("UPDATE users SET role = 'organizer' WHERE id = 'u1'").run()).not.toThrow();
       // The new tables exist and enforce their enums.

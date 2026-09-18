@@ -27,6 +27,7 @@ import {
   type TournamentStatus,
 } from "@/db/schema";
 import { getPoolStandings, type PoolStandings } from "@/db/queries/standings";
+import { UNLISTED_TEAM_STATUSES } from "@/db/queries/teams";
 
 /**
  * Read models for the public screens. Every figure the UI shows is computed
@@ -450,7 +451,7 @@ export function getTournamentDetail(summary: TournamentSummary): TournamentDetai
   return {
     ...summary,
     sponsors: overview.sponsors,
-    teams: listTeamsWithMembers(id).filter((t) => t.status !== "forming"),
+    teams: listTeamsWithMembers(id).filter((t) => !UNLISTED_TEAM_STATUSES.includes(t.status)),
     pools: poolDetails,
     bracket: { rounds: bracketMatches.length ? Math.max(...bracketMatches.map((m) => m.match.round)) : 0, matches: bracketMatches },
   };

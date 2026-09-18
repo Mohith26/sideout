@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as me } from "@/app/api/me/route";
 import { POST as joinTeam } from "@/app/api/teams/[id]/join/route";
 import { POST as createTeam } from "@/app/api/teams/route";
+import { GET as getTournament } from "@/app/api/tournaments/[slug]/route";
 import { GET as getImpact } from "@/app/api/tournaments/[slug]/impact/route";
 import { POST as register } from "@/app/api/tournaments/[slug]/register/route";
 import { donations, teamInvites, teams, tournaments } from "@/db/schema";
@@ -86,7 +87,15 @@ describe("teams, invites and registration", () => {
     expectFailure(invalid, 400, "bad_request");
   });
 
+  /** Team ids the public detail lists for the open event. */
+  async function publicRoster(): Promise<Array<{ id: string; status: string }>> {
+    const res = await app.call<Envelope<{ teams: Array<{ id: string; status: string }> }>>(getTournament, `/api/tournaments/${SLUGS.upcoming}`, { params: { slug: SLUGS.upcoming } });
+    expect(res.status).toBe(200);
+    return res.body.data.teams;
+  }
+
   it("lets a captain recover from a mistyped partner phone by creating the team again", async () => {
+    const rosterBefore = await publicRoster();
     const mistyped = await app.call<Envelope<TeamData>>(createTeam, "/api/teams", {
       method: "POST",
       cookie: app.cookieFor(captain.id),
@@ -95,51 +104,99 @@ describe("teams, invites and registration", () => {
     expect(mistyped.status).toBe(201);
     const old = mistyped.body.data;
 
-    // The second attempt supersedes the first: old invite revoked, old team withdrawn, both audited.
+    // The second attempt supersedes the first: old invite revoked, old team disbanded, both audited.
     const retry = await createOpenTeam("Rivera / Okafor");
     expect(retry.id).not.toBe(old.id);
     expect(retry.status).toBe("forming");
     expect(retry.invites).toEqual([expect.objectContaining({ status: "pending", phoneE164: partner.phoneE164 })]);
-    expect(app.conn.db.select({ status: teams.status }).from(teams).where(eq(teams.id, old.id)).get()?.status).toBe("withdrawn");
+    expect(app.conn.db.select({ status: teams.status }).from(teams).where(eq(teams.id, old.id)).get()?.status).toBe("disbanded");
     const oldInvites = app.conn.db.select().from(teamInvites).where(eq(teamInvites.teamId, old.id)).all();
     expect(oldInvites.map((i) => [i.status, i.respondedAt !== null])).toEqual([["revoked", true]]);
-    expect(app.audits(old.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent", "team.invite_revoked", "team.withdrawn"]);
-    expect(JSON.parse(app.audits(old.id, "team.withdrawn")[0]?.detailJson ?? "{}")).toEqual({ from: "forming", to: "withdrawn", supersededBy: retry.id });
+    expect(app.audits(old.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent", "team.invite_revoked", "team.disbanded"]);
+    expect(JSON.parse(app.audits(old.id, "team.disbanded")[0]?.detailJson ?? "{}")).toEqual({ from: "forming", to: "disbanded", supersededBy: retry.id, released: [captain.id] });
     expect(JSON.parse(app.audits(retry.id, "team.created")[0]?.detailJson ?? "{}")).toMatchObject({ supersedes: old.id });
+    // Neither the abandoned team nor the forming one reaches the public roster; withdrawn entries stay as they were.
+    expect(await publicRoster()).toEqual(rosterBefore);
+    expect(rosterBefore.some((t) => t.status === "withdrawn")).toBe(true);
 
     // The mistyped number no longer has a pending invite anywhere; the right partner does.
     const profile = await app.call<Envelope<Profile>>(me, "/api/me", { cookie: app.cookieFor(partner.id) });
     expect(profile.body.data.invites.map((i) => i.team.id)).toEqual([retry.id]);
 
-    // Once the partner has joined, the team is no longer the captain's alone to replace.
+    // Even after the partner has joined, an unregistered team is superseded and the partner released.
     const joined = await app.call(joinTeam, `/api/teams/${retry.id}/join`, { method: "POST", params: { id: retry.id }, cookie: app.cookieFor(partner.id) });
     expect(joined.status).toBe(200);
-    const blocked = await app.call(createTeam, "/api/teams", {
+    const third = await app.call<Envelope<TeamData>>(createTeam, "/api/teams", {
       method: "POST",
       cookie: app.cookieFor(captain.id),
       body: { tournamentSlug: SLUGS.upcoming, name: "Third try", partnerPhone: "+15550109998" },
     });
-    expect(expectFailure(blocked, 409, "conflict").detail).toEqual({ teamId: retry.id });
-    // Nor can the partner start a team of their own while on this one.
-    const partnerBlocked = await app.call(createTeam, "/api/teams", {
-      method: "POST",
-      cookie: app.cookieFor(partner.id),
-      body: { tournamentSlug: SLUGS.upcoming, name: "Breakaway", partnerPhone: "+15550109998" },
-    });
-    expectFailure(partnerBlocked, 409, "conflict");
-    // A registered team is final: still 409 after registration.
+    expect(third.status).toBe(201);
+    expect(app.conn.db.select({ status: teams.status }).from(teams).where(eq(teams.id, retry.id)).get()?.status).toBe("disbanded");
+    expect(app.audits(retry.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent", "team.member_joined", "team.disbanded"]);
+    expect(JSON.parse(app.audits(retry.id, "team.disbanded")[0]?.detailJson ?? "{}")).toMatchObject({ released: expect.arrayContaining([captain.id, partner.id]) });
+    // The released partner is free again: they can be re-invited by the captain's next team.
+    const fourth = await createOpenTeam("Rivera / Okafor, take four");
+    expect(fourth.invites[0]).toMatchObject({ status: "pending", phoneE164: partner.phoneE164 });
+    expect(await publicRoster()).toEqual(rosterBefore);
+
+    // A registered team is final: 409 afterwards, for both members.
+    await app.call(joinTeam, `/api/teams/${fourth.id}/join`, { method: "POST", params: { id: fourth.id }, cookie: app.cookieFor(partner.id) });
     const registered = await app.call(register, `/api/tournaments/${SLUGS.upcoming}/register`, {
       method: "POST",
       params: { slug: SLUGS.upcoming },
       cookie: app.cookieFor(captain.id),
-      body: { teamId: retry.id },
+      body: { teamId: fourth.id },
     });
     expect(registered.status).toBe(201);
+    const blocked = await app.call(createTeam, "/api/teams", { method: "POST", cookie: app.cookieFor(captain.id), body: { tournamentSlug: SLUGS.upcoming, name: "Fifth", partnerPhone: "+15550109998" } });
+    expect(expectFailure(blocked, 409, "conflict").detail).toEqual({ teamId: fourth.id });
     expectFailure(
-      await app.call(createTeam, "/api/teams", { method: "POST", cookie: app.cookieFor(captain.id), body: { tournamentSlug: SLUGS.upcoming, name: "Fourth", partnerPhone: "+15550109998" } }),
+      await app.call(createTeam, "/api/teams", { method: "POST", cookie: app.cookieFor(partner.id), body: { tournamentSlug: SLUGS.upcoming, name: "Breakaway", partnerPhone: "+15550109998" } }),
       409,
       "conflict",
     );
+    expect((await publicRoster()).map((t) => t.id)).toContain(fourth.id);
+  });
+
+  it("resolves crossed invites: accepting one disbands the joiner's own forming team", async () => {
+    // Each invites the other, so each holds a solo forming team and a pending invite.
+    const byCaptain = await createOpenTeam("Rivera / Okafor");
+    const byPartner = await app.call<Envelope<TeamData>>(createTeam, "/api/teams", {
+      method: "POST",
+      cookie: app.cookieFor(partner.id),
+      body: { tournamentSlug: SLUGS.upcoming, name: "Okafor / Rivera", partnerPhone: captain.phoneE164 },
+    });
+    expect(byPartner.status).toBe(201);
+    const captainProfile = await app.call<Envelope<Profile>>(me, "/api/me", { cookie: app.cookieFor(captain.id) });
+    expect(captainProfile.body.data.invites.map((i) => i.team.id)).toEqual([byPartner.body.data.id]);
+
+    // The partner accepts the captain's invite; their own team dissolves in the same step.
+    const joined = await app.call<Envelope<TeamData>>(joinTeam, `/api/teams/${byCaptain.id}/join`, { method: "POST", params: { id: byCaptain.id }, cookie: app.cookieFor(partner.id) });
+    expect(joined.status).toBe(200);
+    expect(joined.body.data.members.map((m) => [m.userId, m.role])).toEqual([
+      [captain.id, "captain"],
+      [partner.id, "player"],
+    ]);
+    expect(app.conn.db.select({ status: teams.status }).from(teams).where(eq(teams.id, byPartner.body.data.id)).get()?.status).toBe("disbanded");
+    expect(app.conn.db.select({ status: teamInvites.status }).from(teamInvites).where(eq(teamInvites.teamId, byPartner.body.data.id)).all()).toEqual([{ status: "revoked" }]);
+    expect(app.audits(byPartner.body.data.id).map((a) => a.action)).toEqual(["team.created", "team.invite_sent", "team.invite_revoked", "team.disbanded"]);
+    expect(JSON.parse(app.audits(byPartner.body.data.id, "team.disbanded")[0]?.detailJson ?? "{}")).toEqual({ from: "forming", to: "disbanded", supersededBy: byCaptain.id, released: [partner.id] });
+    expect(JSON.parse(app.audits(byCaptain.id, "team.member_joined")[0]?.detailJson ?? "{}")).toMatchObject({ supersedes: byPartner.body.data.id });
+
+    // The captain's invite from the dissolved team is gone, and the stale team cannot be joined.
+    const after = await app.call<Envelope<Profile>>(me, "/api/me", { cookie: app.cookieFor(captain.id) });
+    expect(after.body.data.invites).toEqual([]);
+    expectFailure(await app.call(joinTeam, `/api/teams/${byPartner.body.data.id}/join`, { method: "POST", params: { id: byPartner.body.data.id }, cookie: app.cookieFor(captain.id) }), 403, "forbidden");
+
+    // The pair registers as one team.
+    const registered = await app.call(register, `/api/tournaments/${SLUGS.upcoming}/register`, {
+      method: "POST",
+      params: { slug: SLUGS.upcoming },
+      cookie: app.cookieFor(captain.id),
+      body: { teamId: byCaptain.id },
+    });
+    expect(registered.status).toBe(201);
   });
 
   it("lets only the invited phone join, then enforces the two-member rule", async () => {

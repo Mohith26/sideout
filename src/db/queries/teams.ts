@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { donations, teamInvites, teamMembers, teams, tournaments, users, type Donation, type Team, type TeamInvite, type TeamRole, type Tournament } from "@/db/schema";
+import { donations, teamInvites, teamMembers, teams, tournaments, users, type Donation, type Team, type TeamInvite, type TeamRole, type TeamStatus, type Tournament } from "@/db/schema";
 
 /**
  * Team-side read models: a team with its roster, a user's teams across
@@ -44,14 +44,19 @@ export function countActiveTeams(tournamentId: string): number {
     .all().length;
 }
 
-/** The team a user is on in a tournament, if any (withdrawn teams do not count). */
+/** Statuses a team is over in: it holds nobody and blocks nothing. */
+export const GONE_TEAM_STATUSES: readonly TeamStatus[] = ["withdrawn", "disbanded"];
+/** Statuses the public roster never shows: not yet an entry, or abandoned before becoming one. */
+export const UNLISTED_TEAM_STATUSES: readonly TeamStatus[] = ["forming", "disbanded"];
+
+/** The team a user is on in a tournament, if any (withdrawn and disbanded teams do not count). */
 export function findUserTeamInTournament(userId: string, tournamentId: string): Team | null {
   return (
     getDb()
       .select({ team: teams })
       .from(teamMembers)
       .innerJoin(teams, eq(teams.id, teamMembers.teamId))
-      .where(and(eq(teamMembers.userId, userId), eq(teams.tournamentId, tournamentId), ne(teams.status, "withdrawn")))
+      .where(and(eq(teamMembers.userId, userId), eq(teams.tournamentId, tournamentId), notInArray(teams.status, [...GONE_TEAM_STATUSES])))
       .get()?.team ?? null
   );
 }
