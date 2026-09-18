@@ -36,4 +36,22 @@ describe("Lucra import boundary (ESLint)", () => {
     expect(await messagesFor(outside, 'export const r = fetch("https://example.com/health");\n')).toEqual([]);
     expect(await messagesFor("src/lucra/client.ts", 'export const r = fetch("https://api.lucrasports.com/x");\n')).toEqual([]);
   });
+
+  it("keeps the browser SDK and its stand-in behind LucraGate (spec §7.5, §12.5)", async () => {
+    const gateOnly = expect.stringContaining("Only src/components/lucra/LucraGate.tsx may load the Lucra Web SDK");
+    expect(await messagesFor("src/components/profile/Rogue.tsx", 'import { LucraClient } from "lucra-web-sdk";\nexport const x = LucraClient;\n')).toEqual([gateOnly]);
+    expect(await messagesFor("src/components/profile/Rogue.tsx", 'import { LucraClient } from "@/lucra/sdk-mock";\nexport const x = LucraClient;\n')).toEqual([gateOnly]);
+    expect(await messagesFor("src/app/me/page.tsx", 'import type { LucraApiErrorCode } from "lucra-web-sdk";\nexport type X = LucraApiErrorCode;\n')).toEqual([gateOnly]);
+    expect(await messagesFor("src/server/rogue.ts", 'import { LucraApiError } from "../lucra/sdk-mock";\nexport const x = LucraApiError;\n')).toEqual([gateOnly]);
+    // Inside src/lucra the stand-in is internal, the real package still is not.
+    expect(await messagesFor("src/lucra/sdk-mock.test.ts", 'import { LucraClient } from "@/lucra/sdk-mock";\nexport const x = LucraClient;\n')).toEqual([]);
+    expect(await messagesFor("src/lucra/rogue.ts", 'import { LucraClient } from "lucra-web-sdk";\nexport const x = LucraClient;\n')).toEqual([gateOnly]);
+    // The gate may load both, and still may not reach the server client, the mock, or the hash.
+    const gate = "src/components/lucra/LucraGate.tsx";
+    expect(await messagesFor(gate, 'const real = () => import("lucra-web-sdk");\nconst mock = () => import("@/lucra/sdk-mock");\nexport const x = [real, mock];\n')).toEqual([]);
+    expect(await messagesFor(gate, 'import { createLucraMock } from "@/lucra/mock";\nexport const x = createLucraMock;\n')).toEqual([expect.stringContaining("Only src/lucra/adapter.ts may use the Lucra client or mock")]);
+    expect(await messagesFor(gate, 'import { hashScoreline } from "@/domain/scoreline-hash";\nexport const x = hashScoreline;\n')).toEqual([expect.stringContaining("scoreline hash is server-side")]);
+    // Everything else reaches the SDK through the gate's hook and the client-safe types.
+    expect(await messagesFor("src/components/profile/Fine.tsx", 'import { useLucra } from "@/components/lucra/LucraGate";\nimport type { LucraUiFailure } from "@/lucra/sdk-surface";\nexport const x = useLucra;\nexport type Y = LucraUiFailure;\n')).toEqual([]);
+  });
 });

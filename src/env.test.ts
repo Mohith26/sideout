@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { parseServerEnv } from "@/env";
-import { parsePublicEnv } from "@/env.public";
+import { parsePublicEnv, publicLucraCredentials } from "@/env.public";
 
 describe("parseServerEnv", () => {
   it("boots with only LUCRA_MODE=mock", () => {
@@ -115,9 +115,29 @@ describe("session secret and dev login", () => {
 });
 
 describe("parsePublicEnv", () => {
-  it("only knows the WEB key and tenant id", () => {
+  it("only knows the mode, the WEB key and the tenant id", () => {
     const pub = parsePublicEnv({ NEXT_PUBLIC_LUCRA_TENANT_ID: "t", NEXT_PUBLIC_LUCRA_WEB_API_KEY: "" });
-    expect(pub).toEqual({ NEXT_PUBLIC_LUCRA_TENANT_ID: "t" });
+    expect(pub).toEqual({ NEXT_PUBLIC_LUCRA_MODE: "mock", NEXT_PUBLIC_LUCRA_TENANT_ID: "t" });
     expect(Object.keys(pub)).not.toContain("LUCRA_BACKEND_API_KEY");
+    expect(publicLucraCredentials(pub)).toBeNull();
+    expect(publicLucraCredentials(parsePublicEnv({ NEXT_PUBLIC_LUCRA_TENANT_ID: "t", NEXT_PUBLIC_LUCRA_WEB_API_KEY: "web" }))).toEqual({ apiKey: "web", tenantId: "t" });
+    expect(() => parsePublicEnv({ NEXT_PUBLIC_LUCRA_MODE: "staging" })).toThrow(/NEXT_PUBLIC_LUCRA_MODE/);
+  });
+
+  it("must agree with the server's LUCRA_MODE, and follows it when unset", () => {
+    expect(parseServerEnv({ LUCRA_MODE: "mock" }).NEXT_PUBLIC_LUCRA_MODE).toBe("mock");
+    const live = { LUCRA_MODE: "sandbox", LUCRA_BASE_URL: "https://api.sandbox.lucrasports.com", LUCRA_BACKEND_API_KEY: "sk_test" };
+    expect(parseServerEnv(live).NEXT_PUBLIC_LUCRA_MODE).toBe("sandbox");
+    expect(parseServerEnv({ ...live, NEXT_PUBLIC_LUCRA_MODE: "sandbox" }).NEXT_PUBLIC_LUCRA_MODE).toBe("sandbox");
+    expect(() => parseServerEnv({ ...live, NEXT_PUBLIC_LUCRA_MODE: "mock" })).toThrow(/NEXT_PUBLIC_LUCRA_MODE: is mock but LUCRA_MODE is sandbox/);
+    expect(() => parseServerEnv({ LUCRA_MODE: "mock", NEXT_PUBLIC_LUCRA_MODE: "production" })).toThrow(/NEXT_PUBLIC_LUCRA_MODE/);
+  });
+
+  it("carries the installed SDK version and the responsible-play URLs", () => {
+    const env = parseServerEnv({ LUCRA_MODE: "mock", LUCRA_SDK_INSTALLED_VERSION: " 1.12.0 " });
+    expect(env.LUCRA_SDK_INSTALLED_VERSION).toBe("1.12.0");
+    expect(parseServerEnv({ LUCRA_MODE: "mock" }).LUCRA_SDK_INSTALLED_VERSION).toBeUndefined();
+    expect(env.LUCRA_SELF_LIMIT_URL).toMatch(/^https:\/\//);
+    expect(() => parseServerEnv({ LUCRA_MODE: "mock", LUCRA_SELF_LIMIT_URL: "nope" })).toThrow(/LUCRA_SELF_LIMIT_URL/);
   });
 });

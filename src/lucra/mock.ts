@@ -55,11 +55,26 @@ export type ScoringType = "HIGHEST_SCORE" | "LOWEST_SCORE";
 export type TrackResults = "AUTOMATED" | "MANUAL";
 export type HowToWin = "HIGHEST_SCORE" | "LOWEST_SCORE" | "FASTEST_TIME";
 
+/**
+ * `SDKLucraUser.accountStatus` as the web SDK's types enumerate it. The mock
+ * keeps the ones the browser stand-in resolves flows from.
+ */
+export const MOCK_ACCOUNT_STATUSES = ["UNVERIFIED", "VERIFIED", "AGE_ASSURED_VERIFIED", "BLOCKED"] as const;
+export type MockAccountStatus = (typeof MOCK_ACCOUNT_STATUSES)[number];
+
 export interface MockUser {
   id: string;
   username: string;
   phoneNumber: string | null;
   metadata: Metadata;
+  /** What the SDK reports as `accountStatus`; `BLOCKED` is the sealed `NotAllowed`. */
+  accountStatus: MockAccountStatus;
+  /** Whether the free-to-play demographic form has been completed; false is `DemographicInformationMissing`. */
+  demographicsComplete: boolean;
+  /** Wallet balance; the SDK reports it in dollars. */
+  balanceCents: number;
+  /** `UserKYCVerified` fires once per user (documented); the mock keeps that promise. */
+  kycVerifiedEmitted: boolean;
 }
 
 export interface MockParticipant {
@@ -124,6 +139,9 @@ export interface MockSeedUser {
   username: string;
   phoneNumber?: string | null;
   metadata: Metadata;
+  accountStatus?: MockAccountStatus;
+  demographicsComplete?: boolean;
+  balanceCents?: number;
 }
 
 export interface MockSeedMatchup {
@@ -225,9 +243,95 @@ export class LucraMock {
   }
 
   addUser(u: MockSeedUser): MockUser {
-    const user: MockUser = { id: u.id, username: u.username, phoneNumber: u.phoneNumber ?? null, metadata: { ...u.metadata } };
+    const accountStatus = u.accountStatus ?? "UNVERIFIED";
+    const user: MockUser = {
+      id: u.id,
+      username: u.username,
+      phoneNumber: u.phoneNumber ?? null,
+      metadata: { ...u.metadata },
+      accountStatus,
+      demographicsComplete: u.demographicsComplete ?? true,
+      balanceCents: u.balanceCents ?? 0,
+      kycVerifiedEmitted: accountStatus === "VERIFIED" || accountStatus === "AGE_ASSURED_VERIFIED",
+    };
     this.users.set(user.id, user);
     return user;
+  }
+
+  // -- the SDK's side of a user (driven by the browser stand-in through src/server/lucra-sdk-mock.ts) --
+
+  findUserByPhone(phoneNumber: string): MockUser | undefined {
+    return [...this.users.values()].find((u) => u.phoneNumber === phoneNumber);
+  }
+
+  findUserByExternalId(externalId: string): MockUser | undefined {
+    return [...this.users.values()].find((u) => u.metadata.externalId === externalId);
+  }
+
+  /** A phone sign-in: the existing account, or a new one plus the documented `UserSignedUp`. */
+  signIn(input: { id: string; username: string; phoneNumber: string; metadata?: Metadata }): { user: MockUser; created: boolean } {
+    const existing = this.findUserByPhone(input.phoneNumber);
+    if (existing) return { user: existing, created: false };
+    const user = this.addUser({ id: input.id, username: input.username, phoneNumber: input.phoneNumber, metadata: input.metadata ?? {} });
+    this.emit(LUCRA_WEBHOOK_EVENTS.userSignedUp, { userId: user.id, email: null, username: user.username, phoneNumber: user.phoneNumber });
+    return { user, created: true };
+  }
+
+  /** `sendMessage.userUpdated`: metadata is stored on the Lucra user (the documented user link). */
+  setUserMetadata(userId: string, metadata: Metadata | null): MockUser {
+    const user = this.users.get(userId);
+    if (!user) throw new Error(`lucra mock: unknown user ${userId}`);
+    user.metadata = { ...user.metadata, ...(metadata ?? {}) };
+    return user;
+  }
+
+  /** The identity flow's outcome for this account; a first verification emits `UserKYCVerified`. */
+  verifyIdentity(userId: string): "verified" | "not_allowed" | "demographics_required" {
+    const user = this.users.get(userId);
+    if (!user) throw new Error(`lucra mock: unknown user ${userId}`);
+    if (user.accountStatus === "BLOCKED") return "not_allowed";
+    if (!user.demographicsComplete) return "demographics_required";
+    this.markVerified(user, "VERIFIED");
+    return "verified";
+  }
+
+  /** The demographic form: completes the free-to-play requirement and, for an unverified account, age assurance. */
+  completeDemographics(userId: string): MockUser {
+    const user = this.users.get(userId);
+    if (!user) throw new Error(`lucra mock: unknown user ${userId}`);
+    user.demographicsComplete = true;
+    // OPEN: (§17.7-adjacent) what a free-to-play tenant's account becomes once the form is in is not published;
+    // the mock reads the SDK's own `AGE_ASSURED_VERIFIED` status literally and reports it as a first verification.
+    if (user.accountStatus === "UNVERIFIED") this.markVerified(user, "AGE_ASSURED_VERIFIED");
+    return user;
+  }
+
+  private markVerified(user: MockUser, status: "VERIFIED" | "AGE_ASSURED_VERIFIED"): void {
+    user.accountStatus = status;
+    if (!user.kycVerifiedEmitted) {
+      user.kycVerifiedEmitted = true;
+      this.emit(LUCRA_WEBHOOK_EVENTS.userKycVerified, { userId: user.id });
+    }
+  }
+
+  deposit(userId: string, amountCents: number): MockUser {
+    const user = this.users.get(userId);
+    if (!user) throw new Error(`lucra mock: unknown user ${userId}`);
+    if (user.accountStatus === "BLOCKED") throw new Error("lucra mock: account is blocked");
+    if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error("lucra mock: deposit must be a positive whole number of cents");
+    user.balanceCents += amountCents;
+    this.emit(LUCRA_WEBHOOK_EVENTS.fundsDeposited, { userId: user.id, properties: { method: "CARD", amount: amountCents / 100, fee: 0, transactionStatus: "COMPLETED", transactionId: `mock-deposit-${this.webhookCounter + 1}` } });
+    return user;
+  }
+
+  /** False when the balance does not cover it (the SDK's `INSUFFICIENT_FUNDS`). */
+  withdraw(userId: string, amountCents: number): boolean {
+    const user = this.users.get(userId);
+    if (!user) throw new Error(`lucra mock: unknown user ${userId}`);
+    if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error("lucra mock: withdrawal must be a positive whole number of cents");
+    if (user.balanceCents < amountCents) return false;
+    user.balanceCents -= amountCents;
+    return true;
   }
 
   addMatchup(m: MockSeedMatchup): MockMatchup {

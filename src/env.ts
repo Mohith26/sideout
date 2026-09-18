@@ -64,6 +64,20 @@ const serverSchema = z
      * point at the page Lucra names for the tenant.
      */
     LUCRA_RESPONSIBLE_GAMING_URL: z.url().default("https://lucrasports.com/pages/responsible-gaming.html"),
+    /**
+     * Lucra's self-limit and self-exclusion tooling ("Self Control"), linked
+     * beneath every wallet balance (spec §4.7). Lucra documents the tooling on
+     * its responsible gaming page and exposes it inside its own app (the SDK's
+     * profile flow), so the default is that page; override if Lucra names a
+     * direct URL for the tenant.
+     */
+    LUCRA_SELF_LIMIT_URL: z.url().default("https://www.playlucra.com/legal/responsible-gaming"),
+    /**
+     * The `lucra-web-sdk` version actually installed, read from the package
+     * manifest by `next.config.ts` at build time and reported by /health
+     * beside the pin in `src/lucra/version.ts`.
+     */
+    LUCRA_SDK_INSTALLED_VERSION: z.string().trim().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     // OPEN: (§17.1) sandbox credentials are issued by a Lucra representative. The
@@ -162,9 +176,18 @@ export function parseServerEnv(raw: RawEnv, options: { mintEphemeralSecret?: () 
     throw new Error(`Invalid server environment:\n${lines.join("\n")}`);
   }
   const pub = parsePublicEnv({
+    // Unset outside a Next build (the seed CLI, tests): the browser mode then follows the server's.
+    NEXT_PUBLIC_LUCRA_MODE: cleaned.NEXT_PUBLIC_LUCRA_MODE ?? parsed.data.LUCRA_MODE,
     NEXT_PUBLIC_LUCRA_WEB_API_KEY: cleaned.NEXT_PUBLIC_LUCRA_WEB_API_KEY,
     NEXT_PUBLIC_LUCRA_TENANT_ID: cleaned.NEXT_PUBLIC_LUCRA_TENANT_ID,
   });
+  // The browser SDK runs in the mode the server was built for: `next.config.ts`
+  // derives NEXT_PUBLIC_LUCRA_MODE from LUCRA_MODE, so a disagreement means a
+  // build for one Lucra was started against another. Refuse rather than let
+  // the browser join matchups on a Lucra the server never writes to.
+  if (pub.NEXT_PUBLIC_LUCRA_MODE !== parsed.data.LUCRA_MODE) {
+    throw new Error(`Invalid server environment:\n  NEXT_PUBLIC_LUCRA_MODE: is ${pub.NEXT_PUBLIC_LUCRA_MODE} but LUCRA_MODE is ${parsed.data.LUCRA_MODE}; the build must be made with the LUCRA_MODE it runs under`);
+  }
   return {
     ...parsed.data,
     ...pub,
@@ -186,6 +209,7 @@ export const env: ServerEnv = parseServerEnv({
   FEATURE_REAL_MONEY: process.env.FEATURE_REAL_MONEY,
   DATABASE_PATH: process.env.DATABASE_PATH,
   BUILD_SHA: process.env.BUILD_SHA,
+  NEXT_PUBLIC_LUCRA_MODE: process.env.NEXT_PUBLIC_LUCRA_MODE,
   NEXT_PUBLIC_LUCRA_WEB_API_KEY: process.env.NEXT_PUBLIC_LUCRA_WEB_API_KEY,
   NEXT_PUBLIC_LUCRA_TENANT_ID: process.env.NEXT_PUBLIC_LUCRA_TENANT_ID,
   SESSION_SECRET: process.env.SESSION_SECRET,
@@ -193,6 +217,8 @@ export const env: ServerEnv = parseServerEnv({
   TRUSTED_PROXY_HOPS: process.env.TRUSTED_PROXY_HOPS,
   AUTH_CODE_GLOBAL_CAP: process.env.AUTH_CODE_GLOBAL_CAP,
   LUCRA_RESPONSIBLE_GAMING_URL: process.env.LUCRA_RESPONSIBLE_GAMING_URL,
+  LUCRA_SELF_LIMIT_URL: process.env.LUCRA_SELF_LIMIT_URL,
+  LUCRA_SDK_INSTALLED_VERSION: process.env.LUCRA_SDK_INSTALLED_VERSION,
 });
 
 if (env.sessionSecretSource === "ephemeral") {

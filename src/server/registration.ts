@@ -10,27 +10,28 @@ import { systemClock, type Clock } from "@/lib/clock";
 import { uuidv7 } from "@/lib/uuid";
 import { writeAudit } from "@/server/audit";
 import { getDonationProvider, settleDueDonations } from "@/server/donations/stub-provider";
-import { lucraEntryState } from "@/server/lucra";
+import { lucraEntryState, lucraEntryStatus, type LucraEntryStatus } from "@/server/lucra";
 import { requireTournamentBySlug } from "@/server/tournaments";
 
 /**
  * Registration (spec §11.4): a complete team enters an open event. Two
  * visually and structurally distinct steps — the charitable donation intent
  * (this module, through the donation provider seam) and the Lucra tournament
- * entry (phase 4, `lucraEntryHook` below). The two never share a table or a
- * foreign key (spec §4.3).
+ * entry (`lucraEntryHook` reports the link state at registration time;
+ * `entryStatusFor` is the step's live truth from Lucra's participant list).
+ * The two never share a table or a foreign key (spec §4.3).
  */
 
 export const registerSchema = z.object({ teamId: z.string().min(1) }).strict();
 
 export interface LucraEntryOutcome {
   /**
-   * Joining a Lucra tournament is the player's own SDK action (auto-join on
-   * sign-in, or `api.joinTournament`), launched by the registration screen in
-   * phase 4b; the server cannot enrol anyone. What it can say is who on the
-   * roster is linked to Lucra yet, and whether the tournament's matchup has
-   * been verified (§7.3.4). The organizer's reconciliation view is the truth
-   * about who actually joined; auto-join is never relied on (§7.5).
+   * Joining a Lucra tournament is the player's own SDK action
+   * (`api.joinTournament` from the registration screen's second step, never
+   * the silent auto-join); the server cannot enrol anyone. What it can say is
+   * who on the roster is linked to Lucra yet, and whether the tournament's
+   * matchup has been verified (§7.3.4). The organizer's reconciliation view
+   * is the truth about who actually joined (§7.5).
    */
   state: "awaiting_sdk_join";
   players: Array<{ userId: string; linked: boolean }>;
@@ -128,4 +129,26 @@ export function registerTeam(slug: string, teamId: string, user: User, clock: Cl
     donation,
     lucraEntry,
   };
+}
+
+/**
+ * `GET /api/tournaments/:slug/lucra/entry` and the registration page's second
+ * step: the caller's registered team in this event and, from Lucra's
+ * participant list, who on it has entered. Only a member of a registered
+ * team may ask; a forming team has no entry yet.
+ */
+export async function entryStatusFor(slug: string, user: Pick<User, "id">, clock: Clock = systemClock): Promise<LucraEntryStatus> {
+  const { tournament } = requireTournamentBySlug(slug);
+  const team = getDb()
+    .select({ team: teams })
+    .from(teamMembers)
+    .innerJoin(teams, eq(teams.id, teamMembers.teamId))
+    .where(eq(teamMembers.userId, user.id))
+    .all()
+    .map((r) => r.team)
+    .find((t) => t.tournamentId === tournament.id && (t.status === "registered" || t.status === "checked_in"));
+  if (!team) throw new ApiFailure("not_found", "You have no registered team in this event.");
+  const detail = getTeamDetail(team.id);
+  if (!detail) throw new ApiFailure("internal", "Team disappeared.");
+  return lucraEntryStatus({ tournamentId: tournament.id, teamId: team.id, roster: detail.members.map((m) => ({ userId: m.userId, displayName: m.displayName })), callerUserId: user.id }, clock);
 }
